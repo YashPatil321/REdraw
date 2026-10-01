@@ -34,6 +34,7 @@ uniform sampler2D tGN;
 uniform sampler2D tGO;
 uniform vec4 uCR[${MAX_CELLS}];
 uniform vec3 uCMean[${MAX_CELLS}];
+uniform float uCGain[${MAX_CELLS}];
 uniform float uGPx;
 ${ATLAS_GLSL}
 vec3 rdNT;
@@ -57,7 +58,7 @@ const GROUND_FRAG_MAIN = /* glsl */ `
   vec3 c = f < 0.999 ? mix(atlasSample(tGA, r, uv, gx, gy).rgb, mean, f) : mean;
   // large-scale wear / tone variation so long roads do not repeat
   float mn = rdN2g(vGW.xz * 0.021) * 0.6 + rdN2g(vGW.xz * 0.0043 + 7.0) * 0.4;
-  c *= 0.9 + 0.2 * mn;
+  c *= (0.9 + 0.2 * mn) * uCGain[ci];
   diffuseColor.rgb = c;
   rdNT = f < 0.999 ? mix(atlasSample(tGN, r, uv, gx, gy).xyz * 2.0 - 1.0, vec3(0.0, 0.0, 1.0), f) : vec3(0.0, 0.0, 1.0);
   vec3 orm = f < 0.999 ? atlasSample(tGO, r, uv, gx, gy).rgb : vec3(1.0, 0.85, 0.0);
@@ -75,17 +76,30 @@ const NORMAL_FRAG = /* glsl */ `
 }
 `;
 
+/**
+ * Look adjustment for asphalt cells: sun-bleached Southern California streets
+ * read mid-grey in photos (aged asphalt albedo ~0.1-0.15), darker than the
+ * atlas cells. Returns the multiplier that lifts a cell's mean to that target.
+ */
+export function asphaltGain(name: string, meanLinear: number): number {
+  const target = /fresh/.test(name) ? 0.075 : /parking/.test(name) ? 0.105 : /asphalt/.test(name) ? 0.125 : 0;
+  if (!target || meanLinear <= 0) return 1;
+  return Math.min(3.5, Math.max(1, target / meanLinear));
+}
+
 /** Ground atlas material for `_MAT` 6 meshes (needs `aVariant`: alias of `_variant`). */
 export function groundMaterial(lib: MaterialLibrary, opts: { polygonOffset: number; normalMaps: boolean }): THREE.Material {
   const g = lib.atlas('ground')!;
   const cells = g.info.cells;
   const cr: THREE.Vector4[] = [];
   const cm: THREE.Vector3[] = [];
+  const gain: number[] = [];
   for (let i = 0; i < MAX_CELLS; i++) {
     const c = cells.find((x) => x.index === i) ?? cells[Math.min(i, cells.length - 1)];
     cr.push(cellRect(c));
     const m = c?.mean_albedo_linear ?? [0.2, 0.2, 0.2];
     cm.push(new THREE.Vector3(m[0], m[1], m[2]));
+    gain.push(asphaltGain(c?.name ?? '', (m[0] + m[1] + m[2]) / 3));
   }
   const mat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -101,6 +115,7 @@ export function groundMaterial(lib: MaterialLibrary, opts: { polygonOffset: numb
     tGO: { value: g.orm },
     uCR: { value: cr },
     uCMean: { value: cm },
+    uCGain: { value: gain },
     uGPx: { value: g.info.size_px?.[0] ?? 2048 },
   };
   mat.onBeforeCompile = (shader) => {
