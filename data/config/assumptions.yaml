@@ -214,3 +214,46 @@ residents:
     property: {value: 1.5, unit: ratio, range: [1.0, 2.0], source: "dislikes changes on own street", verified: false}
   safety_tool_bonus: {value: 0.4, unit: utils, range: [0.1, 0.8], source: "bonus per safe_walk/bike tool for safety/community values", verified: false}
   households_sharing_cost: {value: 14500, unit: households, range: [10000, 20000], source: "plan cost per year split across households for cost exposure", verified: false}
+
+# --- Added by the pipeline (append only). Used by pipeline/build_*.py and pipeline/synthetic.py. ---
+pipeline:
+  signal_snap_radius_m: {value: 35.0, unit: m, range: [15.0, 60.0], source: "OSM traffic_signals nodes are often tagged on approach nodes a few meters before the junction; a junction node within this radius counts as signalized", verified: false}
+  house_max_area_m2: {value: 450.0, unit: m2, range: [300.0, 600.0], source: "building=yes/residential footprints smaller than this are treated as single family houses; guess from typical 4S Ranch home footprints", verified: false}
+  apartment_min_area_m2: {value: 700.0, unit: m2, range: [500.0, 1200.0], source: "building=residential footprints at least this large are treated as apartment buildings; guess", verified: false}
+  apartment_m2_per_household: {value: 110.0, unit: m2, range: [80.0, 150.0], source: "gross floor area per apartment unit used to turn footprint area x levels into a household capacity in real mode; guess", verified: false}
+  apartment_default_levels: {value: 3, unit: levels, range: [2, 4], source: "garden apartments in 4S Ranch / Del Sur; guess", verified: false}
+  school_snap_max_dist_m: {value: 400.0, unit: m, range: [100.0, 800.0], source: "max distance from a school point to an OSM school footprint/polygon for matching; geometric heuristic", verified: false}
+
+population_synthesis:
+  # Fallback distributions for the synthetic world (and for block groups where ACS cells are suppressed).
+  household_size_shares: {value: [0.14, 0.27, 0.19, 0.25, 0.10, 0.05], unit: "share for size 1..6", range: null, source: "guess shaped to match population.avg_household_size (3.1); ACS B11016 for 92127 should replace it", verified: false}
+  income_band_shares: {value: {lt50k: 0.10, 50_100k: 0.15, 100_150k: 0.17, 150_200k: 0.16, gt200k: 0.42}, unit: share, range: null, source: "guess for an affluent suburb (median household income well above 150k); ACS B19001 replaces it in real mode", verified: false}
+  vehicles_shares: {value: [0.02, 0.22, 0.45, 0.22, 0.09], unit: "share for 0..4 vehicles", range: null, source: "guess shaped to match population.vehicles_per_household (2.2); ACS B25044 replaces it in real mode", verified: false}
+  kids_count_shares_given_kids: {value: [0.38, 0.45, 0.14, 0.03], unit: "share for 1..4 kids aged 5-18", range: null, source: guess, verified: false}
+  senior_share_of_adults: {value: 0.15, unit: share, range: [0.08, 0.25], source: "ACS approx share of adults 65+; guess", verified: false}
+  adult_license_rate: {value: 0.93, unit: share, range: [0.85, 0.97], source: "FHWA licensed drivers per adult, CA approx", verified: false}
+  teen_license_rate: {value: 0.45, unit: share, range: [0.25, 0.65], source: "share of 16-17 year olds holding a license; guess", verified: false}
+  external_exit_shares: {value: {i15_south: 0.42, sr56_west: 0.33, i15_north: 0.15, cdn_east: 0.10}, unit: share, range: null, source: "guess: most jobs are south (Sorrento Valley/UTC via SR 56, Kearny Mesa/downtown via I 15); LODES replaces it in real mode", verified: false}
+  internal_job_weight_school: {value: 1.0, unit: ratio, range: [0.5, 2.0], source: "relative job density per m2 of school vs commercial footprint for internal jobs (synthetic); guess", verified: false}
+
+# ---------------------------------------------------------------------------
+# Added by the sim engine (sim/). Append-only. Model-resolution settings are
+# verified: true because they are design choices, not real-world facts.
+sim_engine:
+  seed_base: {value: 7031, unit: seed, range: null, source: "fixed Monte Carlo base seed (rule 14.5); seed i uses SeedSequence([seed_base, i])", verified: true}
+  routing_period_min: {value: 15, unit: min, range: [5, 30], source: "shortest-path trees are rebuilt per routing period using that period's average edge times; model resolution", verified: true}
+  routing_zone_grid: {value: 12, unit: cells per side, range: [6, 20], source: "legs with no hub endpoint are routed to a zone hub node, then along the free-flow path from the hub; model resolution", verified: true}
+  circuity_factor: {value: 1.3, unit: ratio, range: [1.2, 1.45], source: "network distance / straight-line distance for walk, bike and cost estimates (Ballou et al. 2002 US average ~1.2-1.4)", verified: false}
+  car_local_avg_speed_kph: {value: 40.0, unit: kph, range: [30.0, 50.0], source: "door-to-door car speed for in-region jobs, used only in mode choice; guess", verified: false}
+  bus_pce: {value: 2.0, unit: pce, range: [1.5, 2.5], source: "HCM passenger car equivalent for buses", verified: false}
+  shuttle_service_window_min: {value: 60, unit: min, range: [45, 90], source: "minutes before the bell during which shuttle runs arrive; guess", verified: false}
+  shuttle_arrive_before_bell_min: {value: 10, unit: min, range: [5, 15], source: "last shuttle run arrives this long before the bell; guess", verified: false}
+  shuttle_stop_dwell_s: {value: 30, unit: s, range: [15, 60], source: "boarding time per shuttle stop; guess", verified: false}
+  protected_bikeway_boost_multiplier: {value: 1.5, unit: ratio, range: [1.2, 2.0], source: "protected bikeway utility boost relative to a buffered lane; guess", verified: false}
+  protected_bikeway_cost_multiplier: {value: 2.5, unit: ratio, range: [1.5, 4.0], source: "protected bikeway cost per km relative to a buffered lane (FHWA cost ranges); guess", verified: false}
+  peak_hour_minutes: {value: 60, unit: min, range: null, source: "commute peak hour = the 60 minute window with the most commuter vehicles on the road (baseline, per seed)", verified: true}
+  side_effects_max: {value: 25, unit: count, range: null, source: "max side-effect edges listed in a report (display limit)", verified: true}
+  max_school_stops_per_chain: {value: 3, unit: count, range: null, source: "a drop-off chain visits at most this many schools; extra schools get their own trip; model resolution", verified: true}
+  home_edges_radius: {value: 1, unit: hops, range: null, source: "edges incident to the home node count as the resident's street for home_edges_vc_delta", verified: true}
+  custom_max_capacity_factor: {value: 1.5, unit: ratio, range: null, source: "upper bound on LLM-proposed capacity multipliers for custom tools (sanity bound)", verified: true}
+  custom_max_utility_shift: {value: 2.0, unit: utils, range: null, source: "upper bound on LLM-proposed mode utility shifts for custom tools (sanity bound)", verified: true}
