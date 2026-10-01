@@ -61,6 +61,57 @@ STREET_ROOTS = [
 ]
 
 
+# The hand-drawn layout below is authored in a fixed "design frame" (the original
+# 9.4 x 8.9 km starting bbox, scene meters). DesignMap scales it affinely onto whatever
+# region extent region.yaml defines, so crossings/topology survive bbox changes.
+DESIGN_EXTENT = Extent(-4700.0, 4700.0, -4450.0, 4450.0)
+
+
+@dataclass(frozen=True)
+class DesignMap:
+    cx: float
+    cz: float
+    sx: float
+    sz: float
+
+    def x(self, v: float) -> float:
+        return self.cx + v * self.sx
+
+    def z(self, v: float) -> float:
+        return self.cz + v * self.sz
+
+    def p(self, pt: tuple[float, float]) -> tuple[float, float]:
+        return self.x(pt[0]), self.z(pt[1])
+
+    def pts(self, pts: Iterable[tuple[float, float]]) -> list[tuple[float, float]]:
+        return [self.p(q) for q in pts]
+
+    def geom(self, g: Any) -> Any:
+        from shapely.affinity import affine_transform
+
+        return affine_transform(g, [self.sx, 0, 0, self.sz, self.cx, self.cz])
+
+    def inv_x(self, v: np.ndarray) -> np.ndarray:
+        return (v - self.cx) / self.sx
+
+    def inv_z(self, v: np.ndarray) -> np.ndarray:
+        return (v - self.cz) / self.sz
+
+
+def design_map(region_ext: Extent | None = None) -> DesignMap:
+    """Affine map from the design frame onto the region extent (default: region.yaml)."""
+    from pipeline.common import region_extent
+
+    e = region_ext or region_extent()
+    return DesignMap(
+        (e.min_x + e.max_x) / 2.0,
+        (e.min_z + e.max_z) / 2.0,
+        e.width / DESIGN_EXTENT.width,
+        e.depth / DESIGN_EXTENT.depth,
+    )
+
+
+
 # ---------------------------------------------------------------------------
 # Small geometry helpers
 # ---------------------------------------------------------------------------
@@ -164,6 +215,8 @@ def synthetic_dem(extent: Extent, spacing: float = 10.0, seed: int = SEED) -> Te
     xs = extent.min_x + np.arange(cols) * spacing
     zs = extent.min_z + np.arange(rows) * spacing
     gx, gz = np.meshgrid(xs, zs)
+    D = design_map()
+    gx, gz = D.inv_x(gx), D.inv_z(gz)  # terrain features are authored in the design frame
     e = 195.0 + 0.004 * gx  # gentle rise to the east
     e += 28.0 * _smooth_noise(rng, (rows, cols), 32)
     e += 9.0 * _smooth_noise(rng, (rows, cols), 7)
@@ -216,7 +269,7 @@ def synthetic_albedo(terrain: Terrain, developed: list[Polygon], paved: list[Pol
     img = grass * (1 - t_chap) + chap * t_chap
     t_rock = np.clip((slope - 0.35) * 2.0, 0, 1)[..., None]
     img = img * (1 - t_rock) + rock * t_rock
-    valley = (1.0 / (1.0 + np.exp((gz + 3900.0) / 120.0)))[..., None]
+    valley = (1.0 / (1.0 + np.exp((design_map().inv_z(gz) + 3900.0) / 120.0)))[..., None]
     img = img * (1 - 0.6 * valley) + np.array([70, 100, 60], dtype=np.float32) * 0.6 * valley
 
     def mask_of(polys: list[Polygon]) -> np.ndarray:
@@ -395,13 +448,15 @@ def schools_scene(schools_cfg: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def build_layout(ext: Extent, schools_cfg: list[dict[str, Any]], target_houses: int, seed: int = SEED) -> Layout:
     rng = np.random.default_rng(seed)
-    zmin, zmax, xmin = ext.min_z + 5, ext.max_z - 5, ext.min_x + 5
+    D = design_map(ext)
+    # design-frame equivalents of the region edges (everything below is authored in the design frame)
+    zmin, zmax, xmin = float(D.inv_z(ext.min_z + 5)), float(D.inv_z(ext.max_z - 5)), float(D.inv_x(ext.min_x + 5))
 
     # Freeways: I 15 (east, north-south) and SR 56 (south, east-west). Positions GUESSED.
-    i15 = make_freeway([(2650, zmax), (2850, 2500), (3150, 600), (3500, -1500), (3800, -3300), (3950, zmin)], "Escondido Freeway", "I 15", "4", True, True)
-    x15 = _x_on(i15.center, 3350.0)
-    J = (x15 - 320.0, 3350.0)
-    sr56 = make_freeway([(xmin, 4150), (-2500, 3950), (-500, 3750), (1300, 3640), J], "Ted Williams Parkway", "CA 56", "2", True, True)
+    i15 = make_freeway(D.pts([(2650, zmax), (2850, 2500), (3150, 600), (3500, -1500), (3800, -3300), (3950, zmin)]), "Escondido Freeway", "I 15", "4", True, True)
+    x15 = _x_on(i15.center, D.z(3350.0))
+    J = (x15 - 320.0 * D.sx, D.z(3350.0))
+    sr56 = make_freeway(D.pts([(xmin, 4150), (-2500, 3950), (-500, 3750), (1300, 3640)]) + [J], "Ted Williams Parkway", "CA 56", "2", True, True)
     for cw in (sr56.pos, sr56.neg):  # make the terminus exactly J on both carriageways
         if np.hypot(*(cw.coords[-1] - np.asarray(J))) < np.hypot(*(cw.coords[0] - np.asarray(J))):
             cw.coords[-1] = J
@@ -413,19 +468,21 @@ def build_layout(ext: Extent, schools_cfg: list[dict[str, Any]], target_houses: 
         fw.pos.protect_ends = fw.neg.protect_ends = True
 
     P, S, T = "primary", "secondary", "tertiary"
-    arts = [
-        arterial([(4500, -1440), (3500, -1430), (2700, -1480), (2000, -1600), (1300, -1800), (500, -2050), (-400, -2400), (-1360, -2760)], "Camino Del Norte", P, "6", "45 mph"),
-        arterial([(-900, zmax - 15), (-1000, 3750), (-1150, 2200), (-1300, 600), (-1250, -1000), (-1350, -2750), (-1700, -3600), (-2100, -4300)], "Camino Del Sur", P, "6", "45 mph"),
-        arterial([(1300, -1800), (1150, -900), (800, -100), (200, 400), (-1300, 600)], "4S Ranch Parkway", S, "4", "40 mph"),
-        arterial([(2700, -1480), (2550, -500), (2150, 300), (1500, 700), (800, -100)], "Dove Canyon Road", S, "4", "40 mph"),
-        arterial([(2600, 1650), (2850, 600), (3100, -400), (3200, -1435), (3300, -2500), (3450, -3550)], "Bernardo Center Drive", S, "4", "40 mph"),
-        arterial([(1500, 700), (2100, 1300), (2600, 1650), (3300, 1750), (4400, 1800)], "Carmel Mountain Road", S, "4", "40 mph"),
-        arterial([(3450, -3550), (4500, -3450)], "Rancho Bernardo Road", S, "4", "40 mph"),
-        arterial([(-4650, 2550), (-3600, 2250), (-2600, 1800), (-1900, 1500), (-1300, 1300)], "Carmel Valley Road", S, "4", "40 mph"),
-        arterial([(-2650, zmax - 15), (-2600, 3950), (-2650, 3000), (-2600, 1800), (-2450, 700), (-2250, -300)], "Black Mountain Road", S, "4", "40 mph"),
-        arterial([(-3700, -600), (-2250, -300), (-1250, -600), (-300, -900), (800, -100)], "Paseo Del Sur", T, "2", "35 mph"),
-        arterial([(-4650, -3900), (-3500, -4000), (-2100, -4300)], "San Dieguito Road", S, "4", "40 mph"),
+    zt = zmax - 15 / D.sz
+    art_specs = [
+        ([(4500, -1440), (3500, -1430), (2700, -1480), (2000, -1600), (1300, -1800), (500, -2050), (-400, -2400), (-1360, -2760)], "Camino Del Norte", P, "6", "45 mph"),
+        ([(-900, zt), (-1000, 3750), (-1150, 2200), (-1300, 600), (-1250, -1000), (-1350, -2750), (-1700, -3600), (-2100, -4300)], "Camino Del Sur", P, "6", "45 mph"),
+        ([(1300, -1800), (1150, -900), (800, -100), (200, 400), (-1300, 600)], "4S Ranch Parkway", S, "4", "40 mph"),
+        ([(2700, -1480), (2550, -500), (2150, 300), (1500, 700), (800, -100)], "Dove Canyon Road", S, "4", "40 mph"),
+        ([(2600, 1650), (2850, 600), (3100, -400), (3200, -1435), (3300, -2500), (3450, -3550)], "Bernardo Center Drive", S, "4", "40 mph"),
+        ([(1500, 700), (2100, 1300), (2600, 1650), (3300, 1750), (4400, 1800)], "Carmel Mountain Road", S, "4", "40 mph"),
+        ([(3450, -3550), (4500, -3450)], "Rancho Bernardo Road", S, "4", "40 mph"),
+        ([(-4650, 2550), (-3600, 2250), (-2600, 1800), (-1900, 1500), (-1300, 1300)], "Carmel Valley Road", S, "4", "40 mph"),
+        ([(-2650, zt), (-2600, 3950), (-2650, 3000), (-2600, 1800), (-2450, 700), (-2250, -300)], "Black Mountain Road", S, "4", "40 mph"),
+        ([(-3700, -600), (-2250, -300), (-1250, -600), (-300, -900), (800, -100)], "Paseo Del Sur", T, "2", "35 mph"),
+        ([(-4650, -3900), (-3500, -4000), (-2100, -4300)], "San Dieguito Road", S, "4", "40 mph"),
     ]
+    arts = [arterial(D.pts(c), n, h, ln, ms) for c, n, h, ln, ms in art_specs]
     by_name = {a.attrs["name"]: a for a in arts}
     ramps: list[RoadLine] = []
     ramps += diamond(i15, by_name["Camino Del Norte"], "I 15")
@@ -455,6 +512,7 @@ def build_layout(ext: Extent, schools_cfg: list[dict[str, Any]], target_houses: 
     for kind, (cx, cz), w, d, rot in parcel_specs:
         poly = box(-w / 2, -d / 2, w / 2, d / 2)
         c, s_ = math.cos(rot), math.sin(rot)
+        cx, cz = D.p((cx, cz))
         poly = Polygon([(cx + x * c - z * s_, cz + x * s_ + z * c) for x, z in poly.exterior.coords])
         parcels.append((kind, poly, rot))
     exclusions = unary_union([p.buffer(25) for p in campuses.values()] + [p[1].buffer(20) for p in parcels])
@@ -463,24 +521,27 @@ def build_layout(ext: Extent, schools_cfg: list[dict[str, Any]], target_houses: 
     frame = box(ext.min_x, ext.min_z, ext.max_x, ext.max_z).exterior
     face_lines = [a.ls for a in arts] + [LineString(i15.center), LineString(sr56.center), frame]
     faces = list(polygonize(unary_union(face_lines)))
+    DE = DESIGN_EXTENT
     open_space = unary_union(
         [
-            Point(*BLACK_MOUNTAIN).buffer(1250),
-            box(ext.min_x, ext.min_z, ext.max_x, -3750),  # river valley
-            box(ext.min_x, 3900, ext.max_x, ext.max_z),  # SR 56 canyon
-            box(-4800, 1800, -3200, 3700),  # western hills
+            Point(*D.p(BLACK_MOUNTAIN)).buffer(1250 * min(D.sx, D.sz)),
+            D.geom(box(DE.min_x - 500, DE.min_z - 500, DE.max_x + 500, -3750)),  # river valley
+            D.geom(box(DE.min_x - 500, 3900, DE.max_x + 500, DE.max_z + 500)),  # SR 56 canyon
+            D.geom(box(-4800, 1800, -3200, 3700)),  # western hills
         ]
-        + [LineString(c).buffer(140) for c in CANYONS]
+        + [LineString(D.pts(c)).buffer(140) for c in CANYONS]
     )
     fw_buffer = unary_union([LineString(i15.center).buffer(260), LineString(sr56.center).buffer(200)])
-    zones = unary_union(
-        [
-            Polygon([(-300, -2900), (3100, -2500), (3100, 1100), (-300, 1100)]),  # 4S Ranch
-            Polygon([(-3900, -3700), (-300, -3300), (-300, -150), (-3900, -150)]),  # Del Sur
-            Polygon([(-4300, 1000), (-1500, 1000), (-1500, 3850), (-4300, 3850)]),  # south-west
-            Polygon([(1800, 1000), (2800, 1000), (2700, 3500), (1800, 3500)]),  # Carmel Mountain
-            Polygon([(3600, -3200), (4700, -3200), (4700, 1400), (3500, 1400)]),  # east of I 15
-        ]
+    zones = D.geom(
+        unary_union(
+            [
+                Polygon([(-300, -2900), (3100, -2500), (3100, 1100), (-300, 1100)]),  # 4S Ranch
+                Polygon([(-3900, -3700), (-300, -3300), (-300, -150), (-3900, -150)]),  # Del Sur
+                Polygon([(-4300, 1000), (-1500, 1000), (-1500, 3850), (-4300, 3850)]),  # south-west
+                Polygon([(1800, 1000), (2800, 1000), (2700, 3500), (1800, 3500)]),  # Carmel Mountain
+                Polygon([(3600, -3200), (4700, -3200), (4700, 1400), (3500, 1400)]),  # east of I 15
+            ]
+        )
     )
     # dangling arterial ends do not split polygonized faces, so cut pods by arterial buffers too
     art_buffer = unary_union([a.ls.buffer(POD_FACE_INSET_M) for a in arts])

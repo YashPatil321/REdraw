@@ -87,7 +87,9 @@ def write_mock_raw(world, raw: Path) -> None:
         a = {kk: vv for kk, vv in d.items() if kk not in ("geometry", "osmid")}
         G.add_edge(u, v, **a, osmid=1000 + k, geometry=geom)
     # Cut the I 15 north terminus (as a bbox truncation would) to exercise the exit turnaround logic.
-    nx_, nz_ = 3950.0, region_extent().min_z
+    from pipeline.synthetic import design_map
+
+    nx_, nz_ = design_map().x(3950.0), region_extent().min_z
     term = min(G.nodes, key=lambda n: (latlon_to_scene(G.nodes[n]["y"], G.nodes[n]["x"])[0] - nx_) ** 2 + (latlon_to_scene(G.nodes[n]["y"], G.nodes[n]["x"])[1] - nz_) ** 2)
     G.remove_node(term)
     for p in ("drive", "walk", "bike"):
@@ -102,8 +104,9 @@ def write_mock_raw(world, raw: Path) -> None:
     for sid, poly in world.layout.campuses.items():
         name = next(s["name"] for s in load_yaml("schools.yaml")["schools"] if s["id"] == sid)
         rows.append({"name": name, "amenity": "school", "geometry": poly})
-    rows.append({"name": "Test Ridge Elementary School", "amenity": "school", "geometry": Point(-2600, 2600).buffer(80)})
-    rows.append({"name": "Little Sprouts Preschool", "amenity": "school", "geometry": Point(-2000, 2000).buffer(40)})
+    D = design_map()
+    rows.append({"name": "Test Ridge Elementary School", "amenity": "school", "geometry": Point(*D.p((-2600, 2600))).buffer(80)})
+    rows.append({"name": "Little Sprouts Preschool", "amenity": "school", "geometry": Point(*D.p((-2000, 2000))).buffer(40)})
     sg = gpd.GeoDataFrame([{k: v for k, v in r.items() if k != "geometry"} for r in rows], geometry=[syn_to_utm(r["geometry"]) for r in rows], crs="EPSG:32611")
     sg.to_crs("EPSG:4326").to_file(raw / "osm_schools.geojson", driver="GeoJSON")
     # TIGER block groups: 4 quadrants of the region

@@ -226,6 +226,8 @@ class RoadNetwork:
     edges: pd.DataFrame  # row order == edge_idx
     exits: list[dict[str, Any]]
     signal_source: str = "osm"  # "osm" (tagged / snapped), "inferred" (signal_inference.*) or "none"
+    G_visual: nx.MultiDiGraph | None = None  # unclipped projected graph (render-only roads beyond the bbox)
+    boundary_nodes: int = 0  # nodes created where roads cross the region bbox edge
 
 
 def road_key(data: dict[str, Any]) -> str:
@@ -511,6 +513,85 @@ def add_exit_turnarounds(G: nx.MultiDiGraph, exits_xy: list[tuple[dict[str, Any]
     return added
 
 
+BOUNDARY_NODE_ID_BASE = 9_100_000_000  # synthetic node ids where roads cross the region bbox edge
+
+
+def region_ring_utm(samples: int = 50) -> Any:
+    """The WGS84 region bbox as a densified polygon in EPSG:32611 (edges bulge slightly in UTM)."""
+    from shapely.geometry import Polygon
+
+    from pipeline.config import region
+    from pipeline.geo import lonlat_to_utm
+
+    b = region()["bbox"]
+    n = samples
+    ring_ll = (
+        [(b["west"] + (b["east"] - b["west"]) * i / n, b["south"]) for i in range(n)]
+        + [(b["east"], b["south"] + (b["north"] - b["south"]) * i / n) for i in range(n)]
+        + [(b["east"] - (b["east"] - b["west"]) * i / n, b["north"]) for i in range(n)]
+        + [(b["west"], b["north"] - (b["north"] - b["south"]) * i / n) for i in range(n)]
+    )
+    return Polygon([lonlat_to_utm(lo, la) for lo, la in ring_ll])
+
+
+def clip_graph_to_region(G: nx.MultiDiGraph, poly: Any | None = None) -> int:
+    """Cut every edge that crosses the region bbox edge at the crossing (UTM graph, in place) and
+    drop everything outside. The raw data may cover a larger area than region.yaml; the sim
+    network is exactly the region. Crossing points become nodes (ids from BOUNDARY_NODE_ID_BASE,
+    attribute `boundary=True`), shared by both directions of a two-way road, so exits snap to the
+    true bbox-edge crossing. Returns the number of boundary nodes created."""
+    import shapely
+    from shapely.geometry import Point
+
+    poly = poly if poly is not None else region_ring_utm()
+    inside_poly = poly.buffer(0.5)
+    shapely.prepare(inside_poly)
+    node_in = {n: bool(inside_poly.contains(Point(d["x"], d["y"]))) for n, d in G.nodes(data=True)}
+    created: dict[tuple[int, int], Any] = {}
+    next_id = BOUNDARY_NODE_ID_BASE
+
+    def node_at(x: float, y: float) -> Any:
+        nonlocal next_id
+        key = (int(round(x * 10)), int(round(y * 10)))
+        if key not in created:
+            G.add_node(next_id, x=float(x), y=float(y), street_count=1, boundary=True)
+            node_in[next_id] = True
+            created[key] = next_id
+            next_id += 1
+        return created[key]
+
+    todo = []
+    for u, v, k, d in G.edges(keys=True, data=True):
+        if node_in[u] and node_in[v]:
+            continue
+        g = d.get("geometry") or LineString([(G.nodes[u]["x"], G.nodes[u]["y"]), (G.nodes[v]["x"], G.nodes[v]["y"])])
+        if not node_in[u] and not node_in[v] and not g.intersects(poly):
+            continue
+        todo.append((u, v, k, d, g))
+    for u, v, k, d, g in todo:
+        coords = list(g.coords)
+        pu = (G.nodes[u]["x"], G.nodes[u]["y"])
+        if math.hypot(coords[0][0] - pu[0], coords[0][1] - pu[1]) > math.hypot(coords[-1][0] - pu[0], coords[-1][1] - pu[1]):
+            g = LineString(coords[::-1])
+        inter = g.intersection(poly)
+        parts = [p for p in ([inter] if inter.geom_type == "LineString" else list(getattr(inter, "geoms", []))) if p.geom_type == "LineString" and p.length > 0.5]
+        L = max(float(d.get("length", g.length)), 1.0)
+        G.remove_edge(u, v, k)
+        for part in parts:
+            c = list(part.coords)
+            a = u if node_in[u] and math.hypot(c[0][0] - pu[0], c[0][1] - pu[1]) < 0.5 else node_at(*c[0])
+            pv = (G.nodes[v]["x"], G.nodes[v]["y"])
+            b = v if node_in[v] and math.hypot(c[-1][0] - pv[0], c[-1][1] - pv[1]) < 0.5 else node_at(*c[-1])
+            if a == b:
+                continue
+            nd = dict(d)
+            nd["geometry"] = part
+            nd["length"] = max(L * part.length / max(g.length, 1e-6), 0.5)
+            G.add_edge(a, b, **nd)
+    G.remove_nodes_from([n for n, ok in node_in.items() if not ok and n in G])
+    return len(created)
+
+
 def build_network(
     G: nx.MultiDiGraph,
     terrain: Terrain,
@@ -520,9 +601,12 @@ def build_network(
     """Projected OSM-style drive graph -> contract tables (strongly connected)."""
     if str(G.graph.get("crs", "")).upper().replace("EPSG:", "") != "32611":
         raise ValueError(f"build_network expects an EPSG:32611 graph, got crs={G.graph.get('crs')}")
+    G_visual = G.copy()
     G = G.copy()
     labels = list(region_cfg.get("arterial_labels", []))
     o = scene_origin()
+    n_boundary = clip_graph_to_region(G)
+    log(f"roads: clipped to the region bbox ({n_boundary} bbox-edge crossings, {G.number_of_nodes():,} nodes inside)")
 
     # Exit turnarounds (before taking the strongly connected component).
     from pipeline.geo import latlon_to_scene
@@ -655,7 +739,7 @@ def build_network(
     exits = snap_exits(nodes, edges, exits_xy, labels, config_xz)
     for ex in exits:
         nodes.loc[nodes["node_id"] == ex["node_id"], "boundary_exit"] = ex["id"]
-    return RoadNetwork(G=G, nodes=nodes, edges=edges, exits=exits, signal_source=signal_source)
+    return RoadNetwork(G=G, nodes=nodes, edges=edges, exits=exits, signal_source=signal_source, G_visual=G_visual, boundary_nodes=n_boundary)
 
 
 EXIT_ON_ROAD_TOL_M = 50.0  # a region.yaml exit point this close to its road is used as is
@@ -666,22 +750,11 @@ def exit_target(G: nx.MultiDiGraph, ex: dict[str, Any], x: float, z: float, labe
     lies on the road (within EXIT_ON_ROAD_TOL_M); otherwise the point where the road crosses the
     WGS84 region bbox edge nearest the configured point (within EXIT_SEARCH_RADIUS_M); otherwise
     the configured point."""
-    from shapely.geometry import Point, Polygon
+    from shapely.geometry import Point
     from shapely.ops import nearest_points
 
-    from pipeline.config import region
-    from pipeline.geo import lonlat_to_utm
-
     o = scene_origin()
-    b = region()["bbox"]
-    n = 50
-    ring_ll = (
-        [(b["west"] + (b["east"] - b["west"]) * i / n, b["south"]) for i in range(n)]
-        + [(b["east"], b["south"] + (b["north"] - b["south"]) * i / n) for i in range(n)]
-        + [(b["east"] - (b["east"] - b["west"]) * i / n, b["north"]) for i in range(n)]
-        + [(b["west"], b["north"] - (b["north"] - b["south"]) * i / n) for i in range(n)]
-    )
-    ring = Polygon([lonlat_to_utm(lo, la) for lo, la in ring_ll]).exterior
+    ring = region_ring_utm().exterior
     pt = Point(x + o.easting, o.northing - z)
     prefix, refs = exit_matcher(ex, labels)
     best, bd = None, EXIT_SEARCH_RADIUS_M
