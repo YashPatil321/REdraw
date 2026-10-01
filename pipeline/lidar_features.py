@@ -867,7 +867,7 @@ def load_bridge_lines() -> list[Any]:
         for wkb, flags in zip(t["geometry"], t["road_flags"], strict=True):
             if flags is None:
                 continue
-            spans = [x.get("between") for x in flags if "is_bridge" in list(x.get("values") or [])]
+            spans = [x.get("between") for x in flags if x.get("values") is not None and "is_bridge" in list(x["values"])]
             if not spans:
                 continue
             g = shapely.from_wkb(wkb)
@@ -1493,7 +1493,7 @@ def write_missing(jobs: list[TileJob]) -> Any:
 
             bt = STRtree([b.buffer(10.0) for b in bridges])
             on_bridge = np.array([len(bt.query(g, predicate="intersects")) > 0 for g in mg.geometry], dtype=bool)
-        dropped["on_osm_bridge"] = int((on_bridge & ~thin).sum())
+        dropped["on_road_bridge"] = int((on_bridge & ~thin).sum())
         mg = mg[~thin & ~on_bridge].reset_index(drop=True)
         c = mg.geometry.centroid
         mg["centroid_x"], mg["centroid_z"] = utm_to_scene_arrays(c.x.to_numpy(), c.y.to_numpy())
@@ -1504,7 +1504,13 @@ def write_missing(jobs: list[TileJob]) -> Any:
         mg = mg[inside].reset_index(drop=True)
         mg.insert(0, "lidar_id", [f"lidar_{i:05d}" for i in range(len(mg))])
         mg["height_m"] = mg["ridge_height_m"].round(2)
-        mg["quality"] = np.where(mg["n_roof_points"] >= 40, "good", np.where(mg["n_roof_points"] >= 12, "fair", "poor"))
+        from shapely import STRtree
+
+        fpt = STRtree(list(load_footprints(clip=False).geometry))
+        mg["adjacent_to_footprint"] = [len(fpt.query(g.buffer(3.0), predicate="intersects")) > 0 for g in mg.geometry]
+        trailer = (mg["roof_type"] == "flat") & (mg["ridge_height_m"] < 4.5) & (mg["area_m2"] < 150.0)
+        mg["quality"] = np.where(trailer | (mg["n_roof_points"] < 12), "poor",
+                                 np.where(mg["adjacent_to_footprint"] | (mg["n_roof_points"] < 40), "fair", "good"))
         mg["lidar_status"] = "present"
         mg = gpd.GeoDataFrame(add_spec_aliases(mg), geometry="geometry", crs=PROJECTION)
         mg["planes"] = [json.dumps(v) for v in mg["planes"]]  # GeoJSON properties: JSON string
@@ -1855,6 +1861,7 @@ def validation(b: Any, mg: Any, trees: Any, reg: dict[str, Any], shift: tuple[fl
         "tree_crown_radius_m_percentiles": {str(q): float(np.percentile(trees["crown_radius_m"], q)) for q in (5, 25, 50, 75, 95)} if len(trees) else {},
         "missing_building_candidates_dropped": dict(mg.attrs.get("dropped", {})),
         "missing_buildings_by_roof_type": {str(k): int(v) for k, v in mg["roof_type"].value_counts().items()} if len(mg) and "roof_type" in mg else {},
+        "missing_buildings_by_quality": {str(k): int(v) for k, v in mg["quality"].value_counts().items()} if len(mg) and "quality" in mg else {},
         "missing_buildings_area_m2_total": float(mg["area_m2"].sum()) if len(mg) and "area_m2" in mg else 0.0,
         "registration_shift_applied_m": list(shift),
     }

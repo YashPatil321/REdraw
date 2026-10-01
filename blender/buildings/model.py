@@ -608,6 +608,7 @@ class Builder:
         self.plan = plan_roof({**spec, "floor_y": self.spec_floor}, self.fp, lod, P, self.rng)
         self.style = make_style(spec, P, self.plan.levels[-1].flat, self.rng)
         self.front = self._front_dir()
+        self.alt_front = self._alt_front_dir()
         self.garages: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []  # (door start, door end, outward normal) in plan
         self.entries: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 
@@ -631,6 +632,26 @@ class Builder:
             if np.hypot(*v) > 1e-3:
                 return v / np.hypot(*v)
         return None
+
+    def _alt_front_dir(self) -> np.ndarray | None:
+        """A second street on the opposite side (alley-loaded lots: garage on the alley, entry on the street)."""
+        if self.front is None:
+            return None
+        c = np.array(self.fp.plan_poly.centroid.coords[0])
+        for st in (self.spec.get("streets") or [])[1:]:
+            v = np.array([st["x"], -st["z"]]) - c
+            nv = float(np.hypot(*v))
+            if nv < 1e-3 or st["d"] > 30.0:
+                continue
+            v /= nv
+            if float(v @ self.front) < -0.5:
+                return v
+        return None
+
+    def facing(self, n: np.ndarray) -> float:
+        """How much a wall normal faces a street (max over the front and the opposite street)."""
+        f = [float(n @ d) for d in (self.front, self.alt_front) if d is not None]
+        return max(f) if f else 0.0
 
     def walls(self) -> list[tuple[np.ndarray, np.ndarray]]:
         """Outline edges in plan coords (a, b) with outward normal on the right (CCW exterior, CW holes)."""
@@ -948,7 +969,25 @@ class Builder:
         dw = P["entry_door_w_m"]
         free = (s0 + span + 0.9, L - 0.6) if side < 0 else (0.6, s0 - 0.9)
         placed = False
-        if free[1] - free[0] >= dw + 1.0:
+        if self.alt_front is not None:  # alley-loaded: the entry faces the other street
+            best = None
+            for i, (a2, b2) in enumerate(walls):
+                e = b2 - a2
+                L2 = float(np.hypot(*e))
+                n2 = np.array([e[1], -e[0]]) / L2
+                fac = float(n2 @ self.alt_front)
+                T, Z = tops[i]
+                if L2 < dw + 1.2 or fac < 0.5 or float(np.min(Z)) - self.floor < P["entry_door_h_m"] + 0.3:
+                    continue
+                sc = fac * 3 + min(L2, 8.0) * 0.1
+                if best is None or sc > best[0]:
+                    best = (sc, i, L2)
+            if best is not None:
+                _, i, L2 = best
+                sd = (L2 - dw) / 2
+                res.setdefault(i, []).append(("entry", sd, sd + dw, self.floor, self.floor + P["entry_door_h_m"]))
+                placed = True
+        if not placed and free[1] - free[0] >= dw + 1.0:
             sd = (free[0] + free[1]) / 2 if free[1] - free[0] < 4 else (free[0] + 1.2 if side < 0 else free[1] - 1.2 - dw)
             res[gi].append(("entry", sd, sd + dw, self.floor, self.floor + P["entry_door_h_m"]))
             placed = True
@@ -1114,7 +1153,7 @@ class Builder:
         rng = np.random.default_rng(_hash(self.P["seed"], self.bid, wi, step))
         btype = self.btype
         story = float(self.P["story_m"].get(btype, 3.0))
-        facing = float(n @ self.front) if self.front is not None else 0.0
+        facing = self.facing(n)
         has_garage = any(r[0].startswith("garage") for r in reserved)
         if btype in ("commercial",):
             self._storefront(wi, a, t, n, L, S, Z, facing, rng)
@@ -1143,7 +1182,7 @@ class Builder:
             if k >= 1 and k >= nfl:
                 break
             # choose window count and positions
-            spacing = 3.8 if facing > 0.5 else (4.6 if facing < -0.5 else 8.0)
+            spacing = 4.0 if facing > 0.5 else (5.0 if facing < -0.5 else 8.0)
             if btype == "apartments":
                 spacing = 3.2
             avail = L - 1.2

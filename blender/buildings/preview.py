@@ -218,7 +218,7 @@ def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1, yards: Any 
     V = np.column_stack([X.ravel(), -Z.ravel(), h.ravel() - 0.04])
     if paved is not None and not paved.is_empty:  # keep the terrain under the draped paving
         shapely.prepare(paved)
-        V[shapely.contains_xy(paved, X.ravel(), Z.ravel()), 2] -= 0.2
+        V[shapely.contains_xy(paved, X.ravel(), Z.ravel()), 2] -= 0.15
     idx = np.arange(n * n).reshape(n, n)
     # rows go south (-Y): (i, j) -> (i, j+1) -> (i+1, j+1) is clockwise seen from above; flip
     F = np.column_stack([idx[:-1, :-1].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel(), idx[:-1, 1:].ravel()])
@@ -342,7 +342,7 @@ def roads_and_driveways(T: Terrain, data: dict[str, Any], builders: list[model.B
         if len(F):
             size = cell_size(man, cell)
             mesh_object(name, V, F, V[:, :2] / size, ground_material(man, cell))
-    return A, shapely.union_all([A, G, Wk, D]).buffer(0.6)
+    return A, shapely.union_all([A, G, Wk, D]).buffer(-0.35)
 
 
 def import_proto(path: Path) -> bpy.types.Object | None:
@@ -457,7 +457,7 @@ def decorate_lots(T: Terrain, builders: list[model.Builder], asphalt: Any) -> in
             L = float(np.hypot(*e))
             t = e / L
             nrm = np.array([t[1], -t[0]])
-            if nrm @ b.front < 0.5 or L < 2.0:
+            if b.facing(nrm) < 0.5 or L < 2.0:
                 continue
             k = 0.7
             while k < L - 0.5:

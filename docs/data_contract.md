@@ -366,7 +366,13 @@ read by `build_buildings.py`, `build_buildings_blender.py` and `build_props.py`.
     .venv/bin/python -m pipeline.fetch_lidar        # EPT nodes -> 1 km UTM LAZ tiles (cached, resumable)
     .venv/bin/python -m pipeline.lidar_features     # rasters, roofs, missing buildings, trees (cached per tile)
         --force           recompute everything       --force-roofs   recompute roofs only
-        --tiles-only      stop before roofs          --no-shift      ignore the registration shift
+        --force-trees     recompute tree QA only     --tiles-only    stop before roofs
+        --no-shift        ignore the registration shift
+
+Stages (each cached per 1 km tile in `data/raw/lidar/work/`, so a killed run resumes): tiles
+(rasters, tree candidates, lidar-only building candidates) -> mosaic -> tree QA (per-tree vertical
+return profile) -> trees.parquet + missing_buildings.geojson -> roofs -> buildings_roofs.parquet ->
+lidar_validation.json. A fully cached re-run (assembly only) takes ~30 s.
 
 Source: USGS 3DEP **CA_SanDiegoQL2_2014** EPT (`s3://usgs-lidar-public`, public domain), flown 2014,
 ~4.6 pts/m2 over the bbox. The brief's CA_SanDiego_2015_C17_1 has no points over the bbox. Class codes:
@@ -435,17 +441,30 @@ hip + gable wings, cross gables, split levels).
 Lidar buildings with no footprint (every `osm_buildings.geojson` footprint, also outside the bbox,
 masks them): nDSM > `lidar.missing_building_min_height_m`, planar (1.5 m plane residual < 0.2 m) and
 opaque (< 30 % multi-return), opened by a 1 m disk, at least 2.5 m wide, area >= `lidar.missing_building_min_area_m2`,
-not within 6 m of a drive-graph road (overpasses) or on ground regraded after 2014, centroid inside the
-bbox. Polygonized from the 0.5 m mask and simplified (0.5 m). Properties: `lidar_id` (`lidar_NNNNN`),
-`area_m2`, `height_m` (= ridge), the same roof columns as `buildings_roofs.parquet` (from the polygon
-shrunk 0.25 m; `planes` is a JSON string here), `penetration`, `centroid_*`, `quality`, `lidar_status`.
+not within 6 m of a drive-graph road or 10 m of a road bridge (drive-graph `bridge` + Overture
+`is_bridge`), not on ground regraded after 2014, not thin or elongated (minimum rotated rectangle width
+>= `lidar.missing_building_min_width_m`, length / width <= `lidar.missing_building_max_elongation`: walls,
+sign gantries, carport rows), centroid inside the bbox. Polygonized from the 0.5 m mask and simplified
+(0.5 m). Properties: `lidar_id` (`lidar_NNNNN`), `area_m2`, `height_m` (= ridge), the same roof columns as
+`buildings_roofs.parquet` (from the polygon shrunk 0.25 m; `planes` is a JSON string here),
+`penetration`, `centroid_*`, `adjacent_to_footprint` (within 3 m of a mapped footprint: usually an
+unmapped wing / carport / patio cover of that building), `lidar_status`, and `quality`:
+`good` = stand-alone, >= 40 roof points, not trailer-like; `fair` = adjacent to a footprint or 12-39
+points; `poor` = flat, < 4.5 m high and < 150 m2 (parked RVs / trailers / sheds look like this) or
+< 12 points. These are **candidates**: consumers that add them as buildings should keep `good` (and
+maybe `fair`).
 
 ### `trees.parquet` (one row per tree)
 
 Tree tops = variable-window local maxima of the 0.6 m-Gaussian-smoothed CHM (window radius = half the
 Popescu & Wynne 2004 crown width for that height, clipped to 1-5 m) taller than `lidar.tree_min_height_m`;
 crowns = marker watershed of the inverted CHM on vegetation cells, trimmed below 40 % of the top
-height. Trees on building footprints (+1.5 m) or regraded ground are dropped; inside the bbox only.
+height; `crown_radius_m` = sqrt(crown segment area / pi). Trees on building footprints (+1.5 m) or
+regraded ground are dropped; inside the bbox only. Tree QA (counts in `lidar_validation.json`
+`tree_candidates_dropped`) also drops: candidates with fewer than `lidar.tree_min_upper_returns`
+returns in the upper crown (poles, lamp heads, wires), candidates taller than `lidar.tree_max_height_m`
+(towers), and tall, very narrow candidates (radius / height < `lidar.wire_max_radius_height_ratio`)
+lying on straight >= 400 m runs (the SDG&E transmission-line corridors; sequential RANSAC lines).
 
 | column | meaning |
 |---|---|
@@ -458,7 +477,9 @@ height. Trees on building footprints (+1.5 m) or regraded ground are dropped; in
 | `crown_radius_m` | radius of a circle with the crown's area |
 | `crown_mean_ratio` | mean crown CHM / top height (cone ~0.33-0.5, dome ~0.7+) |
 | `canopy_cover_20m` | share of canopy cells in the 20 m square around the top |
-| `species_guess` | `palm` / `broadleaf` / `conifer`: **a crude geometric guess, not a classification**. palm = tall (>= `lidar.palm_min_height_m`), small crown (radius <= `lidar.palm_max_crown_radius_m`, <= `lidar.palm_max_radius_height_ratio` x height), fairly isolated (`canopy_cover_20m` < `lidar.palm_max_canopy_cover`); conifer = conical crown (`crown_mean_ratio` < `lidar.conifer_max_crown_fill`, narrow, >= `lidar.conifer_min_height_m`); else broadleaf |
+| `upper_returns` | lidar returns within the crown radius above half the height |
+| `mid_return_frac` | share of the crown-radius returns above 2 m that lie below half the height (bare trunk ~0) |
+| `species_guess` | `palm` / `broadleaf` / `conifer`: **a crude geometric guess, not a classification**. palm = tall (>= `lidar.palm_min_height_m`), small crown (radius <= `lidar.palm_max_crown_radius_m`, <= `lidar.palm_max_radius_height_ratio` x height), fairly isolated (`canopy_cover_20m` < `lidar.palm_max_canopy_cover`), bare-trunk profile (`mid_return_frac` < `lidar.palm_max_mid_return_frac`); conifer = conical crown (`crown_mean_ratio` < `lidar.conifer_max_crown_fill`, narrow, >= `lidar.conifer_min_height_m`); else broadleaf |
 
 ### `lidar_validation.json`
 
