@@ -7,12 +7,15 @@
 import * as THREE from 'three';
 import { api } from '../api';
 import { originFromLatLon, sceneToLatLon, type Origin } from '../geo';
-import { store, toast, type AppState } from '../state';
+import { store, toast, type AppState, type RenderMode } from '../state';
 import { advanceClock } from '../time';
 import { TrafficLayer, vehicleLightUniforms, type VehicleGeometries } from '../traffic/layer';
 import type { RoadNetwork } from '../traffic/network';
 import type { Playback } from '../traffic/playback';
-import { buildRoadOverlayGeometry } from '../traffic/roadOverlay';
+import { adjTexture, buildRoadOverlayGeometry } from '../traffic/roadOverlay';
+import { browserGoogleKey } from '../photoreal/key';
+import type { PhotorealManager } from '../photoreal/manager';
+import type { TileSource } from '../photoreal/tiles';
 import type { School, WorldMeta } from '../types';
 import { applyMapClick, setParam, type MapType } from '../ui/formgen';
 import { ArterialLabels, BASELINE_COLOR, EdgeHighlight, LocationPin, PLAN_COLOR, PlanOverlay, SchoolMarkers } from './markers';
@@ -23,6 +26,7 @@ import { World } from './world';
 
 const SNAP_EDGE_M = 250;
 const SNAP_NODE_M = 250;
+const RENDER_MODE_KEY = 'redraw-render-mode';
 
 export class SceneController {
   readonly viewer: Viewer;
@@ -50,6 +54,10 @@ export class SceneController {
   private lastQualityChange = 0;
   /** vehicle meshes from the props library, when available */
   vehicleGeoms: VehicleGeometries = {};
+  /** photoreal tiles runtime (lazy: created the first time photoreal mode is on) */
+  private photo: PhotorealManager | null = null;
+  private photoLoading: Promise<void> | null = null;
+  private tileSource: TileSource | null = null;
 
   constructor(container: HTMLElement) {
     this.viewer = new Viewer(container);
@@ -69,6 +77,8 @@ export class SceneController {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && store.get().mapPick) store.set({ mapPick: null });
     });
+    this.viewer.groundFn = (x, z) => this.walkGround(x, z);
+    this.viewer.walk.onExit = () => this.exitWalk();
     this.viewer.split.hooks = {
       beforePass: (side) => {
         if (this.baseline) this.baseline.group.visible = side === 'left';
@@ -135,6 +145,8 @@ export class SceneController {
     this.sky.configureShadows(qs.shadows, qs.shadowMapSize);
     this.clockT = store.get().simTime;
 
+    this.initPhotorealSource();
+
     this.schoolMarkers = new SchoolMarkers(schools, (s) => this.selectSchool(s), meta.hero?.school_id);
     this.viewer.scene.add(this.schoolMarkers.group);
 
@@ -142,6 +154,118 @@ export class SceneController {
       store.subscribe((s, prev) => this.onState(s, prev)),
     );
     this.applyVisibility(store.get());
+  }
+
+  /** Photoreal source: `?tiles=<tileset.json>` (dev / fixtures) or a Google key. Default mode follows. */
+  private initPhotorealSource(): void {
+    const params = new URLSearchParams(location.search);
+    const url = params.get('tiles');
+    const key = browserGoogleKey();
+    if (url) this.tileSource = { kind: 'url', url: new URL(url, location.href).toString() };
+    else if (key.key) this.tileSource = { kind: 'google', key: key.key };
+    let pref: string | null = params.get('mode');
+    if (!pref) {
+      try {
+        pref = localStorage.getItem(RENDER_MODE_KEY);
+      } catch {
+        pref = null;
+      }
+    }
+    const available = this.tileSource !== null;
+    const mode: RenderMode = available && pref !== 'open' ? 'photoreal' : 'open';
+    store.set({
+      photoreal: { available, source: this.tileSource?.kind ?? null, status: '', error: null },
+      renderMode: mode,
+    });
+    if (mode === 'photoreal') this.applyRenderMode(store.get());
+  }
+
+  /** Top-bar toggle. */
+  setRenderMode(mode: RenderMode): void {
+    if (mode === 'photoreal' && !this.tileSource) return;
+    try {
+      localStorage.setItem(RENDER_MODE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+    store.set({ renderMode: mode });
+  }
+
+  private get photoreal(): boolean {
+    return store.get().renderMode === 'photoreal' && !!this.photo?.isActive;
+  }
+
+  private ensurePhotoreal(): Promise<void> {
+    if (this.photo || !this.tileSource || !this.meta || !this.origin) return Promise.resolve();
+    if (this.photoLoading) return this.photoLoading;
+    store.set((s) => ({ photoreal: { ...s.photoreal, status: 'Loading photoreal 3D tiles…' } }));
+    this.photoLoading = import('../photoreal/manager')
+      .then(({ PhotorealManager }) => {
+        const ext = this.meta!.region.extent_scene;
+        this.photo = new PhotorealManager({
+          scene: this.viewer.scene,
+          camera: this.viewer.camera,
+          renderer: this.viewer.renderer,
+          origin: this.origin!,
+          extent: ext,
+          source: this.tileSource!,
+          onStatus: (msg) => store.set((s) => ({ photoreal: { ...s.photoreal, status: msg } })),
+          onAttribution: (a) => store.set({ attribution: a }),
+          onError: (msg) => {
+            store.set((s) => ({ photoreal: { ...s.photoreal, error: msg, status: '' }, renderMode: 'open' }));
+            toast(`${msg} Showing open data instead.`, 'error', 12000);
+          },
+          onDrape: () => {
+            if (this.net) adjTexture(this.net).needsUpdate = true;
+          },
+        });
+        this.photo.setNetwork(this.net);
+        this.applyRenderMode(store.get());
+      })
+      .catch((e: unknown) => {
+        console.error(e);
+        store.set((s) => ({ photoreal: { ...s.photoreal, error: (e as Error).message, status: '' }, renderMode: 'open' }));
+      });
+    return this.photoLoading;
+  }
+
+  /** Switch between our open-data meshes and photoreal tiles (overlays restyle to match). */
+  private applyRenderMode(s: AppState): void {
+    const want = s.renderMode === 'photoreal';
+    if (want && !this.photo) {
+      void this.ensurePhotoreal();
+      return;
+    }
+    this.photo?.setActive(want);
+    const pr = want && !!this.photo;
+    // our meshes stay loaded (and raycastable for building picking) but are not drawn
+    this.world.group.visible = !pr;
+    this.viewer.directRender = pr;
+    const qs = QUALITY[s.quality];
+    this.viewer.renderer.shadowMap.enabled = qs.shadows && !pr;
+    this.sky?.configureShadows(qs.shadows && !pr, qs.shadowMapSize);
+    if (this.sky) this.sky.photoreal = pr;
+    for (const l of [this.baseline, this.plan]) l?.setStyle(pr ? 'photoreal' : 'open');
+    if (this.planOverlay) this.planOverlay.update(s.draft.tools, s.tools, s.selectedTool);
+    if (!pr && store.get().attribution) store.set({ attribution: null });
+    this.reseatOverlays();
+  }
+
+  /** Queue bars, pins: back onto the ground after a base-map change. */
+  private reseatOverlays(): void {
+    const fn = (x: number, z: number, fb: number): number => (this.photoreal ? (this.photo!.heightAt(x, z) ?? fb) : fb);
+    for (const l of [this.baseline, this.plan]) l?.setGroundHeights(fn);
+  }
+
+  /** Ground for the walk camera: photo tiles, else our terrain grid, else the nearest road. */
+  private walkGround(x: number, z: number): number | null {
+    if (this.photoreal) {
+      const h = this.photo!.heightAt(x, z);
+      if (h !== null) return h;
+    }
+    const g = this.world.fastHeightAt(x, z);
+    if (g !== null) return g;
+    return this.net?.nearestEdge(x, z, 300)?.y ?? null;
   }
 
   async loadWorld(): Promise<void> {
@@ -191,9 +315,14 @@ export class SceneController {
     if (s.baselinePlayback) this.setPlayback('baseline', s.baselinePlayback);
     if (s.planPlayback) this.setPlayback('plan', s.planPlayback);
     this.planOverlay.update(s.draft.tools, s.tools, s.selectedTool);
+    this.photo?.setNetwork(net);
   }
 
   private groundHeight(x: number, z: number): number {
+    if (this.photoreal) {
+      const h = this.photo!.heightAt(x, z);
+      if (h !== null) return h;
+    }
     const nearest = this.net?.nearestEdge(x, z, 400);
     return this.world.heightAt(x, z, nearest?.y ?? 0);
   }
@@ -214,6 +343,8 @@ export class SceneController {
         castShadows: qs.shadows && qs.carShadows,
       });
       layer.setGhost(store.get().ghost);
+      layer.setStyle(this.photoreal ? 'photoreal' : 'open');
+      if (this.photoreal) layer.setGroundHeights((x, z, fb) => this.photo!.heightAt(x, z) ?? fb);
       this.viewer.scene.add(layer.group);
     }
     if (which === 'baseline') this.baseline = layer;
@@ -243,7 +374,11 @@ export class SceneController {
   }
 
   private onState(s: AppState, prev: AppState): void {
-    if (s.quality !== prev.quality) this.applyQuality(s.quality);
+    if (s.quality !== prev.quality) {
+      this.applyQuality(s.quality);
+      if (s.renderMode === 'photoreal') this.applyRenderMode(s);
+    }
+    if (s.renderMode !== prev.renderMode) this.applyRenderMode(s);
     if (s.baselinePlayback !== prev.baselinePlayback) this.setPlayback('baseline', s.baselinePlayback);
     if (s.planPlayback !== prev.planPlayback) this.setPlayback('plan', s.planPlayback);
     if (s.ghost !== prev.ghost) {
@@ -294,6 +429,12 @@ export class SceneController {
       vehicleLightUniforms.uHead.value = 1.2 + 4.5 * dark;
       vehicleLightUniforms.uTail.value = 0.9 + 3.2 * dark;
     }
+    if (this.photo) {
+      const walking = this.viewer.walking;
+      const target = walking ? this.viewer.camera.position : this.viewer.controls.target;
+      this.photo.frame(now, target, walking ? 25 : dist);
+      if (this.sky) this.photo.tiles.setDim(this.sky.dim);
+    }
     this.autoQuality(now);
     const scale = THREE.MathUtils.clamp(dist / 650, 1, 9);
     const h = this.viewer.canvas.clientHeight;
@@ -318,8 +459,7 @@ export class SceneController {
       return;
     }
     if (s.view !== 'explore' && s.view !== 'traffic' && s.view !== 'plan') return;
-    if (!this.world.firstHitIsBuilding(this.raycaster)) return;
-    const hit = this.world.pickBuilding(this.raycaster);
+    const hit = this.photoreal ? this.pickBuildingPhotoreal() : this.world.firstHitIsBuilding(this.raycaster) ? this.world.pickBuilding(this.raycaster) : null;
     if (!hit) return;
     this.pin.show(hit.point.x, hit.point.y, hit.point.z);
     store.set({ buildingLoading: true, school: null });
@@ -331,10 +471,24 @@ export class SceneController {
     }
   }
 
+  /**
+   * Photoreal picking: the click lands on the photo mesh; our building meshes
+   * are hidden but still raycastable. Accept our building if it is hit near the
+   * photo hit, else the building whose footprint centroid is nearest.
+   */
+  private pickBuildingPhotoreal(): { id: number; point: THREE.Vector3 } | null {
+    const p = this.photo!.pick(this.raycaster);
+    const ours = this.world.pickBuilding(this.raycaster, true);
+    if (!p) return ours;
+    if (ours && ours.point.distanceTo(p) < 25) return { id: ours.id, point: p };
+    const nb = this.world.nearestBuilding(p.x, p.z, 18);
+    return nb ? { id: nb.id, point: p } : null;
+  }
+
   private placeMapInput(): void {
     const s = store.get();
     const pick = s.mapPick!;
-    const ground = this.world.pickGround(this.raycaster);
+    const ground = this.photoreal ? (this.photo!.pick(this.raycaster) ?? this.world.pickGround(this.raycaster)) : this.world.pickGround(this.raycaster);
     if (!ground || !this.origin) {
       toast('Click on the terrain to place.', 'info', 2500);
       return;
@@ -380,6 +534,58 @@ export class SceneController {
   }
 
   // ---- camera helpers
+
+  /**
+   * Street-level view near (x, z): stand on the sidewalk of the nearest road,
+   * facing the point (a building or school), or along the road if none given.
+   */
+  walkHere(x: number, z: number, faceTarget = true): void {
+    let px = x;
+    let pz = z;
+    let heading = this.viewer.walking ? this.viewer.walk.heading : 0;
+    const hit = this.net?.nearestEdge(x, z, 250);
+    if (hit) {
+      const e = this.net!.pointAt(hit.edge, hit.frac, { x: 0, y: 0, z: 0, dx: 1, dz: 0 });
+      const lanes = Math.max(1, this.net!.edges[hit.edge]?.lanes ?? 1);
+      // perpendicular toward the target, out to the sidewalk
+      let nx = x - hit.x;
+      let nz = z - hit.z;
+      const nl = Math.hypot(nx, nz);
+      if (nl > 1) {
+        nx /= nl;
+        nz /= nl;
+      } else {
+        nx = -e.dz;
+        nz = e.dx;
+      }
+      const side = lanes * 3.4 + 2.5;
+      px = hit.x + nx * side;
+      pz = hit.z + nz * side;
+      heading = faceTarget && nl > 1 ? Math.atan2(x - px, -(z - pz)) : Math.atan2(e.dx, -e.dz);
+    }
+    store.set({ walking: true });
+    this.viewer.enterWalk({ x: px, z: pz, heading, pitch: faceTarget ? 0.08 : 0 });
+  }
+
+  /** Walk where the orbit camera is looking. */
+  walkAtTarget(): void {
+    const t = this.viewer.controls.target;
+    const cam = this.viewer.camera.position;
+    const heading = Math.atan2(t.x - cam.x, -(t.z - cam.z));
+    const hit = this.net?.nearestEdge(t.x, t.z, 300);
+    store.set({ walking: true });
+    if (hit) {
+      const e = this.net!.pointAt(hit.edge, hit.frac, { x: 0, y: 0, z: 0, dx: 1, dz: 0 });
+      const lanes = Math.max(1, this.net!.edges[hit.edge]?.lanes ?? 1);
+      const side = lanes * 3.4 + 2.5;
+      this.viewer.enterWalk({ x: hit.x - e.dz * side, z: hit.z + e.dx * side, heading: Math.atan2(e.dx, -e.dz) });
+    } else this.viewer.enterWalk({ x: t.x, z: t.z, heading });
+  }
+
+  exitWalk(): void {
+    this.viewer.exitWalk();
+    store.set({ walking: false });
+  }
 
   flyToXZ(x: number, z: number, distance = 700, duration = 1.6): void {
     const y = this.groundHeight(x, z);

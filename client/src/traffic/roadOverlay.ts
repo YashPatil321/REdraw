@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import { VC_STOPS, vcColor } from './congestion';
-import type { RoadNetwork } from './network';
+import { ADJ_TEX_W, type RoadNetwork } from './network';
 
 const TEX_W = 2048;
 const RAMP_MAX = VC_STOPS[VC_STOPS.length - 1]!.at;
@@ -22,6 +22,7 @@ export function buildRoadOverlayGeometry(net: RoadNetwork): THREE.BufferGeometry
   const off = new Float32Array(segs * 4);
   const edgeAttr = new Float32Array(segs * 4);
   const baseW = new Float32Array(segs * 4);
+  const ptIdx = new Float32Array(segs * 4);
   const index = new Uint32Array(segs * 6);
   let v = 0;
   let ii = 0;
@@ -45,13 +46,14 @@ export function buildRoadOverlayGeometry(net: RoadNetwork): THREE.BufferGeometry
       // right-hand side of travel direction: (-dz, dx)
       const px = -dz / L;
       const pz = dx / L;
-      const quad: Array<[number, number, number, number]> = [
-        [ax, ay, az, 0.08],
-        [ax, ay, az, 1],
-        [bx, by, bz, 0.08],
-        [bx, by, bz, 1],
+      const quad: Array<[number, number, number, number, number]> = [
+        [ax, ay, az, 0.08, a],
+        [ax, ay, az, 1, a],
+        [bx, by, bz, 0.08, b],
+        [bx, by, bz, 1, b],
       ];
-      for (const [x, y, z, o] of quad) {
+      for (const [x, y, z, o, pi] of quad) {
+        ptIdx[v] = pi;
         pos[v * 3] = x;
         pos[v * 3 + 1] = y;
         pos[v * 3 + 2] = z;
@@ -73,10 +75,25 @@ export function buildRoadOverlayGeometry(net: RoadNetwork): THREE.BufferGeometry
   g.setAttribute('aOff', new THREE.BufferAttribute(off, 1));
   g.setAttribute('aEdge', new THREE.BufferAttribute(edgeAttr, 1));
   g.setAttribute('aBaseW', new THREE.BufferAttribute(baseW, 1));
+  g.setAttribute('aPt', new THREE.BufferAttribute(ptIdx, 1));
   g.setIndex(new THREE.BufferAttribute(index, 1));
   g.computeBoundingSphere();
   if (g.boundingSphere) g.boundingSphere.radius += 50;
   return g;
+}
+
+/** Per-network texture view of `net.yAdj` (vertical draping adjustments). */
+const adjTextures = new WeakMap<RoadNetwork, THREE.DataTexture>();
+export function adjTexture(net: RoadNetwork): THREE.DataTexture {
+  let t = adjTextures.get(net);
+  if (!t) {
+    t = new THREE.DataTexture(net.yAdj, ADJ_TEX_W, net.yAdj.length / ADJ_TEX_W, THREE.RedFormat, THREE.FloatType);
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.needsUpdate = true;
+    adjTextures.set(net, t);
+  }
+  return t;
 }
 
 let rampTex: THREE.DataTexture | null = null;
@@ -103,6 +120,11 @@ attribute vec2 aPerp;
 attribute float aOff;
 attribute float aEdge;
 attribute float aBaseW;
+attribute float aPt;
+uniform sampler2D uAdj;
+uniform float uPull;
+uniform float uWidthScale;
+varying float vOff;
 uniform float uPxScale;
 uniform float uMinPx;
 uniform sampler2D uVc;
@@ -115,15 +137,22 @@ varying float vFogDepth;
 void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   float dist = distance(wp.xyz, cameraPosition);
-  float w = max(aBaseW, uMinPx * dist * uPxScale);
+  float w = max(aBaseW * uWidthScale, uMinPx * dist * uPxScale);
   wp.xz += aPerp * (aOff * w);
+  int pi = int(aPt + 0.5);
+  wp.y += texelFetch(uAdj, ivec2(pi - (pi / ${ADJ_TEX_W}) * ${ADJ_TEX_W}, pi / ${ADJ_TEX_W}), 0).r;
   wp.y += 0.8 + dist * 0.0025;
+  vOff = aOff;
   int e = int(aEdge + 0.5);
   int tw = int(uTexW);
   float vc = texelFetch(uVc, ivec2(e - (e / tw) * tw, e / tw), 0).r;
   vColor = texture(uRamp, vec2(clamp(vc / uRampMax, 0.0, 1.0), 0.5)).rgb;
   if (abs(aEdge - uHighlight) < 0.5) vColor = vec3(1.0, 1.0, 1.0);
   vec4 mv = viewMatrix * wp;
+  // photoreal: pull toward the camera so ribbons are not swallowed where the
+  // photo mesh sits a little above our DEM (big buildings still occlude them)
+  float pull = uPull * (1.0 + dist * 0.002);
+  mv.xyz *= max(0.05, 1.0 - pull / max(length(mv.xyz), 1.0));
   vFogDepth = -mv.z;
   gl_Position = projectionMatrix * mv;
 }
@@ -138,12 +167,18 @@ uniform vec3 fogColor;
 uniform float fogDensity;
 uniform float uOpacity;
 uniform float uBright;
+uniform float uSoft;
 varying vec3 vColor;
 varying float vFogDepth;
+varying float vOff;
 void main() {
   float f = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
   vec3 lin = pow(max(vColor, vec3(0.0)), vec3(2.2)) * uBright;
-  gl_FragColor = vec4(mix(lin, fogColor, f * 0.6), uOpacity);
+  // soft glowing ribbon (photoreal): bright core, feathered edges
+  float core = smoothstep(1.0, 0.45, vOff) * smoothstep(0.0, 0.35, vOff);
+  float alpha = mix(uOpacity, uOpacity * (0.25 + 0.75 * core), uSoft);
+  lin *= 1.0 + 0.5 * uSoft * core;
+  gl_FragColor = vec4(mix(lin, fogColor, f * 0.6), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -158,6 +193,7 @@ export class RoadOverlay {
   constructor(
     geometry: THREE.BufferGeometry,
     private nEdges: number,
+    adj: THREE.DataTexture,
   ) {
     const h = Math.max(1, Math.ceil(nEdges / TEX_W));
     this.vcData = new Float32Array(TEX_W * h);
@@ -180,6 +216,10 @@ export class RoadOverlay {
           uHighlight: { value: -1 },
           uOpacity: { value: 1 },
           uBright: { value: 2.2 },
+          uAdj: { value: null },
+          uPull: { value: 0 },
+          uWidthScale: { value: 1 },
+          uSoft: { value: 0 },
         },
       ]),
       fog: true,
@@ -191,6 +231,7 @@ export class RoadOverlay {
     // textures must be assigned after merge (merge clones uniform values)
     this.material.uniforms['uVc']!.value = this.vcTex;
     this.material.uniforms['uRamp']!.value = rampTexture();
+    this.material.uniforms['uAdj']!.value = adj;
     this.mesh = new THREE.Mesh(geometry, this.material);
     this.mesh.renderOrder = 2;
     this.mesh.frustumCulled = false;
@@ -209,6 +250,22 @@ export class RoadOverlay {
       d[e] = a + (b - a) * w;
     }
     this.vcTex.needsUpdate = true;
+  }
+
+  /** 'open': opaque ribbons over our roads; 'photoreal': thin, translucent, glowing, pulled toward the camera. */
+  setStyle(style: 'open' | 'photoreal'): void {
+    const u = this.material.uniforms;
+    const pr = style === 'photoreal';
+    u['uOpacity']!.value = pr ? 0.82 : 1;
+    u['uSoft']!.value = pr ? 1 : 0;
+    u['uPull']!.value = pr ? 2.5 : 0;
+    u['uWidthScale']!.value = pr ? 0.62 : 1;
+    u['uBright']!.value = pr ? 2.6 : 2.2;
+    if (this.material.transparent !== pr) {
+      this.material.transparent = pr;
+      this.material.depthWrite = !pr;
+      this.material.needsUpdate = true;
+    }
   }
 
   setHighlight(edge: number | null): void {

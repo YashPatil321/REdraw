@@ -12,9 +12,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "3d-tiles-renderer": "^0.5.3",
     "lit": "^3.3.3",
     "n8ao": "^2.0.1",
-    "three": "^0.186.1"
+    "three": "^0.186.1",
+    "three-mesh-bvh": "^0.9.15"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

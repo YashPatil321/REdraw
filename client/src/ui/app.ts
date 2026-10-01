@@ -48,7 +48,7 @@ export class RdApp extends LitElement {
       .left {
         top: 10px;
         left: 10px;
-        bottom: 10px;
+        bottom: 26px;
         width: 320px;
         display: flex;
         flex-direction: column;
@@ -63,7 +63,7 @@ export class RdApp extends LitElement {
       .right {
         top: 10px;
         right: 10px;
-        bottom: 10px;
+        bottom: 26px;
         width: 340px;
         display: flex;
         flex-direction: column;
@@ -94,7 +94,34 @@ export class RdApp extends LitElement {
       .bottom {
         left: 342px;
         right: 10px;
-        bottom: 10px;
+        bottom: 26px;
+      }
+      .attr {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        bottom: 4px;
+        display: flex;
+        justify-content: flex-end;
+        pointer-events: none;
+        z-index: 3;
+      }
+      .walkhud {
+        position: absolute;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        pointer-events: auto;
+      }
+      .photo-status {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        bottom: 120px;
+        background: rgba(0, 0, 0, 0.55);
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
       }
       .bottom.report {
         left: 10px;
@@ -155,7 +182,7 @@ export class RdApp extends LitElement {
       }
     `,
   ];
-  private st = new StoreController(this, ['view', 'booting', 'bootMessage', 'fatal', 'worldStatus', 'building', 'school', 'buildingLoading', 'mapPick', 'meta']);
+  private st = new StoreController(this, ['view', 'booting', 'bootMessage', 'fatal', 'worldStatus', 'building', 'school', 'buildingLoading', 'mapPick', 'meta', 'walking', 'photoreal', 'renderMode']);
 
   override render() {
     const s = this.st.s;
@@ -189,6 +216,9 @@ export class RdApp extends LitElement {
       <main>
         ${content}
         ${s.worldStatus ? html`<div class="status">${s.worldStatus}</div>` : nothing}
+        ${s.renderMode === 'photoreal' && s.photoreal.status ? html`<div class="photo-status" role="status">${s.photoreal.status}</div>` : nothing}
+        ${s.walking ? html`<div class="walkhud"><rd-camera-tools></rd-camera-tools></div>` : nothing}
+        <div class="attr"><rd-attribution></rd-attribution></div>
         <div class="toasts"><rd-toasts></rd-toasts></div>
       </main>
       ${s.booting || s.fatal

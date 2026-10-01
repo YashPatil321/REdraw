@@ -3,6 +3,7 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { navigate } from '../actions';
 import type { Quality } from '../scene/quality';
+import { NO_KEY_HELP } from '../photoreal/key';
 import { store, type View } from '../state';
 import { StoreController, appCtx, humanize, fmtUsd, theme } from './base';
 
@@ -64,9 +65,75 @@ export class RdTopbar extends LitElement {
         padding: 4px 4px;
         font-size: 12px;
       }
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        overflow: hidden;
+      }
+      .seg button {
+        border: 0;
+        border-radius: 0;
+        padding: 4px 9px;
+        font-size: 12px;
+        background: transparent;
+      }
+      .seg button.on {
+        background: rgba(255, 255, 255, 0.16);
+        font-weight: 650;
+      }
+      .seg button + button {
+        border-left: 1px solid var(--line);
+      }
+      .seg .dot {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--good);
+        margin-right: 5px;
+        vertical-align: 1px;
+      }
+      .seg .dot.off {
+        background: var(--muted);
+      }
+      .seg .dot.err {
+        background: var(--bad);
+      }
+      @media (max-width: 1250px) {
+        .region {
+          display: none;
+        }
+      }
     `,
   ];
-  private st = new StoreController(this, ['view', 'meta', 'showStats', 'plan', 'quality']);
+  private st = new StoreController(this, ['view', 'meta', 'showStats', 'plan', 'quality', 'renderMode', 'photoreal', 'walking']);
+
+  private renderModeToggle() {
+    const s = this.st.s;
+    const pr = s.photoreal;
+    const tip = !pr.available
+      ? NO_KEY_HELP
+      : pr.error
+        ? `Photoreal unavailable: ${pr.error}`
+        : pr.source === 'url'
+          ? 'Photoreal from a local 3D Tiles tileset (?tiles=…), for development.'
+          : 'Google Photorealistic 3D Tiles (Map Tiles API). Our traffic and plan overlays are drawn on top.';
+    const dotCls = !pr.available ? 'off' : pr.error ? 'err' : '';
+    return html`<div class="seg" role="group" aria-label="Base map">
+      <button
+        class=${s.renderMode === 'photoreal' ? 'on' : ''}
+        ?disabled=${!pr.available}
+        title=${tip}
+        @click=${() => appCtx.scene?.setRenderMode('photoreal')}
+      >
+        <span class="dot ${dotCls}"></span>Photoreal (Google)
+      </button>
+      <button class=${s.renderMode === 'open' ? 'on' : ''} title="Our open-data 3D model (OpenStreetMap, USGS 3DEP, NAIP)" @click=${() => appCtx.scene?.setRenderMode('open')}>
+        Open data
+      </button>
+    </div>`;
+  }
 
   override render() {
     const s = this.st.s;
@@ -89,6 +156,10 @@ export class RdTopbar extends LitElement {
           >`
         : nothing}
       ${s.showStats ? html`<rd-stats></rd-stats>` : nothing}
+      ${this.renderModeToggle()}
+      <button class=${s.walking ? 'active' : ''} @click=${() => (s.walking ? appCtx.scene?.exitWalk() : appCtx.scene?.walkAtTarget())} title="Street-level first-person view (WASD + mouse)">
+        🚶 ${s.walking ? 'Exit walk' : 'Walk'}
+      </button>
       <select class="q" aria-label="Render quality" title="Render quality" @change=${(e: Event) => appCtx.scene?.setQuality((e.target as HTMLSelectElement).value as Quality)}>
         ${(['high', 'medium', 'low'] as const).map((q) => html`<option value=${q} ?selected=${s.quality === q}>Quality: ${q}</option>`)}
       </select>
@@ -251,6 +322,7 @@ export class RdInfoPanel extends LitElement {
     if (school) {
       return html`<div class="panel p">
         <div class="row"><h2 style="margin:0">${school.name}</h2><span class="spacer"></span><button class="ghost" @click=${this.close} aria-label="Close">✕</button></div>
+        <div class="row" style="margin-top:6px"><button class="walk" @click=${() => appCtx.scene?.walkHere(school.x, school.z)} title="Street-level first-person view">🚶 Walk here</button></div>
         <dl>
           <dt>Grades</dt>
           <dd>${school.grades.map((g) => (g === 0 ? 'K' : String(g))).join('–')}</dd>
@@ -285,7 +357,10 @@ export class RdInfoPanel extends LitElement {
       ['School', b.school_id],
     ];
     return html`<div class="panel p">
-      <div class="row"><h2 style="margin:0">Building #${b.id}</h2><span class="spacer"></span><button class="ghost" @click=${this.close} aria-label="Close">✕</button></div>
+      <div class="row"><h2 style="margin:0">${b.name ? String(b.name) : `Building #${b.id}`}</h2><span class="spacer"></span><button class="ghost" @click=${this.close} aria-label="Close">✕</button></div>
+      ${typeof b.centroid_x === 'number' && typeof b.centroid_z === 'number'
+        ? html`<div class="row" style="margin-top:6px"><button class="walk" @click=${() => appCtx.scene?.walkHere(b.centroid_x!, b.centroid_z!)} title="Street-level first-person view">🚶 Walk here</button></div>`
+        : nothing}
       ${'error' in b && b['error'] ? html`<p class="err">${String(b['error'])}</p>` : nothing}
       <dl>
         ${rows
@@ -363,3 +438,94 @@ export class RdToasts extends LitElement {
   }
 }
 customElements.define('rd-toasts', RdToasts);
+
+/** Required on-screen credits: Google logo + data providers in photoreal mode, open-data sources otherwise. */
+export class RdAttribution extends LitElement {
+  static override styles = [
+    theme,
+    css`
+      :host {
+        display: block;
+      }
+      .a {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        line-height: 16px;
+        color: rgba(255, 255, 255, 0.92);
+        text-shadow: 0 0 3px rgba(0, 0, 0, 0.9), 0 0 1px #000;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        pointer-events: auto;
+      }
+      .logo {
+        font: 600 15px/16px 'Product Sans', Roboto, Arial, sans-serif;
+        letter-spacing: -0.2px;
+        color: #fff;
+        flex: none;
+      }
+      .txt {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    `,
+  ];
+  private st = new StoreController(this, ['attribution', 'renderMode', 'meta']);
+  override render() {
+    const s = this.st.s;
+    const a = s.attribution;
+    if (s.renderMode === 'photoreal' && a) {
+      return html`<div class="a" role="contentinfo" aria-label="Map data attribution">
+        ${a.google ? html`<span class="logo" aria-label="Google">Google</span>` : nothing}
+        <span class="txt" title=${a.text}>${a.text ? `Map data ©${new Date().getFullYear()} ${a.text}` : ''}</span>
+      </div>`;
+    }
+    return html`<div class="a" role="contentinfo">
+      <span class="txt">${s.meta?.synthetic ? 'Synthetic dev world (not real geography)' : 'Map data © OpenStreetMap contributors (ODbL) · USGS 3DEP · USDA NAIP'}</span>
+    </div>`;
+  }
+}
+customElements.define('rd-attribution', RdAttribution);
+
+/** Camera mode control: enter street-level walk, and the walk HUD with controls and an exit. */
+export class RdCameraTools extends LitElement {
+  static override styles = [
+    theme,
+    css`
+      .p {
+        padding: 6px 8px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .hud {
+        padding: 8px 12px;
+        max-width: 560px;
+      }
+      kbd {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        padding: 0 5px;
+        font: 600 11px/16px ui-monospace, monospace;
+        background: var(--bg-2);
+      }
+    `,
+  ];
+  private st = new StoreController(this, ['walking', 'renderMode', 'photoreal']);
+  override render() {
+    const s = this.st.s;
+    if (s.walking) {
+      return html`<div class="panel hud row" role="status">
+        <span><b>Street level</b> · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · mouse look (click to capture) · <kbd>Shift</kbd> run · <kbd>Q</kbd>/<kbd>E</kbd> eye height</span>
+        <span class="spacer"></span>
+        <button class="primary" @click=${() => appCtx.scene?.exitWalk()}>Exit walk (Esc)</button>
+      </div>`;
+    }
+    return nothing;
+  }
+}
+customElements.define('rd-camera-tools', RdCameraTools);

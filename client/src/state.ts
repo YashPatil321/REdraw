@@ -31,6 +31,25 @@ export interface Toast {
   text: string;
 }
 
+export type RenderMode = 'photoreal' | 'open';
+
+export interface PhotorealState {
+  /** a Google key (or a dev tileset URL) is configured */
+  available: boolean;
+  source: 'google' | 'url' | null;
+  /** loading / progress message ('' when loaded) */
+  status: string;
+  /** fatal error (bad key, quota): the toggle falls back to open data */
+  error: string | null;
+}
+
+export interface AttributionState {
+  /** show the Google logo (Google tiles visible) */
+  google: boolean;
+  /** data provider strings collected from the visible tiles */
+  text: string;
+}
+
 export interface AppState {
   view: View;
   booting: boolean;
@@ -75,6 +94,13 @@ export interface AppState {
   showStats: boolean;
   quality: Quality;
   toasts: Toast[];
+
+  // base map
+  renderMode: RenderMode;
+  photoreal: PhotorealState;
+  attribution: AttributionState | null;
+  /** street-level first-person camera is on */
+  walking: boolean;
 }
 
 export type Listener = (s: AppState, prev: AppState) => void;
@@ -157,6 +183,10 @@ export function initialState(): AppState {
     showStats: false,
     quality: 'medium',
     toasts: [],
+    renderMode: 'open',
+    photoreal: { available: false, source: null, status: '', error: null },
+    attribution: null,
+    walking: false,
   };
 }
 

@@ -27,6 +27,9 @@ export interface PosOut {
   dz: number;
 }
 
+/** Width of the per-point adjustment data texture. */
+export const ADJ_TEX_W = 2048;
+
 export class RoadNetwork {
   readonly nEdges: number;
   readonly edges: NetworkEdge[];
@@ -43,6 +46,16 @@ export class RoadNetwork {
   /** total polyline length per edge */
   readonly length: Float32Array;
   readonly bounds = { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity };
+  /** total polyline points */
+  readonly nPts: number;
+  /**
+   * Per-point vertical adjustment (m) added to `pts` y. Zero in open-data mode;
+   * in photoreal mode it drapes roads and cars onto the photo mesh (filled
+   * by scene/drape.ts). Padded to a multiple of ADJ_TEX_W for a data texture.
+   */
+  readonly yAdj: Float32Array;
+  /** per point: owning edge */
+  readonly ptEdge: Uint32Array;
 
   private readonly cell: number;
   private segGrid = new Map<number, number[]>(); // cell -> [edge, segIdx, edge, segIdx, ...]
@@ -60,6 +73,9 @@ export class RoadNetwork {
     this.ptStart = new Uint32Array(this.nEdges);
     this.ptCount = new Uint32Array(this.nEdges);
     this.length = new Float32Array(this.nEdges);
+    this.nPts = totalPts;
+    this.yAdj = new Float32Array(Math.max(1, Math.ceil(totalPts / ADJ_TEX_W)) * ADJ_TEX_W);
+    this.ptEdge = new Uint32Array(totalPts);
 
     let p = 0;
     // edges are indexed by position in the array; `i` should match (contract)
@@ -67,6 +83,7 @@ export class RoadNetwork {
       const n = Math.floor(e.pts.length / 3);
       this.ptStart[ei] = p;
       this.ptCount[ei] = n;
+      this.ptEdge.fill(ei, p, p + n);
       let acc = 0;
       for (let k = 0; k < n; k++) {
         const x = e.pts[k * 3]!;
@@ -151,8 +168,9 @@ export class RoadNetwork {
     const bx = this.pts[b * 3]!;
     const by = this.pts[b * 3 + 1]!;
     const bz = this.pts[b * 3 + 2]!;
+    const adj = this.yAdj;
     out.x = ax + (bx - ax) * w;
-    out.y = ay + (by - ay) * w;
+    out.y = ay + adj[a]! + (by + adj[b]! - ay - adj[a]!) * w;
     out.z = az + (bz - az) * w;
     const hx = bx - ax;
     const hz = bz - az;
@@ -208,8 +226,8 @@ export class RoadNetwork {
           // tie-break equal distances (two-way streets) toward the lower index
           if (d < bestD - 1e-9 || (best && Math.abs(d - bestD) <= 1e-9 && e < best.edge)) {
             bestD = d;
-            const ay = this.pts[a * 3 + 1]!;
-            const by = this.pts[(a + 1) * 3 + 1]!;
+            const ay = this.pts[a * 3 + 1]! + this.yAdj[a]!;
+            const by = this.pts[(a + 1) * 3 + 1]! + this.yAdj[a + 1]!;
             const L = this.length[e]!;
             best = {
               edge: e,

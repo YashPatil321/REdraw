@@ -10,6 +10,7 @@ import toolsYaml from '../../../data/config/tools.yaml?raw';
 import type { FetchLike } from '../api';
 import { parseHHMM } from '../time';
 import type {
+  ReportMetric,
   Job,
   MetricDef,
   Plan,
@@ -204,7 +205,7 @@ export async function createMockFetch(): Promise<FetchLike> {
     const c = check(p);
     const pr = rng(p.id.length * 31 + p.tools.length);
     const effect = Math.min(0.35, 0.06 * p.tools.length + pr() * 0.05);
-    const metrics = METRICS.filter((m) => m.id in BASE_VALUES).map((m) => {
+    const metrics: ReportMetric[] = METRICS.filter((m) => m.id in BASE_VALUES).map((m) => {
       const b = BASE_VALUES[m.id]!;
       const pl = b * (1 - effect * (m.id === 'avg_commute_min' ? 0.2 : 1));
       const sb = b * 0.04;

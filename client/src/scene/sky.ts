@@ -17,6 +17,11 @@ export class SkySystem {
   darkness = 0;
   /** 0..1 dimming for the ghost-traffic night look */
   dim = 0;
+  /**
+   * Photoreal base map: lighter haze (the photo already has atmosphere) and a
+   * brighter exposure for our lit overlays so cars sit at the photo's brightness.
+   */
+  photoreal = false;
   private lastKey = '';
   private day = new Date();
   private sunDir = new THREE.Vector3(0, 1, 0);
@@ -82,7 +87,7 @@ export class SkySystem {
 
   /** Update for sim time (seconds since local midnight) and renderer exposure. */
   update(simSeconds: number, renderer: THREE.WebGLRenderer): void {
-    const key = `${Math.round(simSeconds / 30)}:${this.dim.toFixed(2)}`;
+    const key = `${Math.round(simSeconds / 30)}:${this.dim.toFixed(2)}:${this.photoreal ? 1 : 0}`;
     if (key === this.lastKey) return;
     this.lastKey = key;
     const date = localSecondsToDate(simSeconds, this.day, this.timeZone);
@@ -105,7 +110,7 @@ export class SkySystem {
 
     // Morning haze: thick at 06:30, clearing by 09:30, tinted to the horizon.
     const clear = THREE.MathUtils.clamp((simSeconds - 23400) / (34200 - 23400), 0, 1);
-    this.fog.density = (0.00008 - 0.000035 * clear) * (1 + 0.5 * this.dim);
+    this.fog.density = (0.00008 - 0.000035 * clear) * (1 + 0.5 * this.dim) * (this.photoreal ? 0.55 : 1);
     const hazeWarm = new THREE.Color(0xe3b98f);
     const hazeDay = new THREE.Color(0xb9c8d8);
     const dawn = new THREE.Color(0x4a5470);
@@ -115,7 +120,7 @@ export class SkySystem {
       .lerp(hazeWarm, warm * 0.75)
       .lerp(dawn, (1 - day) * 0.8)
       .lerp(night, this.dim * 0.85);
-    renderer.toneMappingExposure = (0.42 + 0.22 * day) * (1 - 0.35 * this.dim);
+    renderer.toneMappingExposure = (0.42 + 0.22 * day) * (1 - 0.35 * this.dim) * (this.photoreal ? 1.5 : 1);
   }
 
   dispose(): void {

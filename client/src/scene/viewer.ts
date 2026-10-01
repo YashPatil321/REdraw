@@ -8,6 +8,7 @@ import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { PostFX } from './postfx';
 import { QUALITY, type Quality, type QualitySettings } from './quality';
+import { WalkControls, type GroundFn, type WalkPose } from './walk';
 
 export interface FlyToOptions {
   /** distance from target (m); default keeps the current distance */
@@ -54,6 +55,16 @@ export class Viewer {
   groundY = 0;
 
   split: { enabled: boolean; pos: number; hooks: SplitHooks | null } = { enabled: false, pos: 0.5, hooks: null };
+  /** street-level first-person camera (orbit controls are off while it is on) */
+  readonly walk: WalkControls;
+  /** ground height for the walk camera */
+  groundFn: GroundFn = () => null;
+  /**
+   * Render straight to the screen, skipping post-processing. Used in photoreal
+   * mode: photo tiles must not go through AO / bloom / grading; their
+   * materials opt out of tone mapping while our overlays keep ACES.
+   */
+  directRender = false;
 
   private frameFns = new Set<FrameFn>();
   private raf = 0;
@@ -107,6 +118,8 @@ export class Viewer {
     this.controls.maxPolarAngle = THREE.MathUtils.degToRad(84);
     this.controls.zoomToCursor = true;
     this.controls.addEventListener('start', () => this.cancelFlight());
+
+    this.walk = new WalkControls(this.camera, this.renderer.domElement);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -180,6 +193,19 @@ export class Viewer {
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
 
+    if (this.walk.enabled) {
+      this.walk.update(dt, this.groundFn);
+      if (Math.abs(this.camera.near - 0.15) > 1e-3) {
+        this.camera.near = 0.15;
+        this.camera.updateProjectionMatrix();
+      }
+    } else this.orbitFrame(now);
+
+    for (const fn of this.frameFns) fn(dt, now);
+    this.render(dt);
+  }
+
+  private orbitFrame(now: number): void {
     if (this.flight) {
       const f = this.flight;
       const u = Math.min(1, (now - f.start) / f.duration);
@@ -220,9 +246,9 @@ export class Viewer {
       this.camera.near = near;
       this.camera.updateProjectionMatrix();
     }
+  }
 
-    for (const fn of this.frameFns) fn(dt, now);
-
+  private render(dt: number): void {
     this.renderer.info.reset();
     const r = this.renderer;
     if (this.split.enabled && this.split.hooks) {
@@ -239,7 +265,7 @@ export class Viewer {
       r.render(this.scene, this.camera);
       r.setScissorTest(false);
       this.split.hooks.after();
-    } else if (this.post) {
+    } else if (this.post && !this.directRender) {
       this.post.render(dt);
     } else {
       r.render(this.scene, this.camera);
@@ -259,6 +285,33 @@ export class Viewer {
       this.fpsAcc.frames = 0;
       this.fpsAcc.time = 0;
     }
+  }
+
+  /** Enter the street-level walk camera at a pose. */
+  enterWalk(pose: WalkPose): void {
+    this.cancelFlight();
+    this.controls.enabled = false;
+    this.walk.enable(pose, this.groundFn);
+    this.walk.apply();
+  }
+
+  /** Back to orbit: look at a point ahead of the walker from a little above. */
+  exitWalk(): void {
+    if (!this.walk.enabled) return;
+    this.walk.disable();
+    const fx = Math.sin(this.walk.heading);
+    const fz = -Math.cos(this.walk.heading);
+    const g = this.groundFn(this.walk.x + fx * 60, this.walk.z + fz * 60) ?? this.camera.position.y - this.walk.eye;
+    this.controls.target.set(this.walk.x + fx * 60, g, this.walk.z + fz * 60);
+    this.camera.position.set(this.walk.x - fx * 80, this.camera.position.y + 90, this.walk.z - fz * 80);
+    this.camera.near = 2;
+    this.camera.updateProjectionMatrix();
+    this.controls.enabled = true;
+    this.controls.update();
+  }
+
+  get walking(): boolean {
+    return this.walk.enabled;
   }
 
   cancelFlight(): void {
@@ -326,6 +379,7 @@ export class Viewer {
     this.post?.dispose();
     this.resizeObserver.disconnect();
     this.controls.dispose();
+    this.walk.dispose();
     this.scene.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();

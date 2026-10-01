@@ -265,6 +265,7 @@ export class World {
       this.terrainUniforms.uMinH.value = hb.min.y;
       this.terrainUniforms.uMaxH.value = hb.max.y;
     }
+    this.buildHeightGrid();
     if (errors.length) console.warn('Some world assets failed to load:', errors);
     if (errors.length === jobs.length && jobs.length > 0) throw new Error(`world assets failed to load: ${errors[0]}`);
   }
@@ -284,8 +285,8 @@ export class World {
     }
   }
 
-  pickBuilding(raycaster: THREE.Raycaster): BuildingHit | null {
-    const targets = this.buildingMeshes.filter((m) => m.parent?.visible !== false && m.visible);
+  pickBuilding(raycaster: THREE.Raycaster, includeHidden = false): BuildingHit | null {
+    const targets = includeHidden ? this.buildingMeshes : this.buildingMeshes.filter((m) => m.parent?.visible !== false && m.visible);
     const hits = raycaster.intersectObjects(targets, false);
     for (const h of hits) {
       const mesh = h.object as THREE.Mesh;
@@ -317,6 +318,150 @@ export class World {
     const rc = new THREE.Raycaster(new THREE.Vector3(x, 5000, z), new THREE.Vector3(0, -1, 0), 0, 10000);
     const hit = rc.intersectObjects(this.terrainMeshes, false)[0];
     return hit ? hit.point.y : fallback;
+  }
+
+  // ---- fast lookups (walk camera, photoreal picking)
+
+  private hgrid: { minX: number; minZ: number; cell: number; nx: number; nz: number; data: Float32Array } | null = null;
+
+  /** Rasterize terrain vertices into a regular height grid (bilinear lookups in O(1)). */
+  private buildHeightGrid(): void {
+    const b = new THREE.Box3();
+    let nVerts = 0;
+    for (const m of this.terrainMeshes) {
+      if (m.geometry.boundingBox) b.union(m.geometry.boundingBox);
+      nVerts += m.geometry.getAttribute('position').count;
+    }
+    if (b.isEmpty() || nVerts === 0) return;
+    const area = (b.max.x - b.min.x) * (b.max.z - b.min.z);
+    const cell = THREE.MathUtils.clamp(Math.sqrt(area / nVerts) * 1.05, 2, 40);
+    const nx = Math.ceil((b.max.x - b.min.x) / cell) + 1;
+    const nz = Math.ceil((b.max.z - b.min.z) / cell) + 1;
+    const sum = new Float32Array(nx * nz);
+    const cnt = new Uint16Array(nx * nz);
+    for (const m of this.terrainMeshes) {
+      const p = m.geometry.getAttribute('position');
+      for (let i = 0; i < p.count; i++) {
+        const ix = Math.round((p.getX(i) - b.min.x) / cell);
+        const iz = Math.round((p.getZ(i) - b.min.z) / cell);
+        const k = iz * nx + ix;
+        sum[k]! += p.getY(i);
+        cnt[k]!++;
+      }
+    }
+    const data = new Float32Array(nx * nz).fill(NaN);
+    for (let k = 0; k < data.length; k++) if (cnt[k]) data[k] = sum[k]! / cnt[k]!;
+    // fill holes from neighbors (a few passes)
+    for (let pass = 0; pass < 6; pass++) {
+      let holes = 0;
+      for (let iz = 0; iz < nz; iz++) {
+        for (let ix = 0; ix < nx; ix++) {
+          const k = iz * nx + ix;
+          if (!Number.isNaN(data[k]!)) continue;
+          let acc = 0;
+          let n = 0;
+          for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+            const jx = ix + dx;
+            const jz = iz + dz;
+            if (jx < 0 || jz < 0 || jx >= nx || jz >= nz) continue;
+            const v = data[jz * nx + jx]!;
+            if (!Number.isNaN(v)) {
+              acc += v;
+              n++;
+            }
+          }
+          if (n) data[k] = acc / n;
+          else holes++;
+        }
+      }
+      if (!holes) break;
+    }
+    this.hgrid = { minX: b.min.x, minZ: b.min.z, cell, nx, nz, data };
+  }
+
+  /** Terrain height from the grid (no raycast), or null outside the terrain. */
+  fastHeightAt(x: number, z: number): number | null {
+    const g = this.hgrid;
+    if (!g) return null;
+    const fx = (x - g.minX) / g.cell;
+    const fz = (z - g.minZ) / g.cell;
+    if (fx < 0 || fz < 0 || fx > g.nx - 1 || fz > g.nz - 1) return null;
+    const ix = Math.min(g.nx - 2, Math.floor(fx));
+    const iz = Math.min(g.nz - 2, Math.floor(fz));
+    const tx = fx - ix;
+    const tz = fz - iz;
+    const d = g.data;
+    const h00 = d[iz * g.nx + ix]!;
+    const h10 = d[iz * g.nx + ix + 1]!;
+    const h01 = d[(iz + 1) * g.nx + ix]!;
+    const h11 = d[(iz + 1) * g.nx + ix + 1]!;
+    const v = (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+    return Number.isNaN(v) ? null : v;
+  }
+
+  private bIndex: { cell: number; map: Map<number, Array<{ id: number; x: number; z: number; top: number }>> } | null = null;
+
+  /** Per-building centroid (from `_building_id` vertices), on a grid. */
+  private buildBuildingIndex(): void {
+    const acc = new Map<number, { x: number; z: number; n: number; top: number }>();
+    for (const m of this.buildingMeshes) {
+      const id = m.geometry.getAttribute('_building_id');
+      const p = m.geometry.getAttribute('position');
+      if (!id) continue;
+      for (let i = 0; i < p.count; i++) {
+        const b = Math.round(id.getX(i));
+        if (b <= 0) continue;
+        let a = acc.get(b);
+        if (!a) acc.set(b, (a = { x: 0, z: 0, n: 0, top: -Infinity }));
+        a.x += p.getX(i);
+        a.z += p.getZ(i);
+        a.n++;
+        a.top = Math.max(a.top, p.getY(i));
+      }
+    }
+    const cell = 50;
+    const map = new Map<number, Array<{ id: number; x: number; z: number; top: number }>>();
+    for (const [id, a] of acc) {
+      const x = a.x / a.n;
+      const z = a.z / a.n;
+      const k = (Math.floor(x / cell) + 32768) * 65536 + (Math.floor(z / cell) + 32768);
+      let arr = map.get(k);
+      if (!arr) map.set(k, (arr = []));
+      arr.push({ id, x, z, top: a.top });
+    }
+    this.bIndex = { cell, map };
+  }
+
+  /** Nearest building (by footprint centroid) to x, z within maxDist. */
+  nearestBuilding(x: number, z: number, maxDist = 30): { id: number; x: number; z: number; top: number } | null {
+    if (!this.bIndex) this.buildBuildingIndex();
+    const { cell, map } = this.bIndex!;
+    const r = Math.ceil(maxDist / cell);
+    const cx = Math.floor(x / cell);
+    const cz = Math.floor(z / cell);
+    let best: { id: number; x: number; z: number; top: number } | null = null;
+    let bd = maxDist;
+    for (let ix = cx - r; ix <= cx + r; ix++) {
+      for (let iz = cz - r; iz <= cz + r; iz++) {
+        const arr = map.get((ix + 32768) * 65536 + (iz + 32768));
+        if (!arr) continue;
+        for (const b of arr) {
+          const d = Math.hypot(b.x - x, b.z - z);
+          if (d < bd) {
+            bd = d;
+            best = b;
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Centroid of a building id (for "walk here"), or null. */
+  buildingCentroid(id: number): { x: number; z: number; top: number } | null {
+    if (!this.bIndex) this.buildBuildingIndex();
+    for (const arr of this.bIndex!.map.values()) for (const b of arr) if (b.id === id) return b;
+    return null;
   }
 
   dispose(): void {

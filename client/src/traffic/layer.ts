@@ -12,7 +12,7 @@ import type { School } from '../types';
 import { queueColor, speedColor, type RGB } from './congestion';
 import type { PosOut, RoadNetwork } from './network';
 import { queueAt, type Playback } from './playback';
-import { RoadOverlay } from './roadOverlay';
+import { RoadOverlay, adjTexture } from './roadOverlay';
 
 export const MAX_VEHICLES = 3000;
 const TRAIL_SEGMENTS = 10;
@@ -111,7 +111,7 @@ export class TrafficLayer {
   private buses: THREE.InstancedMesh;
   private bars: THREE.InstancedMesh | null = null;
   private barLabels: CSS2DObject[] = [];
-  private barEntrances: Array<{ k: number; x: number; y: number; z: number; curb: number }> = [];
+  private barEntrances: Array<{ k: number; x: number; y: number; y0: number; z: number; curb: number }> = [];
   private trails: THREE.LineSegments;
   private trailPos: Float32Array;
   private trailCol: Float32Array;
@@ -132,7 +132,7 @@ export class TrafficLayer {
     private opts: LayerOptions,
   ) {
     this.group.name = `traffic:${pb.header.plan_id}`;
-    this.overlay = new RoadOverlay(overlayGeometry, Math.min(net.nEdges, pb.nEdges));
+    this.overlay = new RoadOverlay(overlayGeometry, Math.min(net.nEdges, pb.nEdges), adjTexture(net));
     this.group.add(this.overlay.mesh);
 
     this.nTraj = Math.min(pb.nTrajectories, MAX_VEHICLES);
@@ -211,7 +211,7 @@ export class TrafficLayer {
     }
     ids.forEach((id, k) => {
       const p = byKey.get(id);
-      if (p) this.barEntrances.push({ k, ...p });
+      if (p) this.barEntrances.push({ k, ...p, y0: p.y });
     });
     if (!this.barEntrances.length) return;
     this.bars = new THREE.InstancedMesh(
@@ -234,6 +234,16 @@ export class TrafficLayer {
         this.barLabels.push(o);
       }
     }
+  }
+
+  /** Visual style for the base map underneath (our open-data meshes or photoreal tiles). */
+  setStyle(style: 'open' | 'photoreal'): void {
+    this.overlay.setStyle(style);
+  }
+
+  /** Re-seat queue bars on the ground (photoreal tiles may sit a little off our DEM). */
+  setGroundHeights(fn: (x: number, z: number, fallback: number) => number): void {
+    for (const e of this.barEntrances) e.y = fn(e.x, e.z, e.y0);
   }
 
   setGhost(on: boolean): void {
