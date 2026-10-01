@@ -154,10 +154,13 @@ def check_processed_ids(bdf: gpd.GeoDataFrame) -> str:
 
 
 def load_lidar(bdf: gpd.GeoDataFrame) -> tuple[dict[int, dict[str, Any]], gpd.GeoDataFrame | None, str]:
-    """Per-building lidar roof models keyed by our building id, plus missing footprints.
+    """Per-building lidar roof models keyed by our building id, plus lidar-only footprints.
 
-    Join: by `building_id` when the lidar table carries ids of this build, else by OSM
-    sort key, else spatially (lidar point / footprint inside our footprint)."""
+    data/raw/lidar/buildings_roofs.parquet (pipeline/lidar_features.py) has one row per
+    osm_buildings.geojson footprint with its centroid (scene x/z, UTM easting/northing). Join: centroid
+    within 1 m of ours (same source footprint), else the lidar centroid inside our footprint."""
+    from scipy.spatial import cKDTree
+
     ldir = raw_dir() / LIDAR_DIR_NAME
     roofs_p = ldir / "buildings_roofs.parquet"
     out: dict[int, dict[str, Any]] = {}
@@ -165,33 +168,30 @@ def load_lidar(bdf: gpd.GeoDataFrame) -> tuple[dict[int, dict[str, Any]], gpd.Ge
     if not roofs_p.exists():
         return out, None, "lidar: buildings_roofs.parquet not available (tag / heuristic roofs)"
     df = pd.read_parquet(roofs_p)
-    cols = set(df.columns)
+    if "lidar_status" in df.columns:
+        df = df[df["lidar_status"].astype(str) == "present"].reset_index(drop=True)
     rows = df.to_dict("records")
-    key_note = ""
-    if "building_id" in cols and "centroid_x" in cols:
-        # ids of a build: trust them only if the centroids agree with ours
-        ours = bdf.set_index("id")[["centroid_x", "centroid_z"]]
-        ok = 0
-        for r in rows:
-            bid = int(r["building_id"])
-            if bid in ours.index and math.hypot(ours.at[bid, "centroid_x"] - float(r["centroid_x"]), ours.at[bid, "centroid_z"] - float(r["centroid_z"])) < 2.0:
-                ok += 1
-        if ok >= 0.9 * len(rows):
-            for r in rows:
-                out[int(r["building_id"])] = r
-            key_note = "building_id"
-    if not out:
-        # spatial join: a lidar point (centroid lon/lat or x/z) inside our footprint
-        pts = _lidar_points(df)
-        if pts is not None:
-            j = gpd.sjoin(gpd.GeoDataFrame({"_r": np.arange(len(df))}, geometry=pts, crs="EPSG:32611"), bdf[["id", "geometry"]], predicate="within", how="inner")
-            for ri, bid in zip(j["_r"].to_numpy(), j["id"].to_numpy(), strict=True):
-                out.setdefault(int(bid), rows[int(ri)])
-            key_note = "spatial (lidar centroid within footprint)"
+    n_cent = n_sp = 0
+    if {"centroid_x", "centroid_z"} <= set(df.columns) and len(df):
+        tree = cKDTree(np.column_stack([df["centroid_x"].to_numpy(), df["centroid_z"].to_numpy()]))
+        d, k = tree.query(np.column_stack([bdf["centroid_x"].to_numpy(), bdf["centroid_z"].to_numpy()]), distance_upper_bound=1.0)
+        for bid, dd, kk in zip(bdf["id"].to_numpy(), d, k, strict=True):
+            if np.isfinite(dd):
+                out[int(bid)] = rows[int(kk)]
+                n_cent += 1
+    pts = _lidar_points(df)
+    if pts is not None and len(df):
+        rest = bdf[~bdf["id"].isin(list(out))]
+        j = gpd.sjoin(gpd.GeoDataFrame({"_r": np.arange(len(df))}, geometry=pts, crs="EPSG:32611"), rest[["id", "geometry"]],
+                      predicate="within", how="inner")
+        for ri, bid in zip(j["_r"].to_numpy(), j["id"].to_numpy(), strict=True):
+            if int(bid) not in out:
+                out[int(bid)] = rows[int(ri)]
+                n_sp += 1
     mp = ldir / "missing_buildings.geojson"
     if mp.exists():
         missing = gpd.read_file(mp).to_crs("EPSG:32611")
-    return out, missing, f"lidar: {len(df)} roof models, {len(out)} joined by {key_note or 'nothing'}"
+    return out, missing, f"lidar: {len(df)} present roof models; joined {n_cent} by centroid, {n_sp} spatially"
 
 
 def _lidar_points(df: pd.DataFrame) -> gpd.GeoSeries | None:
@@ -228,8 +228,12 @@ def lidar_model(r: dict[str, Any]) -> dict[str, Any] | None:
     if eave is None and ridge is None:
         return None
     rt = str(r.get("roof_type") or "").lower() or None
+    if rt in ("unknown", "none", "nan"):
+        rt = None
     quality = r.get("quality")
-    planes = r.get("planes")
+    if str(quality) not in ("good", "fair"):
+        rt = None  # too few / noisy points: keep the heights, not the shape
+    planes = r.get("planes") if r.get("planes") is not None else r.get("planes_json")
     if isinstance(planes, str):
         try:
             planes = json.loads(planes)
@@ -247,12 +251,13 @@ def lidar_model(r: dict[str, Any]) -> dict[str, Any] | None:
         "ridge_h": ridge,
         "roof_type": rt,
         "ridge_az_deg": f("ridge_azimuth_deg", "ridge_az_deg", "ridge_azimuth"),
-        "pitch_deg": f("pitch_deg", "pitch"),
+        "pitch_deg": f("roof_pitch_deg", "pitch_deg", "pitch"),
         "planes": planes or None,
         "quality": _jsonable(quality),
         "levels_lidar": f("levels", "n_levels"),
         "chimney": bool(r.get("chimney")) if r.get("chimney") is not None else None,
         "second_level": _jsonable(r.get("levels_split") or r.get("second_level")),
+        "center": [float(r["easting"]), float(r["northing"])] if r.get("easting") is not None and r.get("northing") is not None else None,
     }
     return m
 
@@ -271,6 +276,38 @@ def _jsonable(v: Any) -> Any:
     if isinstance(v, (np.floating,)):
         return float(v)
     return v
+
+
+class NdsmSampler:
+    """Per-footprint height grids (m above ground, 1 m cells) from the lidar nDSM (lidar_features.py)."""
+
+    def __init__(self, path: Path):
+        import rasterio
+
+        self.ds = rasterio.open(path)
+        self.o = scene_origin()
+
+    def grid(self, poly_utm: Polygon, step: float = 1.0) -> dict[str, Any] | None:
+        from rasterio.windows import from_bounds
+
+        minx, miny, maxx, maxy = poly_utm.bounds
+        xs = np.arange(minx + step / 2, maxx, step)
+        ys = np.arange(miny + step / 2, maxy, step)
+        if len(xs) < 2 or len(ys) < 2:
+            return None
+        win = from_bounds(minx - 1, miny - 1, maxx + 1, maxy + 1, self.ds.transform).round_offsets().round_lengths()
+        a = self.ds.read(1, window=win, boundless=True, fill_value=0).astype(np.float32)
+        tr = self.ds.window_transform(win)
+        X, Y = np.meshgrid(xs, ys)
+        col = np.clip(((X - tr.c) / tr.a).astype(int), 0, a.shape[1] - 1)
+        row = np.clip(((Y - tr.f) / tr.e).astype(int), 0, a.shape[0] - 1)
+        h = a[row, col]
+        inside = shapely.contains_xy(poly_utm.buffer(-0.3), X, Y)
+        q = np.where(inside & np.isfinite(h), np.round(np.clip(h, 0, 99) * 10), -1).astype(int)
+        if (q >= 0).sum() < 4:
+            return None
+        return {"x0": round(float(xs[0] - self.o.easting), 2), "y0": round(float(ys[0] - self.o.northing), 2), "step": step,
+                "nx": len(xs), "ny": len(ys), "h": q.ravel().tolist()}
 
 
 # ---------------------------------------------------------------------------
@@ -456,13 +493,17 @@ def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
         log(f"buildings_hd: +{len(miss)} lidar-only buildings (ids {start}..{start + len(miss) - 1})")
 
     scene_polys = [orient(scene_poly(p), 1.0) for p in rows.geometry]
+    utm_polys = list(rows.geometry)
+    ndsm_p = raw_dir() / LIDAR_DIR_NAME / "ndsm_0p5m.tif"
+    ndsm = NdsmSampler(ndsm_p) if (ndsm_p.exists() and lidar) else None
+    o_ = scene_origin()
     streets, drives = load_streets()
     ctx = street_context(scene_polys, streets, drives)
     log(f"buildings_hd: street context for {len(ctx):,} buildings ({time.time() - t0:.0f}s)")
 
     tiles: dict[str, list[dict[str, Any]]] = {}
     counts: dict[str, int] = {}
-    for k, (rec, poly, sc) in enumerate(zip(rows.to_dict("records"), scene_polys, ctx, strict=True)):
+    for k, (rec, poly, sc, putm) in enumerate(zip(rows.to_dict("records"), scene_polys, ctx, utm_polys, strict=True)):
         bid = int(rec["id"])
         ring = np.asarray(poly.exterior.coords)[:-1]
         holes = [np.asarray(h.coords)[:-1] for h in poly.interiors]
@@ -481,11 +522,18 @@ def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
             if rtype in ("complex", "mixed"):
                 rtype = "complex"
             source = "lidar"
+            pu = putm if putm.geom_type == "Polygon" else max(putm.geoms, key=lambda g: g.area)
+            cu = pu.centroid
             roof = {"eave_h": round(float(eave), 2), "ridge_h": round(float(max(ridge, eave)), 2), "roof_type": rtype,
                     "pitch_deg": lm["pitch_deg"] if lm["pitch_deg"] is not None else heur["pitch_deg"],
                     "ridge_az_deg": lm["ridge_az_deg"], "planes": lm["planes"], "quality": lm["quality"],
-                    "chimney": lm["chimney"], "second_level": lm["second_level"]}
+                    "chimney": lm["chimney"], "second_level": lm["second_level"],
+                    "lidar_center": [round(cu.x - o_.easting, 3), round(cu.y - o_.northing, 3)]}
+            if ndsm is not None:
+                roof["hgrid"] = ndsm.grid(pu)
             lv = lv_tag or (int(lm["levels_lidar"]) if lm.get("levels_lidar") else None)
+            if lv is None and btype in ("house", "apartments"):
+                lv = 1 if eave < 4.4 and ridge < 6.6 else (2 if eave < 7.6 else 3)
         else:
             source = "tag" if rec.get("height_rule") in ("height", "levels") else "heuristic"
             roof = {k: heur[k] for k in ("eave_h", "ridge_h", "roof_type", "pitch_deg")}
