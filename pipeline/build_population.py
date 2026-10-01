@@ -376,6 +376,28 @@ def exit_for_bearing(b: float, exits: list[dict[str, Any]]) -> str:
     return str(min(exits, key=diff)["id"])
 
 
+def exit_probs_from_bearings(exits: list[dict[str, Any]]) -> dict[str, float]:
+    """Share of external jobs per exit from the job-direction table (assumptions
+    exit_assignment.job_bearings): each direction's share is split among the exits by a
+    Gaussian kernel on the angle between the job direction and the exit bearing
+    (exit_assignment.bearing_kernel_deg). Works for any number of exits."""
+    if not exits:
+        return {}
+    sigma = float(assumption("exit_assignment.bearing_kernel_deg"))
+    probs = {str(e["id"]): 0.0 for e in exits}
+    for sec in assumption("exit_assignment.job_bearings"):
+        b = float(sec["bearing_deg"])
+        d = np.array([min(abs((b - float(e["bearing_deg"])) % 360.0), 360.0 - abs((b - float(e["bearing_deg"])) % 360.0)) for e in exits])
+        w = np.exp(-0.5 * (d / sigma) ** 2)
+        if w.sum() < 1e-6:
+            w = (d == d.min()).astype(float)
+        w = w / w.sum()
+        for e, wi in zip(exits, w, strict=True):
+            probs[str(e["id"])] += float(sec["share"]) * float(wi)
+    tot = sum(probs.values())
+    return {k: v / tot for k, v in probs.items()} if tot > 0 else {k: 1.0 / len(probs) for k in probs}
+
+
 # ---------------------------------------------------------------------------
 # Population synthesis
 # ---------------------------------------------------------------------------
@@ -715,7 +737,7 @@ def work_model_from_lodes(
         for r in ge.itertuples(index=False):
             probs[exit_for_bearing(bearing_deg(cx, cz, r.wx, r.wz), exits)] += float(r.S000)
         tot_e = sum(probs.values())
-        model.exit_probs[bg] = {k: v / tot_e for k, v in probs.items()} if tot_e > 0 else dict(assumption("population_synthesis.external_exit_shares"))
+        model.exit_probs[bg] = {k: v / tot_e for k, v in probs.items()} if tot_e > 0 else exit_probs_from_bearings(exits)
     # default ("") = job-weighted average of all origins
     all_int = od[inside]
     model.internal_share[""] = float(all_int["S000"].sum()) / max(float(od["S000"].sum()), 1.0)
@@ -727,7 +749,7 @@ def work_model_from_lodes(
     else:
         model.internal_nodes[""] = np.zeros(0, dtype=np.int64)
         model.internal_weights[""] = np.zeros(0)
-    model.exit_probs[""] = dict(assumption("population_synthesis.external_exit_shares"))
+    model.exit_probs[""] = exit_probs_from_bearings(exits)
     return model
 
 

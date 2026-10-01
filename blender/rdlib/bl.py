@@ -25,6 +25,8 @@ BUILD_DIR = REPO / "blender" / "build"  # generated textures (regenerated, not c
 
 # texture key -> png path (registered by foliage.py before building trees)
 TEXTURES: dict[str, Path] = {}
+# atlas-textured preview / hero materials by name (see atlas_material); checked first by part_to_object
+ATLAS_MATS: dict[str, bpy.types.Material] = {}
 
 HERO_CLASSES = {
     # name: (roughness, metallic)
@@ -36,6 +38,7 @@ HERO_CLASSES = {
 
 
 def reset_scene() -> None:
+    ATLAS_MATS.clear()
     bpy.ops.wm.read_factory_settings(use_empty=True)
     for coll in (bpy.data.meshes, bpy.data.materials, bpy.data.images, bpy.data.objects, bpy.data.lights,
                  bpy.data.cameras, bpy.data.worlds):
@@ -83,6 +86,148 @@ def pbr_material(key: str) -> bpy.types.Material:
             rnd.operation = "ROUND"
             nt.links.new(img.outputs["Alpha"], rnd.inputs[0])
             nt.links.new(rnd.outputs[0], b.inputs["Alpha"])
+    return mat
+
+
+def _img(path: Path, non_color: bool) -> bpy.types.Image:
+    img = bpy.data.images.load(str(path), check_existing=True)
+    img.colorspace_settings.name = "Non-Color" if non_color else "sRGB"
+    return img
+
+
+def atlas_material(name: str, man: dict, atlas: str, cell_name: str, mat_dir: Path, span_k: int = 0,
+                   tint_hex: str | None = None, tint_attr: str | None = None, ao_mix: float = 0.6,
+                   normal_strength: float = 1.0, emission: float = 0.0) -> bpy.types.Material:
+    """Principled material sampling one atlas cell with fract(UV) (the shader contract of
+    materials_manifest.json). Tintable cells: base = tint * texel / cell.mean_albedo_linear, blended by
+    the facade_openings mask R where present. tint_attr reads a color attribute (heroes: "Col")."""
+    if name in ATLAS_MATS:
+        return ATLAS_MATS[name]
+    a = man["atlases"][atlas]
+    c = next(x for x in a["cells"] if x["name"] == cell_name)
+    u0, v0, u1, v1 = c["cells"][span_k]["uv_inner"]
+    mat = bpy.data.materials.new(name)
+    b = _bsdf(mat)
+    nt = mat.node_tree
+    L = nt.links
+    uvn = nt.nodes.new("ShaderNodeUVMap")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    L.new(uvn.outputs["UV"], sep.inputs[0])
+    out_xy = []
+    for comp, o, d in ((0, u0, u1 - u0), (1, v0, v1 - v0)):
+        fr = nt.nodes.new("ShaderNodeMath")
+        fr.operation = "FRACT"
+        L.new(sep.outputs[comp], fr.inputs[0])
+        ma = nt.nodes.new("ShaderNodeMath")
+        ma.operation = "MULTIPLY_ADD"
+        L.new(fr.outputs[0], ma.inputs[0])
+        ma.inputs[1].default_value = d
+        ma.inputs[2].default_value = o
+        out_xy.append(ma)
+    comb = nt.nodes.new("ShaderNodeCombineXYZ")
+    L.new(out_xy[0].outputs[0], comb.inputs[0])
+    L.new(out_xy[1].outputs[0], comb.inputs[1])
+
+    def tex(kind: str, non_color: bool) -> bpy.types.Node:
+        n = nt.nodes.new("ShaderNodeTexImage")
+        n.image = _img(mat_dir / a["files"][kind], non_color)
+        n.interpolation = "Linear"
+        L.new(comb.outputs[0], n.inputs["Vector"])
+        return n
+
+    alb = tex("albedo", False)
+    orm = tex("orm", True)
+    nrm = tex("normal", True)
+    so = nt.nodes.new("ShaderNodeSeparateColor")
+    L.new(orm.outputs["Color"], so.inputs[0])
+    color = alb.outputs["Color"]
+    if tint_hex or tint_attr:
+        mean = c["mean_albedo_linear"]
+        scale = nt.nodes.new("ShaderNodeVectorMath")
+        scale.operation = "MULTIPLY"
+        L.new(color, scale.inputs[0])
+        scale.inputs[1].default_value = (1 / max(mean[0], 1e-3), 1 / max(mean[1], 1e-3), 1 / max(mean[2], 1e-3))
+        tm = nt.nodes.new("ShaderNodeVectorMath")
+        tm.operation = "MULTIPLY"
+        L.new(scale.outputs[0], tm.inputs[0])
+        if tint_attr:
+            ca = nt.nodes.new("ShaderNodeVertexColor")
+            ca.layer_name = tint_attr
+            L.new(ca.outputs["Color"], tm.inputs[1])
+        else:
+            tm.inputs[1].default_value = mlib.hex_to_linear(tint_hex)
+        tinted = tm.outputs[0]
+        if "mask" in a["files"]:
+            mk = tex("mask", True)
+            sm = nt.nodes.new("ShaderNodeSeparateColor")
+            L.new(mk.outputs["Color"], sm.inputs[0])
+            wall = nt.nodes.new("ShaderNodeMath")
+            wall.operation = "GREATER_THAN"
+            L.new(sm.outputs[0], wall.inputs[0])
+            wall.inputs[1].default_value = 0.75
+            mix = nt.nodes.new("ShaderNodeMix")
+            mix.data_type = "RGBA"
+            L.new(wall.outputs[0], mix.inputs["Factor"])
+            L.new(color, mix.inputs["A"])
+            L.new(tinted, mix.inputs["B"])
+            color = mix.outputs["Result"]
+        else:
+            color = tinted
+    aom = nt.nodes.new("ShaderNodeMix")
+    aom.data_type = "RGBA"
+    aom.blend_type = "MULTIPLY"
+    aom.inputs["Factor"].default_value = ao_mix
+    L.new(color, aom.inputs["A"])
+    L.new(so.outputs[0], aom.inputs["B"])
+    L.new(aom.outputs["Result"], b.inputs["Base Color"])
+    L.new(so.outputs[1], b.inputs["Roughness"])
+    L.new(so.outputs[2], b.inputs["Metallic"])
+    nm = nt.nodes.new("ShaderNodeNormalMap")
+    nm.uv_map = "UVMap"
+    nm.inputs["Strength"].default_value = normal_strength
+    L.new(nrm.outputs["Color"], nm.inputs["Color"])
+    L.new(nm.outputs["Normal"], b.inputs["Normal"])
+    if emission > 0 and "mask" in a["files"]:
+        mk2 = tex("mask", True)
+        se = nt.nodes.new("ShaderNodeSeparateColor")
+        L.new(mk2.outputs["Color"], se.inputs[0])
+        b.inputs["Emission Color"].default_value = (1.0, 0.78, 0.5, 1.0)
+        L.new(se.outputs[1], b.inputs["Emission Strength"])
+    ATLAS_MATS[name] = mat
+    return mat
+
+
+def decal_material(name: str, png: Path, uv_rect: tuple[float, float, float, float]) -> bpy.types.Material:
+    """Alpha-blended decal (lane markings) sampling a column of ground_markings.png with fract(v)."""
+    if name in ATLAS_MATS:
+        return ATLAS_MATS[name]
+    mat = bpy.data.materials.new(name)
+    b = _bsdf(mat)
+    nt = mat.node_tree
+    L = nt.links
+    uvn = nt.nodes.new("ShaderNodeUVMap")
+    sep = nt.nodes.new("ShaderNodeSeparateXYZ")
+    L.new(uvn.outputs["UV"], sep.inputs[0])
+    u0, v0, u1, v1 = uv_rect
+    fx = nt.nodes.new("ShaderNodeMath")
+    fx.operation = "MULTIPLY_ADD"
+    L.new(sep.outputs[0], fx.inputs[0])
+    fx.inputs[1].default_value = u1 - u0
+    fx.inputs[2].default_value = u0
+    fr = nt.nodes.new("ShaderNodeMath")
+    fr.operation = "FRACT"
+    L.new(sep.outputs[1], fr.inputs[0])
+    comb = nt.nodes.new("ShaderNodeCombineXYZ")
+    L.new(fx.outputs[0], comb.inputs[0])
+    L.new(fr.outputs[0], comb.inputs[1])
+    img = nt.nodes.new("ShaderNodeTexImage")
+    img.image = _img(png, False)
+    img.image.alpha_mode = "STRAIGHT"
+    L.new(comb.outputs[0], img.inputs["Vector"])
+    L.new(img.outputs["Color"], b.inputs["Base Color"])
+    L.new(img.outputs["Alpha"], b.inputs["Alpha"])
+    b.inputs["Roughness"].default_value = 0.7
+    ATLAS_MATS[name] = mat
     return mat
 
 
@@ -149,7 +294,10 @@ def part_to_object(part: Part, name: str, collection: bpy.types.Collection | Non
     face_slot = np.zeros(len(part.F), dtype=np.int32)
     vcol_faces: list[tuple[int, str]] = []
     for i, key in enumerate(part.M):
-        if key in mlib.MATERIALS:
+        if key in ATLAS_MATS:
+            mname = key
+            mat_fn = ATLAS_MATS.__getitem__
+        elif key in mlib.MATERIALS:
             mname = key
             mat_fn = pbr_material
         elif key in palette.PALETTE:

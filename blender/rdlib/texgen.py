@@ -63,6 +63,16 @@ def blur(a: np.ndarray, sigma_px: float | tuple[float, float]) -> np.ndarray:
     return np.real(np.fft.ifft2(np.fft.fft2(a) * g))
 
 
+def blur_oriented(a: np.ndarray, along: float, across: float, angle: float) -> np.ndarray:
+    """Periodic anisotropic gaussian blur: sigma `along` (px) in direction `angle` (radians from +x), `across` normal to it."""
+    fy, fx = np.fft.fftfreq(a.shape[0])[:, None], np.fft.fftfreq(a.shape[1])[None, :]
+    c, s = math.cos(angle), math.sin(angle)
+    fu = fx * c + fy * s
+    fv = -fx * s + fy * c
+    g = np.exp(-2 * math.pi**2 * ((fu * along) ** 2 + (fv * across) ** 2))
+    return np.real(np.fft.ifft2(np.fft.fft2(a) * g))
+
+
 def norm01(a: np.ndarray) -> np.ndarray:
     lo, hi = float(a.min()), float(a.max())
     return (a - lo) / (hi - lo) if hi > lo else np.zeros_like(a)
@@ -186,7 +196,8 @@ class Canvas:
 
     w_m: float
     h_m: float
-    px: int  # pixels along x; y pixels follow from the aspect
+    px: int  # pixels along x; y pixels follow from the aspect unless py_px is given
+    py_px: int | None = None
     alb: np.ndarray = field(init=False)
     h: np.ndarray = field(init=False)
     rough: np.ndarray = field(init=False)
@@ -196,8 +207,9 @@ class Canvas:
     emit: np.ndarray = field(init=False)
 
     def __post_init__(self) -> None:
-        self.py = int(round(self.px * self.h_m / self.w_m))
-        self.m = self.w_m / self.px  # meters per pixel
+        self.py = self.py_px or int(round(self.px * self.h_m / self.w_m))
+        self.m = self.w_m / self.px  # meters per pixel along x
+        self.my = self.h_m / self.py  # meters per pixel along y (differs only for non-square strips)
         shape = (self.py, self.px)
         self.alb = np.full((*shape, 3), 0.5)
         self.h = np.zeros(shape)
@@ -207,7 +219,7 @@ class Canvas:
         self.mask = np.zeros(shape)
         self.emit = np.zeros(shape)  # night-light mask (windows / lamps), optional
         xs = (np.arange(self.px) + 0.5) * self.m
-        ys = self.h_m - (np.arange(self.py) + 0.5) * self.m
+        ys = self.h_m - (np.arange(self.py) + 0.5) * self.my
         self.X, self.Y = np.meshgrid(xs, ys)
 
     @property
@@ -278,6 +290,10 @@ class Canvas:
 
     # -- finishing -------------------------------------------------------------
     def maps(self, ao_radius_m: float = 0.05, normal_strength: float = 1.0, ao_power: float = 1.0) -> dict[str, np.ndarray]:
+        sh = self.shape
+        for k in ("h", "rough", "metal", "ao", "mask", "emit"):
+            setattr(self, k, np.broadcast_to(np.asarray(getattr(self, k), float), sh).copy())
+        self.alb = np.broadcast_to(np.asarray(self.alb, float), (*sh, 3)).copy()
         ao = horizon_ao(self.h, self.m, ao_radius_m, power=ao_power) * self.ao
         return {
             "albedo": np.clip(self.alb, 0, 1),

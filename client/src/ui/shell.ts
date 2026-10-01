@@ -167,8 +167,9 @@ export class RdTopbar extends LitElement {
       <button class=${s.walking ? 'active' : ''} @click=${() => (s.walking ? appCtx.scene?.exitWalk() : appCtx.scene?.walkAtTarget())} title="Street-level first-person view (WASD + mouse)">
         🚶 ${s.walking ? 'Exit walk' : 'Walk'}
       </button>
+      <button @click=${() => appCtx.scene?.enterPhotoMode()} title="Photo mode: hide the UI, render at ultra quality and save a PNG">📷 Photo</button>
       <select class="q" aria-label="Render quality" title="Render quality" @change=${(e: Event) => appCtx.scene?.setQuality((e.target as HTMLSelectElement).value as Quality)}>
-        ${(['high', 'medium', 'low'] as const).map((q) => html`<option value=${q} ?selected=${s.quality === q}>${q === 'medium' ? 'Med' : q[0]!.toUpperCase() + q.slice(1)} quality</option>`)}
+        ${(['ultra', 'high', 'medium', 'low'] as const).map((q) => html`<option value=${q} ?selected=${s.quality === q}>${q === 'medium' ? 'Med' : q[0]!.toUpperCase() + q.slice(1)} quality</option>`)}
       </select>
       <button class=${s.showStats ? 'active' : ''} @click=${() => store.set({ showStats: !s.showStats })} title="FPS, draw calls, triangles">
         Stats
@@ -536,3 +537,43 @@ export class RdCameraTools extends LitElement {
   }
 }
 customElements.define('rd-camera-tools', RdCameraTools);
+
+/** Photo mode controls (hidden while the PNG is captured). */
+export class RdPhotoBar extends LitElement {
+  static override styles = [
+    theme,
+    css`
+      .p {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        gap: 6px;
+        padding: 6px;
+        pointer-events: auto;
+        opacity: 0.85;
+      }
+      .p:hover {
+        opacity: 1;
+      }
+    `,
+  ];
+  private onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') appCtx.scene?.exitPhotoMode();
+  };
+  override connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener('keydown', this.onKey);
+  }
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    window.removeEventListener('keydown', this.onKey);
+  }
+  override render() {
+    return html`<div class="panel p photo-bar">
+      <button class="primary" @click=${() => void appCtx.scene?.savePhoto()}>Save PNG</button>
+      <button @click=${() => appCtx.scene?.exitPhotoMode()}>Exit (Esc)</button>
+    </div>`;
+  }
+}
+customElements.define('rd-photo-bar', RdPhotoBar);

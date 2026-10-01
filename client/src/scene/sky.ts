@@ -104,6 +104,8 @@ export class SkySystem {
   /** sky radiance at the horizon away from / toward the sun (linear, for fog tinting) */
   readonly horizon = new THREE.Color(0.6, 0.7, 0.85);
   readonly horizonSun = new THREE.Color(0.9, 0.75, 0.6);
+  /** height (m) the ground haze is densest at (valley floor) */
+  fogBase = 120;
   /** exposure the scene should use (eye adaptation) */
   exposure = 1;
   /** bumped whenever the sky cube / environment is re-rendered */

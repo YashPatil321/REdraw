@@ -6,8 +6,10 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { GpuTimer } from './gpuTimer';
 import { PostFX } from './postfx';
 import { QUALITY, type Quality, type QualitySettings } from './quality';
+import type { SkySystem } from './sky';
 import { WalkControls, type GroundFn, type WalkPose } from './walk';
 
 export interface FlyToOptions {
@@ -34,6 +36,10 @@ export interface FrameStats {
   triangles: number;
   geometries: number;
   textures: number;
+  /** smoothed GPU frame time (ms) from EXT_disjoint_timer_query, null if unsupported */
+  gpuMs: number | null;
+  /** smoothed CPU time spent in frame callbacks + render submission (ms) */
+  cpuMs: number;
 }
 
 type FrameFn = (dt: number, now: number) => void;
@@ -50,7 +56,10 @@ export class Viewer {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: MapControls;
-  readonly stats: FrameStats = { fps: 0, calls: 0, triangles: 0, geometries: 0, textures: 0 };
+  readonly stats: FrameStats = { fps: 0, calls: 0, triangles: 0, geometries: 0, textures: 0, gpuMs: null, cpuMs: 0 };
+  readonly gpuTimer: GpuTimer;
+  /** sky / sun (set by the scene controller once the region is known) */
+  sky: SkySystem | null = null;
   /** bounds the camera target is kept inside */
   extent = { minX: -6000, maxX: 6000, minZ: -6000, maxZ: 6000 };
   /** ground height estimate under the target (for dynamic near plane) */
@@ -95,9 +104,10 @@ export class Viewer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.6;
+    this.renderer.toneMapping = THREE.AgXToneMapping;
+    this.renderer.toneMappingExposure = 1;
     this.renderer.info.autoReset = false;
+    this.gpuTimer = new GpuTimer(this.renderer.getContext());
     container.appendChild(this.renderer.domElement);
     this.renderer.domElement.style.display = 'block';
 
@@ -113,8 +123,12 @@ export class Viewer {
     this.camera.position.set(0, 9000, 9000);
 
     this.controls = new MapControls(this.camera, this.renderer.domElement);
+    // smooth, inertial orbit: low damping keeps a little glide after release
     this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.12;
+    this.controls.dampingFactor = 0.075;
+    this.controls.rotateSpeed = 0.55;
+    this.controls.zoomSpeed = 0.9;
+    this.controls.panSpeed = 0.9;
     this.controls.screenSpacePanning = false;
     this.controls.minDistance = 40;
     this.controls.maxDistance = 22000;
@@ -149,17 +163,9 @@ export class Viewer {
     this.qs = QUALITY[q];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.qs.pixelRatioCap));
     this.renderer.shadowMap.enabled = this.qs.shadows;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.needsUpdate = true;
-    this.post?.dispose();
-    this.post = null;
-    if (this.qs.bloom || this.qs.ao || this.qs.grade) {
-      try {
-        this.post = new PostFX(this.renderer, this.scene, this.camera, this.qs);
-      } catch (e) {
-        console.warn('post-processing unavailable', e);
-        this.post = null;
-      }
-    }
+    this.rebuildPost();
     this.resize();
     // materials must recompile for shadow map changes
     this.scene.traverse((o) => {
@@ -167,6 +173,33 @@ export class Viewer {
       if (Array.isArray(m)) m.forEach((x) => (x.needsUpdate = true));
       else if (m) m.needsUpdate = true;
     });
+  }
+
+  setSky(sky: SkySystem | null): void {
+    this.sky = sky;
+    this.rebuildPost();
+  }
+
+  private rebuildPost(): void {
+    this.post?.dispose();
+    this.post = null;
+    if (this.qs.post) {
+      try {
+        this.post = new PostFX(this.renderer, this.scene, this.camera, this.qs, this.sky);
+        const w = Math.max(1, this.container.clientWidth);
+        const h = Math.max(1, this.container.clientHeight);
+        this.post.setSize(w, h, this.renderer.getPixelRatio());
+      } catch (e) {
+        console.warn('post-processing unavailable', e);
+        this.post = null;
+      }
+    }
+    if (this.sky) this.sky.postAtmosphere = !!this.post;
+  }
+
+  /** The HDR pipeline is active (aerial perspective, tone mapping in post). */
+  get postActive(): boolean {
+    return !!this.post && !this.directRender && !this.split.enabled;
   }
 
   setGhostLook(on: boolean): void {
@@ -206,8 +239,25 @@ export class Viewer {
       }
     } else this.orbitFrame(now);
 
+    const t0 = performance.now();
     for (const fn of this.frameFns) fn(dt, now);
+    this.gpuTimer.begin();
     this.render(dt);
+    this.gpuTimer.end();
+    this.stats.cpuMs = this.stats.cpuMs * 0.9 + (performance.now() - t0) * 0.1;
+    this.stats.gpuMs = this.gpuTimer.ms;
+  }
+
+  /** Render one frame now and return the canvas as a PNG blob (photo mode). */
+  async capturePng(): Promise<Blob | null> {
+    this.frame(performance.now());
+    return await new Promise<Blob | null>((resolve) => {
+      try {
+        this.renderer.domElement.toBlob((b) => resolve(b), 'image/png');
+      } catch {
+        resolve(null);
+      }
+    });
   }
 
   private orbitFrame(now: number): void {
@@ -271,6 +321,7 @@ export class Viewer {
       r.setScissorTest(false);
       this.split.hooks.after();
     } else if (this.post && !this.directRender) {
+      this.post.viewDistance = this.walk.enabled ? 4 : this.distance;
       this.post.render(dt);
     } else {
       r.render(this.scene, this.camera);

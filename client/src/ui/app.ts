@@ -182,10 +182,18 @@ export class RdApp extends LitElement {
       }
     `,
   ];
-  private st = new StoreController(this, ['view', 'booting', 'bootMessage', 'fatal', 'worldStatus', 'building', 'school', 'buildingLoading', 'mapPick', 'meta', 'walking', 'photoreal', 'renderMode']);
+  private st = new StoreController(this, ['view', 'booting', 'bootMessage', 'fatal', 'worldStatus', 'building', 'school', 'buildingLoading', 'mapPick', 'meta', 'walking', 'photoreal', 'renderMode', 'photoMode']);
 
   override render() {
     const s = this.st.s;
+    if (s.photoMode && !s.booting) {
+      // photo mode: only the required credits and a small capture bar
+      return html`<main>
+        <rd-photo-bar></rd-photo-bar>
+        <div class="attr"><rd-attribution></rd-attribution></div>
+        <div class="toasts"><rd-toasts></rd-toasts></div>
+      </main>`;
+    }
     const infoPanel = s.building || s.school || s.buildingLoading;
     let content;
     // street level: keep the view clear (HUD + scrubber only)

@@ -28,6 +28,14 @@ _WIDTH_BY_TYPE = {v: k for k, v in _TYPE_BY_WIDTH.items()}
 _DTYPE_BY_COMPONENT = {GL_FLOAT: np.float32, GL_UNSIGNED_INT: np.uint32, GL_UNSIGNED_BYTE: np.uint8, GL_UNSIGNED_SHORT: np.uint16}
 
 
+def id_attribute(ids: np.ndarray) -> np.ndarray:
+    """Per-vertex building ids as uint16 when they fit (exact through Draco), else float32."""
+    a = np.asarray(ids)
+    if len(a) == 0 or float(a.max()) <= 65535:
+        return a.astype(np.uint16)
+    return a.astype(np.float32)
+
+
 @dataclass
 class MeshData:
     """One mesh primitive. Arrays are per vertex unless noted."""
@@ -38,7 +46,7 @@ class MeshData:
     normals: np.ndarray | None = None  # (N, 3) float32
     uvs: np.ndarray | None = None  # (N, 2) float32
     colors: np.ndarray | None = None  # (N, 4) uint8 (normalized) -> COLOR_0
-    custom: dict[str, np.ndarray] = field(default_factory=dict)  # name -> (N,) float32
+    custom: dict[str, np.ndarray] = field(default_factory=dict)  # name -> (N,) float32, uint16 or uint8 (kept as is)
     texture_jpeg: bytes | None = None
     texture_mime: str = "image/jpeg"
     base_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
@@ -112,7 +120,13 @@ def write_glb(path: Path, meshes: list[MeshData], extras: dict[str, Any] | None 
         if m.colors is not None:
             attrs["COLOR_0"] = b.accessor(m.colors.astype(np.uint8), GL_UNSIGNED_BYTE, ARRAY_BUFFER, normalized=True)
         for name, arr in m.custom.items():
-            attrs[name] = b.accessor(arr.astype(np.float32).reshape(-1), GL_FLOAT, ARRAY_BUFFER, minmax=True)
+            a = np.asarray(arr).reshape(-1)
+            if a.dtype == np.uint8:
+                attrs[name] = b.accessor(a, GL_UNSIGNED_BYTE, ARRAY_BUFFER, minmax=True)
+            elif a.dtype == np.uint16:
+                attrs[name] = b.accessor(a, GL_UNSIGNED_SHORT, ARRAY_BUFFER, minmax=True)
+            else:
+                attrs[name] = b.accessor(a.astype(np.float32), GL_FLOAT, ARRAY_BUFFER, minmax=True)
         idx = b.accessor(m.indices.astype(np.uint32).reshape(-1), GL_UNSIGNED_INT, ELEMENT_ARRAY_BUFFER)
         mat: dict[str, Any] = {
             "name": f"{m.name}_mat",
@@ -293,6 +307,15 @@ def load_glb_meshes(path: Path) -> list[MeshData]:
                 if np.linalg.det(m[:3, :3]) < 0:
                     idx = idx.reshape(-1, 3)[:, [0, 2, 1]].reshape(-1)
                 md = MeshData(name=f"{Path(path).stem}_{ni}_{k}", positions=pos, indices=idx, normals=nrm, uvs=uv, colors=col)
+                # keep application-specific attributes (_MAT, _VARIANT, ...) of hero models
+                for an, ai in a.items():
+                    if not an.startswith("_") or an == "_BUILDING_ID":
+                        continue
+                    arr = read_accessor_any(gltf, binb, ai)
+                    arr = arr[:, 0] if arr.ndim == 2 else arr
+                    if arr.dtype.kind == "f" and len(arr) and np.all(np.mod(arr, 1.0) == 0) and arr.min() >= 0 and arr.max() <= 255:
+                        arr = arr.astype(np.uint8)
+                    md.custom[an] = np.asarray(arr)
                 if "material" in prim:
                     mat = gltf["materials"][prim["material"]]
                     pbr = mat.get("pbrMetallicRoughness", {})

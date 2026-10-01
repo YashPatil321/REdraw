@@ -20,7 +20,7 @@ import type { TileSource } from '../photoreal/tiles';
 import type { School, WorldMeta } from '../types';
 import { applyMapClick, setParam, type MapType } from '../ui/formgen';
 import { ArterialLabels, BASELINE_COLOR, EdgeHighlight, LocationPin, PLAN_COLOR, PlanOverlay, SchoolMarkers } from './markers';
-import { QUALITY, initialQuality, saveQuality, type Quality } from './quality';
+import { QUALITY, initialQuality, lowerQuality, saveQuality, type Quality } from './quality';
 import { SkySystem } from './sky';
 import { RoadDetails } from './roadDetails';
 import { loadStaticProps, loadVehicleProps, type StaticProps } from './props';
@@ -91,15 +91,6 @@ export class SceneController {
       },
       after: () => this.applyVisibility(store.get()),
     };
-    // reflections for clear-coated car paint and glass (vehicles only; buildings stay matte)
-    try {
-      const pmrem = new THREE.PMREMGenerator(this.viewer.renderer);
-      const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-      setVehicleEnvMap(env);
-      pmrem.dispose();
-    } catch (e) {
-      console.warn('environment map unavailable', e);
-    }
     const iq = initialQuality(this.viewer.renderer.getContext());
     this.qualityPinned = iq.pinned;
     store.set({ quality: iq.q });
@@ -107,10 +98,39 @@ export class SceneController {
     this.viewer.start();
   }
 
+  /** Studio environment for car paint when the sky environment (IBL) is off (low quality). */
+  private roomEnv: THREE.Texture | null = null;
+  private vehicleEnv(ibl: boolean): void {
+    if (ibl) {
+      setVehicleEnvMap(null); // scene.environment: the real sky
+      return;
+    }
+    try {
+      if (!this.roomEnv) {
+        const pmrem = new THREE.PMREMGenerator(this.viewer.renderer);
+        this.roomEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+        pmrem.dispose();
+      }
+      setVehicleEnvMap(this.roomEnv);
+    } catch (e) {
+      console.warn('environment map unavailable', e);
+    }
+  }
+
+  private applySkyQuality(q: Quality): void {
+    const qs = QUALITY[q];
+    if (!this.sky) return;
+    this.sky.maxShadowFar = qs.shadowFar;
+    this.sky.configureShadows(qs.shadows && !this.photoreal, qs.shadowMapSize, qs.cascades, qs.shadowFar);
+    this.sky.ibl = qs.ibl;
+    this.sky.setSkySize(qs.skySize);
+    this.vehicleEnv(qs.ibl);
+  }
+
   private applyQuality(q: Quality): void {
     const qs = QUALITY[q];
     this.viewer.setQuality(q);
-    this.sky?.configureShadows(qs.shadows, qs.shadowMapSize);
+    this.applySkyQuality(q);
     this.world.applyQuality(qs);
     this.staticProps?.setDrawDistance(qs.propDrawDistance);
     this.staticProps?.setShadows(qs.shadows);
@@ -128,13 +148,13 @@ export class SceneController {
 
   /** Drop one quality step if the frame rate stays below 24 FPS (unless the user chose a preset). */
   private autoQuality(now: number): void {
-    if (this.qualityPinned || !this.worldLoaded || now - this.lastQualityChange < 8000) return;
+    if (this.qualityPinned || store.get().photoMode || !this.worldLoaded || now - this.lastQualityChange < 8000) return;
     const h = this.viewer.fpsHistory;
     if (h.length < 10) return;
     const avg = h.slice(-10).reduce((a, b) => a + b, 0) / 10;
     const q = store.get().quality;
-    if (avg < 24 && q !== 'low') {
-      const next: Quality = q === 'high' ? 'medium' : 'low';
+    const next = lowerQuality(q);
+    if (avg < 24 && next) {
       h.length = 0;
       store.set({ quality: next });
       toast(`Quality lowered to ${next} to keep the frame rate up.`, 'info', 4000);
@@ -156,9 +176,18 @@ export class SceneController {
     const cz = (ext.min_z + ext.max_z) / 2;
     this.viewer.controls.target.set(cx, 0, cz);
     this.viewer.camera.position.set(cx, span * 1.15, cz + span * 0.9);
-    this.sky = new SkySystem(this.viewer.scene, meta.region.origin.lat, meta.region.origin.lon, meta.region.timezone || 'America/Los_Angeles');
     const qs = QUALITY[store.get().quality];
-    this.sky.configureShadows(qs.shadows, qs.shadowMapSize);
+    this.sky = new SkySystem(
+      this.viewer.scene,
+      this.viewer.camera,
+      this.viewer.renderer,
+      meta.region.origin.lat,
+      meta.region.origin.lon,
+      meta.region.timezone || 'America/Los_Angeles',
+      qs.skySize,
+    );
+    this.viewer.setSky(this.sky);
+    this.applySkyQuality(store.get().quality);
     this.clockT = store.get().simTime;
 
     this.initPhotorealSource();
@@ -261,7 +290,7 @@ export class SceneController {
     this.viewer.directRender = pr;
     const qs = QUALITY[s.quality];
     this.viewer.renderer.shadowMap.enabled = qs.shadows && !pr;
-    this.sky?.configureShadows(qs.shadows && !pr, qs.shadowMapSize);
+    this.sky?.configureShadows(qs.shadows && !pr, qs.shadowMapSize, qs.cascades, qs.shadowFar);
     if (this.sky) this.sky.photoreal = pr;
     for (const l of [this.baseline, this.plan]) l?.setStyle(pr ? 'photoreal' : 'open');
     if (this.planOverlay) this.planOverlay.update(s.draft.tools, s.tools, s.selectedTool);
@@ -298,6 +327,9 @@ export class SceneController {
       store.set({ worldStatus: '' });
       const b = this.world.bounds;
       if (!b.isEmpty()) this.viewer.groundY = (b.min.y + b.max.y) / 2;
+      const tb = new THREE.Box3();
+      for (const m of this.world.terrainMeshes) if (m.geometry.boundingBox) tb.union(m.geometry.boundingBox);
+      if (this.sky && !tb.isEmpty()) this.sky.fogBase = tb.min.y + (tb.max.y - tb.min.y) * 0.25;
     } catch (e) {
       console.error(e);
       store.set({ worldStatus: `World assets unavailable: ${(e as Error).message}` });
@@ -505,12 +537,10 @@ export class SceneController {
     this.world.updateCulling(this.viewer.camera);
     const dist = this.viewer.distance;
     if (this.sky) {
-      this.sky.update(this.clockT, this.viewer.renderer);
-      this.sky.followTarget(this.viewer.walking ? this.viewer.camera.position : this.viewer.controls.target, this.viewer.walking ? 120 : dist);
-      // keep the sky box centred on the camera and inside the far plane (walk mode uses a short far)
-      const cam = this.viewer.camera;
-      this.sky.sky.position.copy(cam.position);
-      this.sky.sky.scale.setScalar(cam.far * 0.55);
+      this.sky.postAtmosphere = this.viewer.postActive;
+      this.sky.followTarget(this.viewer.walking ? this.viewer.camera.position : this.viewer.controls.target, this.viewer.walking ? 260 : dist);
+      this.viewer.camera.updateMatrixWorld();
+      this.sky.update(this.clockT, this.viewer.renderer, this.viewer.camera);
       const dark = Math.max(this.sky.darkness, this.sky.dim);
       vehicleLightUniforms.uHead.value = 1.2 + 4.5 * dark;
       vehicleLightUniforms.uTail.value = 0.9 + 3.2 * dark;
@@ -713,6 +743,53 @@ export class SceneController {
     this.flyToXZ(x, z, 900);
   }
 
+  // ---- photo mode
+
+  private photoPrevQuality: Quality | null = null;
+
+  /** Hide the UI, switch to ultra quality and save a PNG once the frame has settled. */
+  enterPhotoMode(): void {
+    const s = store.get();
+    if (s.photoMode) return;
+    this.photoPrevQuality = s.quality;
+    store.set({ photoMode: true, quality: 'ultra' });
+    this.viewer.labelRenderer.domElement.style.display = 'none';
+    // let shaders compile, shadows / AO / environment settle
+    window.setTimeout(() => void this.savePhoto(), 1800);
+  }
+
+  exitPhotoMode(): void {
+    if (!store.get().photoMode) return;
+    this.viewer.labelRenderer.domElement.style.display = '';
+    store.set({ photoMode: false, quality: this.photoPrevQuality ?? store.get().quality });
+    this.photoPrevQuality = null;
+  }
+
+  /** Render a frame, stamp the required credits, download as PNG. */
+  async savePhoto(): Promise<void> {
+    const bar = document.querySelector('rd-app')?.shadowRoot?.querySelector('rd-photo-bar') as HTMLElement | null | undefined;
+    if (bar) bar.style.visibility = 'hidden';
+    try {
+      const blob = await this.viewer.capturePng();
+      if (!blob) throw new Error('canvas capture failed');
+      const s = store.get();
+      const credits = s.renderMode === 'photoreal' ? `Google${s.attribution?.text ? ' · ' + s.attribution.text : ''}` : s.openCredits;
+      const out = await stampCredits(blob, credits);
+      const a = document.createElement('a');
+      const t = new Date();
+      const pad = (n: number): string => String(n).padStart(2, '0');
+      a.download = `redraw-${t.getFullYear()}${pad(t.getMonth() + 1)}${pad(t.getDate())}-${pad(t.getHours())}${pad(t.getMinutes())}${pad(t.getSeconds())}.png`;
+      a.href = URL.createObjectURL(out);
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      toast('Screenshot saved.', 'info', 2500);
+    } catch (e) {
+      toast(`Screenshot failed: ${(e as Error).message}`, 'error', 5000);
+    } finally {
+      if (bar) bar.style.visibility = '';
+    }
+  }
+
   get isWorldLoaded(): boolean {
     return this.worldLoaded;
   }
@@ -733,5 +810,29 @@ export class SceneController {
     this.sky?.dispose();
     this.world.dispose();
     this.viewer.dispose();
+  }
+}
+
+/** Draw the data credits into the bottom-right corner of a PNG (required attribution travels with the image). */
+async function stampCredits(png: Blob, text: string): Promise<Blob> {
+  if (!text) return png;
+  try {
+    const img = await createImageBitmap(png);
+    const cv = document.createElement('canvas');
+    cv.width = img.width;
+    cv.height = img.height;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return png;
+    ctx.drawImage(img, 0, 0);
+    const fs = Math.max(11, Math.round(img.height / 70));
+    ctx.font = `${fs}px system-ui, sans-serif`;
+    const w = ctx.measureText(text).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(img.width - w - fs * 1.2, img.height - fs * 1.8, w + fs * 1.2, fs * 1.8);
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fillText(text, img.width - w - fs * 0.6, img.height - fs * 0.55);
+    return await new Promise<Blob>((resolve) => cv.toBlob((b) => resolve(b ?? png), 'image/png'));
+  } catch {
+    return png;
   }
 }

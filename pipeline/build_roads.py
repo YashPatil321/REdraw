@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -228,6 +228,7 @@ class RoadNetwork:
     signal_source: str = "osm"  # "osm" (tagged / snapped), "inferred" (signal_inference.*) or "none"
     G_visual: nx.MultiDiGraph | None = None  # unclipped projected graph (render-only roads beyond the bbox)
     boundary_nodes: int = 0  # nodes created where roads cross the region bbox edge
+    exits_dropped: list[dict[str, Any]] = field(default_factory=list)  # region.yaml exits not reachable
 
 
 def road_key(data: dict[str, Any]) -> str:
@@ -273,7 +274,8 @@ def infer_signals(G: nx.MultiDiGraph) -> set[Any]:
 
 
 def exit_road_key(label: str) -> str:
-    words = label.split()
+    """Road name of an exit label: 'Camino del Sur south (to SR 56 west)' -> 'Camino del Sur'."""
+    words = re.sub(r"\(.*?\)", " ", label).split()
     while words and words[-1].lower() in DIRECTION_WORDS:
         words = words[:-1]
     return " ".join(words)
@@ -458,6 +460,60 @@ def connect_islands(G: nx.MultiDiGraph, max_gap: float = ISLAND_CONNECT_MAX_M) -
         added += 1
 
 
+def bridge_exit_islands(G: nx.MultiDiGraph, G_full: nx.MultiDiGraph, exits_xy: list[tuple[dict[str, Any], float, float]], labels: list[dict[str, Any]]) -> int:
+    """Reconnect exit roads whose in-bbox piece only connects to the rest of the network outside
+    the bbox (UTM graphs, G in place). For each such exit the shortest real road paths in the
+    unclipped graph, main component -> piece and piece -> main, are added back. Returns edges added."""
+    o = scene_origin()
+    added = 0
+    for ex, x, z in exits_xy:
+        e, n = x + o.easting, o.northing - z
+        prefix, refs = exit_matcher(ex, labels)
+        cand = [nd for u, v, d in G.edges(data=True) if edge_matches(d, prefix, refs) for nd in (u, v)]
+        if not cand:
+            continue
+        near = min(cand, key=lambda q: math.hypot(G.nodes[q]["x"] - e, G.nodes[q]["y"] - n))
+        sccs = sorted(nx.strongly_connected_components(G), key=len, reverse=True)
+        main = sccs[0]
+        if near in main:
+            continue
+        piece = next(c for c in sccs if near in c)
+        piece_full = [q for q in piece if q in G_full]
+        main_full = [q for q in main if q in G_full]
+        if not piece_full or not main_full:
+            continue
+
+        def w(a: Any, b: Any, d: dict[Any, dict[str, Any]]) -> float:
+            return min(float(dd.get("length", 1.0)) for dd in d.values())
+
+        paths = []
+        for src, dst, Gd in ((main_full, piece_full, G_full), (piece_full, main_full, G_full.reverse(copy=False))):
+            try:
+                _, path = nx.multi_source_dijkstra(Gd, set(src), weight=w, target=None)  # type: ignore[call-overload]
+            except nx.NetworkXNoPath:
+                continue
+            best = min((q for q in dst if q in path), key=lambda q: len(path[q]), default=None)
+            if best is None:
+                continue
+            pth = path[best]
+            paths.append(pth if Gd is G_full else pth[::-1])
+        for pth in paths:
+            for a, b in zip(pth[:-1], pth[1:], strict=True):
+                for q in (a, b):
+                    if q not in G:
+                        G.add_node(q, **G_full.nodes[q])
+                if not G.has_edge(a, b):
+                    for _, dd in G_full.get_edge_data(a, b).items():
+                        G.add_edge(a, b, **dd)
+                        added += 1
+        n_e = sum(len(p) - 1 for p in paths)
+        if n_e:
+            log(f"exit {ex['id']}: in-bbox road piece reconnected through {n_e} real edge(s) just outside the bbox")
+        else:
+            log(f"exit {ex['id']}: its in-bbox road piece is not connected to the network anywhere in the raw data")
+    return added
+
+
 def add_exit_turnarounds(G: nx.MultiDiGraph, exits_xy: list[tuple[dict[str, Any], float, float]], labels: list[dict[str, Any]]) -> int:
     """Join dead-end carriageway ends near each exit (bbox truncation of divided roads).
 
@@ -626,6 +682,7 @@ def build_network(
     n_turn = add_exit_turnarounds(G, exits_xy, labels)
 
     n_conn = connect_islands(G)
+    bridge_exit_islands(G, G_visual, exits_xy, labels)
     before = G.number_of_nodes()
     largest = max(nx.strongly_connected_components(G), key=len)
     G = G.subgraph(largest).copy()
@@ -736,10 +793,13 @@ def build_network(
             "boundary_exit": [""] * len(node_ids),
         }
     )
-    exits = snap_exits(nodes, edges, exits_xy, labels, config_xz)
+    dropped: list[dict[str, Any]] = []
+    exits = snap_exits(nodes, edges, exits_xy, labels, config_xz, dropped)
+    if not exits:
+        raise RuntimeError("no region.yaml exit could be snapped to the drive network; check region.yaml exits")
     for ex in exits:
         nodes.loc[nodes["node_id"] == ex["node_id"], "boundary_exit"] = ex["id"]
-    return RoadNetwork(G=G, nodes=nodes, edges=edges, exits=exits, signal_source=signal_source, G_visual=G_visual, boundary_nodes=n_boundary)
+    return RoadNetwork(G=G, nodes=nodes, edges=edges, exits=exits, signal_source=signal_source, G_visual=G_visual, boundary_nodes=n_boundary, exits_dropped=dropped)
 
 
 EXIT_ON_ROAD_TOL_M = 50.0  # a region.yaml exit point this close to its road is used as is
@@ -785,22 +845,25 @@ def snap_exits(
     exits_xy: list[tuple[dict[str, Any], float, float]],
     labels: list[dict[str, Any]],
     config_xz: dict[str, tuple[float, float]] | None = None,
+    dropped: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Snap each region.yaml exit to the nearest node of its road (spec 5.4.3).
 
     `exits_xy` holds the snap targets (road / bbox edge crossings); `snap_distance_m` is the
     distance from the chosen node to the region.yaml point (`config_xz`), so a wrong config
     coordinate stays visible."""
-    out = []
+    out: list[dict[str, Any]] = []
     pos = nodes.set_index("node_id")[["x", "z"]]
     used: set[int] = set()
+    dropped = dropped if dropped is not None else []
     for ex, x, z in exits_xy:
         prefix, refs = exit_matcher(ex, labels)
         mask = edges.apply(lambda r, p=prefix, rf=refs: edge_matches({"name": r["name"], "ref": r["ref"]}, p, rf), axis=1)
         cand = set(edges.loc[mask, "u"]).union(edges.loc[mask, "v"]) - used
         if not cand:
-            log(f"WARNING exit {ex['id']}: no edges match road '{prefix}' {refs}; snapping to nearest node")
-            cand = set(nodes["node_id"]) - used
+            log(f"WARNING exit {ex['id']}: no edge of road '{prefix}' {refs} is in the strongly connected network; exit DROPPED (see exits.json 'dropped')")
+            dropped.append({"id": ex["id"], "label": ex.get("label", ex["id"]), "reason": f"road '{prefix}' is not connected to the drive network inside the region bbox"})
+            continue
         cp = pos.loc[sorted(cand)]
         d = np.hypot(cp["x"].to_numpy() - x, cp["z"].to_numpy() - z)
         i = int(np.argmin(d))
@@ -872,7 +935,7 @@ def write_network(net: RoadNetwork, processed: Path) -> None:
     processed.mkdir(parents=True, exist_ok=True)
     pq.write_table(pa.Table.from_pandas(net.nodes, preserve_index=False), processed / "network_nodes.parquet")
     pq.write_table(edges_table(net.edges), processed / "network_edges.parquet")
-    write_json(processed / "exits.json", {"exits": net.exits})
+    write_json(processed / "exits.json", {"exits": net.exits, "dropped": net.exits_dropped})
 
     # graphml (OSMnx MultiDiGraph, projected). Stringify list attrs for portability.
     G = net.G.copy()

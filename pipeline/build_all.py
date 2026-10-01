@@ -39,6 +39,7 @@ from pipeline.build_buildings import (
 )
 from pipeline.build_population import (
     WorkModel,
+    exit_probs_from_bearings,
     fallback_dist,
     footprint_units,
     resolve_schools,
@@ -159,9 +160,8 @@ def synthetic_work_model(bdf: pd.DataFrame, net: RoadNetwork, source: str = "ass
     w = jobs["area_m2"].to_numpy() * np.where(jobs["type"] == "school", float(assumption("population_synthesis.internal_job_weight_school")), 1.0)
     _, k = tree.query(jobs[["centroid_x", "centroid_z"]].to_numpy(), k=1)
     agg = pd.Series(w, index=loc["node_id"].to_numpy()[k]).groupby(level=0).sum()
-    shares = dict(assumption("population_synthesis.external_exit_shares"))
-    exit_ids = {e["id"] for e in net.exits}
-    shares = {k2: v for k2, v in shares.items() if k2 in exit_ids}
+    shares = exit_probs_from_bearings(net.exits)
+    log("external jobs by exit (job direction table): " + ", ".join(f"{k} {v:.0%}" for k, v in shares.items()))
     return WorkModel(
         internal_share={"": 1.0 - float(assumption("demand.external_job_share"))},
         internal_nodes={"": agg.index.to_numpy(dtype=np.int64)},

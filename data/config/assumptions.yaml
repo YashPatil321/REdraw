@@ -357,3 +357,43 @@ props:
   parked_occupancy:
     school: {value: 0.75, unit: share, range: [0.5, 0.95], source: "school staff/student lots on a school-day morning; guess", verified: false}
     commercial: {value: 0.55, unit: share, range: [0.3, 0.85], source: "neighborhood shopping center lot at mid-morning; guess", verified: false}
+
+# ---------------------------------------------------------------------------
+# Added by the pipeline HD build (2026-10-01): exit assignment by job direction,
+# detailed building styling and street-level ground meshes. Styling numbers are
+# visual only (they do not change simulation results) except exit_job_bearings.
+exit_assignment:
+  job_bearings: {value: [{bearing_deg: 215, share: 0.30, note: "Sorrento Valley / UTC / Torrey Pines"}, {bearing_deg: 180, share: 0.25, note: "Kearny Mesa / Mission Valley / downtown"}, {bearing_deg: 15, share: 0.15, note: "Rancho Bernardo / Escondido / San Marcos"}, {bearing_deg: 100, share: 0.08, note: "Poway"}, {bearing_deg: 250, share: 0.10, note: "Carmel Valley / Del Mar"}, {bearing_deg: 300, share: 0.07, note: "Carlsbad / coastal North County"}, {bearing_deg: 160, share: 0.05, note: "Mira Mesa / Scripps Ranch"}], unit: compass deg + share of external jobs, range: null, source: "guess from regional employment centers as seen from 4S Ranch (SANDAG employment clusters); LODES replaces it in acs mode", verified: false}
+  bearing_kernel_deg: {value: 30.0, unit: deg, range: [15.0, 60.0], source: "external jobs in a direction are shared among exits within about this angular distance (Gaussian kernel sigma); model resolution", verified: true}
+
+building_style:
+  seed: {value: 20261002, unit: seed, range: null, source: "fixed RNG seed for per-building styling (rule 14.5)", verified: true}
+  roof_pitch_deg: {value: 20.6, unit: deg, range: [18.4, 26.6], source: "4.5:12 typical concrete/clay tile roof pitch on SoCal tract homes (tile needs >= 3:12-4:12; CRC R905.3)", verified: false}
+  eave_overhang_m: {value: 0.5, unit: m, range: [0.3, 0.8], source: "typical stucco tract-home eave overhang (12-24 in)", verified: false}
+  house_two_story_share: {value: 0.7, unit: share, range: [0.5, 0.85], source: "share of 4S Ranch / Del Sur detached homes with two stories; guess from street imagery", verified: false}
+  house_story_height_m: {value: 3.0, unit: m, range: [2.7, 3.3], source: "floor-to-floor height of wood-frame homes (8-9 ft plate + floor framing)", verified: false}
+  slab_height_m: {value: 0.2, unit: m, range: [0.1, 0.3], source: "finished floor above graded pad", verified: false}
+  gable_share: {value: 0.25, unit: share, range: [0.1, 0.5], source: "share of untagged houses with gable instead of hip main roofs (Spanish / Tuscan / Craftsman tract mix); guess", verified: false}
+  commercial_story_height_m: {value: 4.2, unit: m, range: [3.6, 5.0], source: "retail / office floor-to-floor", verified: false}
+  parapet_height_m:
+    commercial: {value: 1.0, unit: m, range: [0.6, 1.5], source: "parapet hiding rooftop equipment on flat-roof retail", verified: false}
+    school: {value: 0.6, unit: m, range: [0.3, 1.0], source: guess, verified: false}
+  wall_palette: {value: [{rgb: [236, 226, 204], share: 0.25, note: cream}, {rgb: [221, 203, 168], share: 0.22, note: tan}, {rgb: [241, 238, 229], share: 0.12, note: off-white}, {rgb: [228, 214, 186], share: 0.18, note: beige}, {rgb: [208, 200, 186], share: 0.10, note: greige}, {rgb: [214, 190, 152], share: 0.08, note: sand}, {rgb: [196, 178, 150], share: 0.05, note: taupe}], unit: sRGB, range: null, source: "SoCal tract stucco palette (Dunn-Edwards / Merlex standard colors look); guess from street imagery", verified: false}
+  tile_roof_variants: {value: {s_tile_terracotta: 0.12, s_tile_blend: 0.22, s_tile_brown: 0.16, s_tile_aged: 0.08, barrel_mission: 0.04, flat_tile_brown: 0.14, flat_tile_grey: 0.12, flat_tile_charcoal: 0.08, flat_tile_sandstone: 0.04}, unit: share, range: null, source: "concrete S-tile and flat-tile mix on 1998-2015 4S Ranch / Del Sur roofs; guess from aerial imagery", verified: false}
+  tile_roof_rgb: {value: {s_tile_terracotta: [176, 92, 60], s_tile_blend: [158, 98, 72], s_tile_brown: [122, 84, 64], s_tile_aged: [140, 108, 88], barrel_mission: [184, 104, 70], flat_tile_brown: [112, 86, 70], flat_tile_grey: [128, 126, 120], flat_tile_charcoal: [78, 77, 76], flat_tile_sandstone: [176, 150, 118]}, unit: sRGB, range: null, source: "fallback vertex colors per tile variant; guess", verified: false}
+
+streets:
+  sidewalk_width_m: {value: 1.5, unit: m, range: [1.2, 2.4], source: "City of San Diego Street Design Manual: 5 ft minimum residential sidewalk", verified: false}
+  curb_height_m: {value: 0.15, unit: m, range: [0.12, 0.2], source: "6 in standard curb (SDRSD G-2)", verified: false}
+  gutter_width_m: {value: 0.45, unit: m, range: [0.3, 0.6], source: "18 in gutter pan (SDRSD G-2)", verified: false}
+  curb_return_radius_m: {value: 6.0, unit: m, range: [4.5, 10.0], source: "local street curb return radius (15-25 ft)", verified: false}
+  freeway_shoulder_m: {value: 2.5, unit: m, range: [1.5, 3.0], source: "Caltrans 8-10 ft outside shoulder (matches props NO_TREES offset)", verified: false}
+  median_shoulder_m: {value: 0.6, unit: m, range: [0.3, 1.2], source: "offset between the inside lane line and a raised median curb", verified: false}
+  service_road_width_m: {value: 6.0, unit: m, range: [4.5, 7.5], source: "two-way service / alley paving width", verified: false}
+  driveway_segment_width_m: {value: 4.5, unit: m, range: [3.0, 7.5], source: "mapped (Overture) driveway segments paving width; guess", verified: false}
+  house_driveway_width_m: {value: 5.5, unit: m, range: [4.9, 6.7], source: "two-car residential driveway (16-20 ft)", verified: false}
+  house_driveway_max_m: {value: 25.0, unit: m, range: [10.0, 40.0], source: "longest garage-to-curb run accepted when inferring a driveway", verified: false}
+  garage_door_width_m: {value: 4.88, unit: m, range: [4.88, 5.49], source: "16 ft two-car sectional garage door", verified: false}
+  garage_door_height_m: {value: 2.13, unit: m, range: [2.13, 2.44], source: "7 ft standard garage door", verified: false}
+  crosswalk_depth_m: {value: 3.0, unit: m, range: [2.4, 4.6], source: "8-10 ft continental crosswalk (MUTCD 3B.18)", verified: false}
+  pool_coping_m: {value: 0.35, unit: m, range: [0.25, 0.5], source: "pool coping / bond beam width", verified: false}

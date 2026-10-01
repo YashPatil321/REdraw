@@ -10,7 +10,11 @@
 import * as THREE from 'three';
 import { CSM } from 'three/examples/jsm/csm/CSM.js';
 
-type LitMaterial = THREE.MeshStandardMaterial | THREE.MeshLambertMaterial | THREE.MeshPhongMaterial;
+interface LitFlags {
+  isMeshStandardMaterial?: boolean;
+  isMeshLambertMaterial?: boolean;
+  isMeshPhongMaterial?: boolean;
+}
 
 interface PatchState {
   orig: ((shader: THREE.WebGLProgramParametersWithUniforms, renderer: THREE.WebGLRenderer) => void) | null;
@@ -161,7 +165,7 @@ export class SunShadows {
   }
 
   patch(mat: THREE.Material): void {
-    const lit = mat as LitMaterial;
+    const lit = mat as THREE.Material & LitFlags;
     if (!(lit.isMeshStandardMaterial || lit.isMeshLambertMaterial || lit.isMeshPhongMaterial)) return;
     const st = mat.userData.rdCsm as PatchState | undefined;
     if (st && st.ver === this.ver) return;

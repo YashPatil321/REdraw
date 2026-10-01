@@ -42,7 +42,9 @@ PREVIEW_DIR = HERE / "previews"
 BUILD = HERE / "build"
 SITES_JSON = BUILD / "hero_sites.json"
 
-STAGES = ("vehicles", "trees", "street", "heroes", "manifest", "previews")
+STAGES = ("materials", "vehicles", "trees", "street", "heroes", "manifest", "previews")
+PREVIEWS = ("sheets", "street_scene", "vehicles", "vegetation")
+MAT_DIR = REPO / "client" / "public" / "assets" / "materials"
 
 
 def log(msg: str) -> None:
@@ -311,6 +313,24 @@ def preview_trees(path: Path, samples: int) -> None:
     log(f"preview {path} ({path.stat().st_size // 1024} KB)")
 
 
+def render_previews(which: set[str], samples: int) -> None:
+    from rdlib import atlas, previews
+
+    if "vehicles" in which:
+        preview_vehicles(PREVIEW_DIR / "vehicles_lineup.png", samples)
+    if "vegetation" in which:
+        preview_trees(PREVIEW_DIR / "vegetation_lineup.png", samples)
+    if which & {"sheets", "street_scene"}:
+        man = atlas.load_manifest(MAT_DIR)
+        if "sheets" in which:
+            for p in previews.materials_sheets(man, MAT_DIR, PREVIEW_DIR, samples):
+                log(f"preview {p} ({p.stat().st_size // 1024} KB)")
+        if "street_scene" in which:
+            p = PREVIEW_DIR / "street_scene.png"
+            previews.street_scene(man, MAT_DIR, BUILD / "textures", p, max(samples, 64))
+            log(f"preview {p} ({p.stat().st_size // 1024} KB)")
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -319,12 +339,17 @@ def main() -> None:
     ap.add_argument("--only", nargs="+", choices=STAGES, help="run only these stages")
     ap.add_argument("--no-previews", action="store_true", help="skip preview renders")
     ap.add_argument("--samples", type=int, default=48, help="Cycles samples for previews")
+    ap.add_argument("--previews", nargs="+", choices=PREVIEWS, default=list(PREVIEWS), help="which previews to render")
     a = ap.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:])
     stages = set(a.only or STAGES)
     if a.no_previews:
         stages.discard("previews")
     t0 = time.time()
     entries: list[dict] = []
+    if "materials" in stages:
+        from rdlib import matgen
+
+        matgen.build_all(MAT_DIR, log)
     if "vehicles" in stages:
         build_vehicles(entries)
     if "trees" in stages:
@@ -336,8 +361,7 @@ def main() -> None:
     if "heroes" in stages:
         build_heroes("previews" in stages, a.samples)
     if "previews" in stages:
-        preview_vehicles(PREVIEW_DIR / "vehicles_lineup.png", a.samples)
-        preview_trees(PREVIEW_DIR / "vegetation_lineup.png", a.samples)
+        render_previews(set(a.previews), a.samples)
     log(f"done in {time.time() - t0:.0f} s ({datetime.now(UTC).isoformat(timespec='seconds')})")
 
 

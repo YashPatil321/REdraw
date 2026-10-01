@@ -101,6 +101,8 @@ export interface AppState {
   attribution: AttributionState | null;
   /** street-level first-person camera is on */
   walking: boolean;
+  /** photo mode: UI hidden, ultra quality, PNG capture */
+  photoMode: boolean;
   /** open-data credits from the asset sources (terrain_meta.json), '' until loaded */
   openCredits: string;
 }
@@ -189,6 +191,7 @@ export function initialState(): AppState {
     photoreal: { available: false, source: null, status: '', error: null },
     attribution: null,
     walking: false,
+    photoMode: false,
     openCredits: '',
   };
 }
