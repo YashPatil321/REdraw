@@ -304,8 +304,8 @@ def synthesize_population(
                     "vehicles": int(veh[k]),
                     "income_band": INCOME_BANDS[int(inc[k])],
                     "n_kids": int(n_kids[k]),
-                    "_wph": dist.workers_per_household,
-                    "_wfh": dist.wfh_share,
+                    "aux_wph": dist.workers_per_household,
+                    "aux_wfh": dist.wfh_share,
                 }
             )
     hh = pd.DataFrame(hh_rows)
@@ -328,9 +328,9 @@ def synthesize_population(
                 age = int(rng.integers(65, 90))
             else:
                 age = int(rng.integers(19, 65))
-            persons.append({"household_id": h.household_id, "age": age, "_bg": h.block_group, "_hx": h.x, "_hz": h.z, "_wph": h._wph, "_wfh": h._wfh})
+            persons.append({"household_id": h.household_id, "age": age, "_bg": h.block_group, "_hx": h.x, "_hz": h.z, "_wph": h.aux_wph, "_wfh": h.aux_wfh})
         for _ in range(h.n_kids):
-            persons.append({"household_id": h.household_id, "age": int(rng.integers(KID_MIN_AGE, KID_MAX_AGE + 1)), "_bg": h.block_group, "_hx": h.x, "_hz": h.z, "_wph": h._wph, "_wfh": h._wfh})
+            persons.append({"household_id": h.household_id, "age": int(rng.integers(KID_MIN_AGE, KID_MAX_AGE + 1)), "_bg": h.block_group, "_hx": h.x, "_hz": h.z, "_wph": h.aux_wph, "_wfh": h.aux_wfh})
     pp = pd.DataFrame(persons)
     pp.insert(0, "person_id", np.arange(1, len(pp) + 1, dtype=np.int64))
     age = pp["age"].to_numpy()

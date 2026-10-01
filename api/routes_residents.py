@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 
-from api.db import clean_json, utcnow, iso
-from api.deps import get_jobs, get_state, player_id, require_plan
-from api.jobs import JobRunner
+from api.db import clean_json, iso, utcnow
+from api.deps import JobsDep, PlayerDep, StateDep, require_plan
 from api.metrics import metric_value
 from api.schemas import ChatIn, CustomPreviewIn, TownhallIn
 from api.state import AppState, ServiceUnavailable
@@ -33,8 +32,8 @@ def _done_plan(state: AppState, plan_id: str) -> dict[str, Any]:
 
 
 @router.get("/plans/{plan_id}/residents")
-def plan_residents(plan_id: str, state: AppState = Depends(get_state),
-                   jobs: JobRunner = Depends(get_jobs)) -> dict[str, Any]:
+def plan_residents(plan_id: str, state: StateDep,
+                   jobs: JobsDep) -> dict[str, Any]:
     plan = _done_plan(state, plan_id)
     _personas_ready(state)
     rows = state.store.get_reactions(plan_id)
@@ -56,8 +55,7 @@ def plan_residents(plan_id: str, state: AppState = Depends(get_state),
 
 
 @router.post("/plans/{plan_id}/townhall")
-def plan_townhall(plan_id: str, body: TownhallIn | None = None, state: AppState = Depends(get_state)
-                  ) -> dict[str, Any]:
+def plan_townhall(plan_id: str, state: StateDep, body: TownhallIn | None = None) -> dict[str, Any]:
     body = body or TownhallIn()
     plan = _done_plan(state, plan_id)
     personas = _personas_ready(state)
@@ -97,7 +95,7 @@ def plan_townhall(plan_id: str, body: TownhallIn | None = None, state: AppState 
 
 
 @router.get("/residents/{persona_id}")
-def get_resident(persona_id: int, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def get_resident(persona_id: int, state: StateDep) -> dict[str, Any]:
     p = _personas_ready(state).get(persona_id)
     if p is None:
         raise HTTPException(status_code=404, detail=f"resident {persona_id} not found")
@@ -105,15 +103,15 @@ def get_resident(persona_id: int, state: AppState = Depends(get_state)) -> dict[
 
 
 @router.get("/residents/{persona_id}/chat")
-def get_chat(persona_id: int, state: AppState = Depends(get_state), me: str = Depends(player_id)) -> dict[str, Any]:
+def get_chat(persona_id: int, state: StateDep, me: PlayerDep) -> dict[str, Any]:
     if _personas_ready(state).get(persona_id) is None:
         raise HTTPException(status_code=404, detail=f"resident {persona_id} not found")
     return {"persona_id": persona_id, "messages": state.store.get_chat(me, persona_id)}
 
 
 @router.post("/residents/{persona_id}/chat")
-def chat(persona_id: int, body: ChatIn, state: AppState = Depends(get_state),
-         me: str = Depends(player_id)) -> dict[str, Any]:
+def chat(persona_id: int, body: ChatIn, state: StateDep,
+         me: PlayerDep) -> dict[str, Any]:
     p = _personas_ready(state).get(persona_id)
     if p is None:
         raise HTTPException(status_code=404, detail=f"resident {persona_id} not found")
@@ -137,7 +135,7 @@ def chat(persona_id: int, body: ChatIn, state: AppState = Depends(get_state),
 
 
 @router.post("/tools/custom/preview")
-def custom_preview(body: CustomPreviewIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def custom_preview(body: CustomPreviewIn, state: StateDep) -> dict[str, Any]:
     schools = clean_json(state.sim().schools())
     try:
         return state.residents.custom_preview(body.description, schools)

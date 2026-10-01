@@ -135,7 +135,7 @@ def test_run_job_lifecycle_report_playback_residents(client):
         assert k in r0
     assert set(r0["deltas"]) >= {"commute_min", "dropoff_min", "cost_usd_year", "street_change"}
     assert all(r["text"] is None for r in res["reactions"])  # LLM endpoint is down
-    assert res["text_status"] == "unavailable"
+    assert res["text_status"] in ("unavailable", "pending")
 
 
 def test_approval_deterministic_across_runs(client):

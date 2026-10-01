@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from api.db import clean_json
-from api.deps import get_jobs, get_state, player_id, require_plan
-from api.jobs import JobRunner
+from api.deps import JobsDep, PlayerDep, StateDep, require_plan
 from api.metrics import headline, metric_defs, metric_value
 from api.schemas import PlanIn, VoteIn
 from api.state import AppState, as_dict
@@ -33,7 +32,7 @@ def _view(plan: dict[str, Any], me: str | None = None, my_vote: int | None = Non
 
 
 @router.post("/plans", status_code=201)
-def create_plan(body: PlanIn, state: AppState = Depends(get_state), me: str = Depends(player_id)) -> dict[str, Any]:
+def create_plan(body: PlanIn, state: StateDep, me: PlayerDep) -> dict[str, Any]:
     plan = body.plan_dict(author_id=me)
     check = _check(state, plan)
     state.store.ensure_player(me)
@@ -43,14 +42,14 @@ def create_plan(body: PlanIn, state: AppState = Depends(get_state), me: str = De
 
 
 @router.post("/plans/check")
-def check_plan(body: PlanIn, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def check_plan(body: PlanIn, state: StateDep) -> dict[str, Any]:
     return _check(state, body.plan_dict(id=None, author_id=None))
 
 
 @router.get("/plans")
-def list_plans(mission: str | None = None, sort: str = "new",
-               limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0),
-               state: AppState = Depends(get_state)) -> dict[str, Any]:
+def list_plans(state: StateDep, mission: str | None = None, sort: str = "new",
+               limit: int = Query(default=50, ge=1, le=200),
+               offset: int = Query(default=0, ge=0)) -> dict[str, Any]:
     plans = state.store.list_plans(mission or None)
     if sort == "votes":
         plans.sort(key=lambda p: -int(p["votes"] or 0))  # stable: newest first among ties
@@ -83,14 +82,14 @@ def _metric_direction(state: AppState, metric_id: str) -> str | None:
 
 
 @router.get("/plans/{plan_id}")
-def get_plan(plan_id: str, state: AppState = Depends(get_state), me: str = Depends(player_id)) -> dict[str, Any]:
+def get_plan(plan_id: str, state: StateDep, me: PlayerDep) -> dict[str, Any]:
     plan = require_plan(state, plan_id)
     return _view(plan, me, state.store.my_vote(plan_id, me))
 
 
 @router.put("/plans/{plan_id}")
-def update_plan(plan_id: str, body: PlanIn, state: AppState = Depends(get_state),
-                me: str = Depends(player_id)) -> dict[str, Any]:
+def update_plan(plan_id: str, body: PlanIn, state: StateDep,
+                me: PlayerDep) -> dict[str, Any]:
     plan = require_plan(state, plan_id)
     if plan["author_id"] != me:
         raise HTTPException(status_code=403, detail="only the author can edit a plan; save a copy instead")
@@ -106,8 +105,8 @@ def update_plan(plan_id: str, body: PlanIn, state: AppState = Depends(get_state)
 
 
 @router.post("/plans/{plan_id}/run")
-def run_plan(plan_id: str, state: AppState = Depends(get_state),
-             jobs: JobRunner = Depends(get_jobs)) -> dict[str, Any]:
+def run_plan(plan_id: str, state: StateDep,
+             jobs: JobsDep) -> dict[str, Any]:
     plan = require_plan(state, plan_id)
     check = plan.get("check") or {}
     if not check.get("ok", False):
@@ -118,7 +117,7 @@ def run_plan(plan_id: str, state: AppState = Depends(get_state),
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def get_job(job_id: str, state: StateDep) -> dict[str, Any]:
     job = state.store.get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"job '{job_id}' not found")
@@ -126,8 +125,8 @@ def get_job(job_id: str, state: AppState = Depends(get_state)) -> dict[str, Any]
 
 
 @router.get("/plans/{plan_id}/playback")
-def plan_playback(plan_id: str, state: AppState = Depends(get_state),
-                  jobs: JobRunner = Depends(get_jobs)) -> Response:
+def plan_playback(plan_id: str, state: StateDep,
+                  jobs: JobsDep) -> Response:
     plan = require_plan(state, plan_id)
     path = jobs.playback_path(plan_id)
     if plan["status"] != "done" or not path.exists():
@@ -136,8 +135,8 @@ def plan_playback(plan_id: str, state: AppState = Depends(get_state),
 
 
 @router.post("/plans/{plan_id}/vote")
-def vote(plan_id: str, body: VoteIn, state: AppState = Depends(get_state),
-         me: str = Depends(player_id)) -> dict[str, Any]:
+def vote(plan_id: str, body: VoteIn, state: StateDep,
+         me: PlayerDep) -> dict[str, Any]:
     require_plan(state, plan_id)
     state.store.ensure_player(me)
     return {"votes": state.store.vote(plan_id, me, body.value)}

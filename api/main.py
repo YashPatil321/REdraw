@@ -57,7 +57,13 @@ def create_app(settings: Settings | None = None, sim_factory: SimFactory | None 
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        create_schema(engine)
+        try:
+            create_schema(engine)
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot open the database ({settings.database_url.split('@')[-1]}): {e}. Start Postgres "
+                "with `docker compose up -d` or set DATABASE_URL=sqlite:///data/processed/redraw.db in .env."
+            ) from e
         n = store.fail_stale_jobs()
         if n:
             log.warning("marked %d unfinished jobs from a previous run as failed", n)

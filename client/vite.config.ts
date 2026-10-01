@@ -27,6 +27,8 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
+    // public/assets holds pipeline output served by the API; never bundle it
+    copyPublicDir: false,
     chunkSizeWarningLimit: 1500,
   },
   test: {

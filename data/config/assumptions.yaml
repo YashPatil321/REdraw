@@ -257,3 +257,4 @@ sim_engine:
   home_edges_radius: {value: 1, unit: hops, range: null, source: "edges incident to the home node count as the resident's street for home_edges_vc_delta", verified: true}
   custom_max_capacity_factor: {value: 1.5, unit: ratio, range: null, source: "upper bound on LLM-proposed capacity multipliers for custom tools (sanity bound)", verified: true}
   custom_max_utility_shift: {value: 2.0, unit: utils, range: null, source: "upper bound on LLM-proposed mode utility shifts for custom tools (sanity bound)", verified: true}
+  snap_max_distance_m: {value: 600, unit: m, range: null, source: "map inputs farther than this from the drive network are rejected as not near a road (validation threshold)", verified: true}

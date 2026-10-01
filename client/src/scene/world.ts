@@ -5,7 +5,7 @@
  */
 
 import * as THREE from 'three';
-import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import { DRACOLoader, DRACO_GLTF_CONFIG } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Manifest } from '../types';
 
@@ -27,8 +27,8 @@ let sharedDraco: DRACOLoader | null = null;
 function dracoLoader(): DRACOLoader {
   if (!sharedDraco) {
     sharedDraco = new DRACOLoader();
-    sharedDraco.setDecoderPath(`${import.meta.env.BASE_URL}draco/`);
-    sharedDraco.setDecoderConfig({ type: 'wasm' });
+    // decoder files resolved and emitted by the bundler (works in dev and build)
+    sharedDraco.setDecoderPath(DRACO_GLTF_CONFIG);
   }
   return sharedDraco;
 }

@@ -20,6 +20,7 @@ from residents.service import ResidentsService
 log = logging.getLogger(__name__)
 
 SimFactory = Callable[[], Any]
+BASELINE_RETRY_S = 30.0
 
 
 class ServiceUnavailable(Exception):
@@ -73,9 +74,10 @@ class AppState:
         self.baseline_progress: tuple[float, str] = (0.0, "not started")
         self.baseline_done = threading.Event()
         self.warm_thread: threading.Thread | None = None
+        self._baseline_failed_at = 0.0
 
         self._cache: dict[str, Any] = {}
-        self._cache_lock = threading.Lock()
+        self._cache_lock = threading.RLock()
 
     # --------------------------------------------------------------- sim
     def sim(self) -> Any:
@@ -114,8 +116,11 @@ class AppState:
 
     # ---------------------------------------------------------- baseline
     def start_warmup(self) -> None:
-        if self.warm_thread is not None:
+        if self.warm_thread is not None and self.warm_thread.is_alive():
             return
+        self.baseline_error = None
+        self.baseline_done.clear()
+        self._baseline_failed_at = 0.0
         self.warm_thread = threading.Thread(target=self.warm, name="redraw-warmup", daemon=True)
         self.warm_thread.start()
 
@@ -138,6 +143,7 @@ class AppState:
             log.info("baseline ready")
         except Exception as e:  # noqa: BLE001
             self.baseline_error = f"{type(e).__name__}: {e}"
+            self._baseline_failed_at = time.monotonic()
             log.exception("baseline warm-up failed")
         finally:
             self.baseline_done.set()
@@ -152,7 +158,10 @@ class AppState:
         if self.baseline_summary is not None:
             return self.baseline_summary
         if self.baseline_error:
-            raise ServiceUnavailable(f"Baseline failed: {self.baseline_error}")
+            err = self.baseline_error
+            if time.monotonic() - self._baseline_failed_at > BASELINE_RETRY_S:
+                self.start_warmup()  # e.g. world data was built after the API started
+            raise ServiceUnavailable(f"Baseline failed: {err}")
         if self._sim_error:
             raise ServiceUnavailable(f"Simulation world is not available ({self._sim_error})")
         if self.warm_thread is None:

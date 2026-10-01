@@ -12,7 +12,12 @@ from residents.blocks import BlockLabeler
 from residents.llm import LLMClient, extract_json
 from residents.names import FIRST_NAMES
 from residents.service import ResidentsService
-from residents.tests.fixtures import FakeLLM, echo_reactions_llm, fake_person_deltas, write_population
+from residents.tests.fixtures import (
+    FakeLLM,
+    echo_reactions_llm,
+    fake_person_deltas,
+    write_population,
+)
 from residents.textcheck import collect_numbers, numbers_ok, safe_text
 
 

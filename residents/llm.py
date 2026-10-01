@@ -60,11 +60,16 @@ class LLMClient:
 
     def _record_failure(self, err: str) -> None:
         with self._lock:
+            was_closed = time.monotonic() >= self._open_until
             self._failures += 1
             self.last_error = err
             if self._failures >= self.breaker_threshold:
                 self._open_until = time.monotonic() + self.breaker_cooldown_s
-        log.warning("LLM call failed (%s); residents continue without text", err)
+        if was_closed:
+            log.warning("LLM endpoint failed (%s); residents continue without text for %.0fs",
+                        err, self.breaker_cooldown_s)
+        else:
+            log.debug("LLM call failed (%s)", err)
 
     def _record_success(self) -> None:
         with self._lock:

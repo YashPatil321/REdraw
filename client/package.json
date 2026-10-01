@@ -5,10 +5,7 @@
   "type": "module",
   "license": "Apache-2.0",
   "scripts": {
-    "copy-draco": "node scripts/copy-draco.mjs",
-    "predev": "node scripts/copy-draco.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/copy-draco.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",

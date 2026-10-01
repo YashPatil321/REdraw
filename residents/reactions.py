@@ -14,7 +14,7 @@ import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 import numpy as np
@@ -44,7 +44,7 @@ def _opt_assumption(path: str, fallback: float) -> float:
         return fallback
 
 
-@lru_cache(maxsize=None)
+@cache
 def _warn_missing(path: str, fallback: float) -> None:
     log.warning("assumptions.yaml has no '%s'; using %s (add it with a source)", path, fallback)
 

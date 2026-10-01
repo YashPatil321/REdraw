@@ -132,7 +132,7 @@ def write_glb(path: Path, meshes: list[MeshData], extras: dict[str, Any] | None 
     gltf: dict[str, Any] = {
         "asset": {"version": "2.0", "generator": "redraw-pipeline"},
         "scene": 0,
-        "scenes": [{"nodes": list(range(len(nodes)))}],
+        "scenes": [{"nodes": list(range(len(nodes)))} if nodes else {}],
         "nodes": nodes,
         "meshes": gl_meshes,
         "materials": materials,
@@ -156,6 +156,7 @@ def write_glb(path: Path, meshes: list[MeshData], extras: dict[str, Any] | None 
         gltf.pop("accessors")
         gltf.pop("bufferViews")
         gltf.pop("buffers")
+        gltf.pop("nodes")
 
     js = json.dumps(gltf, separators=(",", ":")).encode("utf-8")
     js += b" " * ((4 - len(js) % 4) % 4)

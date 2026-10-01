@@ -58,6 +58,7 @@ class Trips:
     driver: np.ndarray  # person idx or -1
     role: np.ndarray
     run_id: np.ndarray = field(default_factory=lambda: np.zeros(0, np.int32))  # shuttle run id or -1
+    target_wp: np.ndarray = field(default_factory=lambda: np.zeros(0, np.int32))  # waypoint the target arrival refers to
 
     @property
     def n(self) -> int:
@@ -85,7 +86,7 @@ class _TripBuilder:
     def __init__(self, S: int) -> None:
         self.S = S
         self.cols: dict[str, list] = {k: [] for k in (
-            "kind", "weight", "origin", "depart", "target_arr", "exp_time", "final", "driver", "role", "run_id")}
+            "kind", "weight", "origin", "depart", "target_arr", "exp_time", "final", "driver", "role", "run_id", "target_wp")}
         self.wp_node: list[np.ndarray] = []
         self.wp_school: list[np.ndarray] = []
         self.wp_queue: list[np.ndarray] = []
@@ -93,7 +94,7 @@ class _TripBuilder:
         self.n = 0
 
     def add(self, n: int, *, kind, weight, origin, final, depart=np.nan, target_arr=np.nan, exp_time=0.0,
-            driver=-1, role=ROLE_NONE, wp_node=None, wp_school=None, wp_queue=None, wp_dwell=None, run_id=-1) -> np.ndarray:
+            driver=-1, role=ROLE_NONE, wp_node=None, wp_school=None, wp_queue=None, wp_dwell=None, run_id=-1, target_wp=0) -> np.ndarray:
         if n == 0:
             return np.zeros(0, np.int64)
         def full(v, dt):
@@ -109,6 +110,7 @@ class _TripBuilder:
         self.cols["driver"].append(full(driver, np.int64))
         self.cols["role"].append(full(role, np.int8))
         self.cols["run_id"].append(full(run_id, np.int32))
+        self.cols["target_wp"].append(full(target_wp, np.int32))
         S = self.S
         def mat(v, fill, dt):
             m = np.full((n, S), fill, dtype=dt)
@@ -138,6 +140,7 @@ class _TripBuilder:
             wp_node=catm(self.wp_node, np.int64), wp_school=catm(self.wp_school, np.int32),
             wp_queue=catm(self.wp_queue, bool), wp_dwell=catm(self.wp_dwell, np.float32),
             final=cat("final", np.int64), driver=cat("driver", np.int64), role=cat("role", np.int8), run_id=cat("run_id", np.int32),
+            target_wp=cat("target_wp", np.int32),
         )
 
 
@@ -176,7 +179,10 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
     # ---- students: targets ----
     si, sm = modes.student_idx, modes.student_mode
     st_school = p.school[si]
-    target = bell[st_school] - (b_lo + draws.buffer_u[si] * (b_hi - b_lo)) * 60.0 + jit * draws.jitter_z[si]
+    # day jitter moves the planned arrival but never past the earliest planned buffer, so
+    # lateness comes from traffic and queues, not from the jitter itself
+    target = np.minimum(bell[st_school] - (b_lo + draws.buffer_u[si] * (b_hi - b_lo)) * 60.0 + jit * draws.jitter_z[si],
+                        bell[st_school] - b_lo * 60.0)
     student_target[si] = target
     smode_name = np.array(["drive_dropoff", "carpool", "school_bus", "school_shuttle", "walk", "bike", "teen_drive"])[sm]
     person_mode[si] = np.array([mode_id[m] for m in smode_name], dtype=np.int16) if len(si) else person_mode[si]
@@ -305,7 +311,7 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
         wps[:, len(rest)] = sh.school
         idx = tb.add(n_runs, kind=KIND_SHUTTLE, weight=Af("sim_engine.bus_pce"), origin=nodes[0], final=-1,
                      target_arr=plan.run_arrivals, exp_time=plan.route_km / bus_kph * 3600.0,
-                     wp_node=wpn, wp_school=wps, wp_dwell=wpd, run_id=np.arange(n_runs))
+                     wp_node=wpn, wp_school=wps, wp_dwell=wpd, run_id=np.arange(n_runs), target_wp=len(rest))
         riders = si[shm & (world.shuttle_of_person[si] == j)]
         if len(riders):
             ro = riders[np.argsort(student_target[riders], kind="stable")]

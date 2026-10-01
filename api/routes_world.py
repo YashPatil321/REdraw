@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response
 
 from api.db import clean_json
-from api.deps import get_state
+from api.deps import StateDep
 from api.metrics import metric_defs
 from api.state import AppState, ServiceUnavailable, as_dict
 from pipeline.config import assumption, load_yaml, region
@@ -39,7 +39,7 @@ def _mission_view(m: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/world/meta")
-def world_meta(state: AppState = Depends(get_state)) -> dict[str, Any]:
+def world_meta(state: StateDep) -> dict[str, Any]:
     sim = state.sim()
 
     def build() -> dict[str, Any]:
@@ -78,7 +78,7 @@ def world_meta(state: AppState = Depends(get_state)) -> dict[str, Any]:
 
 
 @router.get("/world/network")
-def world_network(state: AppState = Depends(get_state)) -> Response:
+def world_network(state: StateDep) -> Response:
     sim = state.sim()
     body = state.cached("network_json",
                         lambda: json.dumps(clean_json(sim.network_json()), separators=(",", ":")).encode())
@@ -86,7 +86,7 @@ def world_network(state: AppState = Depends(get_state)) -> Response:
 
 
 @router.get("/world/buildings/{building_id}")
-def world_building(building_id: int, state: AppState = Depends(get_state)) -> dict[str, Any]:
+def world_building(building_id: int, state: StateDep) -> dict[str, Any]:
     props = state.buildings_index().get(building_id)
     if props is None:
         raise HTTPException(status_code=404, detail=f"building {building_id} not found")
@@ -98,21 +98,35 @@ def world_building(building_id: int, state: AppState = Depends(get_state)) -> di
 
 
 def _entrance_baseline(state: AppState) -> dict[str, dict[str, Any]]:
-    """Per-entrance baseline queue stats, keyed '<school>/<entrance>' (best effort)."""
+    """Per-entrance baseline queue stats keyed '<school>/<entrance>' (best effort).
+
+    Reads `per_entrance` (dict or list with `key`) or `per_school[*].entrances[*]` from the
+    baseline summary; values given as {median, p10, p90} are reduced to the median.
+    """
     bs = state.baseline_summary or {}
-    out: dict[str, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
     pe = bs.get("per_entrance")
     if isinstance(pe, dict):
-        out.update({str(k): v for k, v in pe.items() if isinstance(v, dict)})
+        rows += [{"key": k, **v} for k, v in pe.items() if isinstance(v, dict)]
     elif isinstance(pe, list):
-        for e in pe:
-            if isinstance(e, dict) and e.get("key"):
-                out[str(e["key"])] = {k: v for k, v in e.items() if k != "key"}
+        rows += [e for e in pe if isinstance(e, dict)]
+    for sch in bs.get("per_school") or []:
+        if isinstance(sch, dict):
+            rows += [e for e in sch.get("entrances") or [] if isinstance(e, dict)]
+    out: dict[str, dict[str, Any]] = {}
+    for e in rows:
+        if not e.get("key"):
+            continue
+        vals = {}
+        for k in ("max_queue_cars", "max_spillback_m", "avg_wait_min"):
+            v = e.get(k)
+            vals[k] = v.get("median") if isinstance(v, dict) else v
+        out.setdefault(str(e["key"]), vals)
     return out
 
 
 @router.get("/world/schools")
-def world_schools(state: AppState = Depends(get_state)) -> list[dict[str, Any]]:
+def world_schools(state: StateDep) -> list[dict[str, Any]]:
     schools = clean_json(state.sim().schools())
     eb = _entrance_baseline(state)
     for s in schools:
@@ -125,7 +139,7 @@ def world_schools(state: AppState = Depends(get_state)) -> list[dict[str, Any]]:
 
 
 @router.get("/baseline")
-def baseline(state: AppState = Depends(get_state)) -> dict[str, Any]:
+def baseline(state: StateDep) -> dict[str, Any]:
     summary = state.require_baseline()
     try:
         calib = clean_json(state.sim().world_summary() or {}).get("calibration")
@@ -136,7 +150,7 @@ def baseline(state: AppState = Depends(get_state)) -> dict[str, Any]:
 
 
 @router.get("/baseline/playback")
-def baseline_playback(state: AppState = Depends(get_state)) -> Response:
+def baseline_playback(state: StateDep) -> Response:
     state.require_baseline()
     if not state.baseline_playback:
         raise HTTPException(status_code=404, detail="baseline playback not available")
@@ -144,7 +158,7 @@ def baseline_playback(state: AppState = Depends(get_state)) -> Response:
 
 
 @router.get("/tools")
-def tools(state: AppState = Depends(get_state)) -> dict[str, Any]:
+def tools(state: StateDep) -> dict[str, Any]:
     sim = state.sim()
     mission_id = state.settings.default_mission
     tool_list = [as_dict(t) for t in clean_json(sim.tools())]
