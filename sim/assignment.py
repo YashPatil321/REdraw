@@ -76,6 +76,7 @@ class AssignmentResult:
     wp_arrive: np.ndarray  # (n, S) arrival at waypoint (before queue)
     wp_leave: np.ndarray  # (n, S) leaves waypoint (after queue + unload / dwell)
     wp_wait: np.ndarray  # (n, S) queue wait (s)
+    wp_balk: np.ndarray  # (n, S) True if the car skipped the curb line (informal street drop-off)
     wp_ff: np.ndarray  # (n, S) zero-flow time of the leg ending at the waypoint
     wp_entr: np.ndarray  # (n, S) entrance index used (-1)
     entrances: list[EntranceStats]
@@ -228,7 +229,7 @@ def _assign(world: WorldState, trips: Trips, traj_rng: np.random.Generator | Non
     return AssignmentResult(
         tt=TT.astype(np.float32), vol_vph=V_avg.astype(np.float32), vc=vc.astype(np.float32), speed_kph=speed.astype(np.float32),
         depart=last["depart"], arrive=last["arrive"], ok=last["ok"], wp_arrive=last["wp_arrive"], wp_leave=last["wp_leave"],
-        wp_wait=last["wp_wait"], wp_ff=last["wp_ff"], wp_entr=last["wp_entr"], entrances=ents, traj=last["traj"],
+        wp_wait=last["wp_wait"], wp_balk=last["wp_balk"], wp_ff=last["wp_ff"], wp_entr=last["wp_entr"], entrances=ents, traj=last["traj"],
         vht_report_h=last["vht"] / 3600.0, iterations=k, rel_change=history, timings=timings,
         failed_trips=int((~last["ok"]).sum()),
     )
@@ -310,7 +311,10 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
     wp_arrive = np.full((n, S), np.nan)
     wp_leave = np.full((n, S), np.nan)
     wp_wait = np.zeros((n, S))
+    wp_balk = np.zeros((n, S), dtype=bool)
     wp_ff = np.zeros((n, S))
+    balk_s = Af("sim_engine.dropoff_balk_wait_min") * 60.0
+    informal_s = Af("sim_engine.informal_dropoff_stop_s")
     arrive = np.full(n, np.nan)
     counts = np.zeros(B * E)
     vht = 0.0
@@ -372,11 +376,13 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
                 allr = np.concatenate([a[0] for a in queue_arr[ei]])
                 allp = np.concatenate([a[1] for a in queue_arr[ei]])
                 allt = np.concatenate([a[2] for a in queue_arr[ei]])
-                qo = run_queue(allt, trips.weight[allr], ents[ei].curb_spots, ents[ei].unload_s, tg)
+                qo = run_queue(allt, trips.weight[allr], ents[ei].curb_spots, ents[ei].unload_s, tg, balk_s)
                 cur = (allp == p) & np.isin(allr, rows)
                 rr = allr[cur]
+                bk = qo.balked[cur]
                 wp_wait[rr, p] = qo.wait_s[cur]
-                wp_leave[rr, p] = qo.done_s[cur]
+                wp_leave[rr, p] = np.where(bk, allt[cur] + informal_s, qo.done_s[cur])
+                wp_balk[rr, p] = bk
                 vht += float(np.sum(trips.weight[rr] * np.clip(np.minimum(qo.done_s[cur], re_) - np.maximum(allt[cur], rs), 0, None)))
         nq = legs[~queued]
         wp_leave[nq, p] = leave[~queued]
@@ -393,7 +399,7 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
         if queue_arr[ei]:
             allr = np.concatenate([a[0] for a in queue_arr[ei]])
             allt = np.concatenate([a[2] for a in queue_arr[ei]])
-            queues.append(run_queue(allt, trips.weight[allr], ent.curb_spots, ent.unload_s, tg))
+            queues.append(run_queue(allt, trips.weight[allr], ent.curb_spots, ent.unload_s, tg, balk_s))
         else:
             queues.append(run_queue(np.zeros(0), np.zeros(0), ent.curb_spots, ent.unload_s, tg))
 
@@ -403,12 +409,12 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
     target_exp = np.full(n, np.nan)
     if S:
         reached = np.isfinite(trips.target_arr) & ok & (tw < n_wp)
-        # experienced time until the car reaches the curb (includes the queue wait: parents learn it)
-        target_exp[reached] = (wp_arrive[rows[reached], tw_c[reached]] + wp_wait[rows[reached], tw_c[reached]]) - depart[reached]
+        # experienced driving time to the school (parents budget the 5-20 min early buffer for the curb line)
+        target_exp[reached] = wp_arrive[rows[reached], tw_c[reached]] - depart[reached]
     tot_tt = float(np.nansum(trips.weight[ok] * (arrive[ok] - depart[ok])))
     return {
         "counts": counts, "depart": depart, "arrive": arrive, "ok": ok, "wp_arrive": wp_arrive, "wp_leave": wp_leave,
-        "wp_wait": wp_wait, "wp_ff": wp_ff, "wp_entr": wp_entr, "queues": queues, "traj": _build_traj(traj_parts, trips),
+        "wp_wait": wp_wait, "wp_balk": wp_balk, "wp_ff": wp_ff, "wp_entr": wp_entr, "queues": queues, "traj": _build_traj(traj_parts, trips),
         "vht": vht, "total_tt": tot_tt, "target_experienced": target_exp,
     }
 

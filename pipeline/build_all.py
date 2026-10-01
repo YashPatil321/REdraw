@@ -25,7 +25,14 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
-from pipeline.build_buildings import apply_heroes, build_building_tiles, flatten_terrain_for_heroes, load_heroes, prepare_buildings, write_buildings_geojson
+from pipeline.build_buildings import (
+    apply_heroes,
+    build_building_tiles,
+    flatten_terrain_for_heroes,
+    load_heroes,
+    prepare_buildings,
+    write_buildings_geojson,
+)
 from pipeline.build_population import (
     WorkModel,
     fallback_dist,
@@ -34,9 +41,25 @@ from pipeline.build_population import (
     synthesize_population,
     write_population,
 )
-from pipeline.build_roads import RoadNetwork, build_network, build_road_ribbons, local_node_mask, write_network
+from pipeline.build_roads import (
+    RoadNetwork,
+    build_network,
+    build_road_ribbons,
+    local_node_mask,
+    write_network,
+)
 from pipeline.build_terrain import Terrain, write_terrain_outputs
-from pipeline.common import CONTRACT_VERSION, TileGrid, ensure_dirs, log, now_iso, region_extent, tile_grid, today, write_json
+from pipeline.common import (
+    CONTRACT_VERSION,
+    TileGrid,
+    ensure_dirs,
+    log,
+    now_iso,
+    region_extent,
+    tile_grid,
+    today,
+    write_json,
+)
 from pipeline.config import assumption, load_yaml, region
 from pipeline.geo import PROJECTION, scene_origin
 
@@ -306,7 +329,16 @@ def run_synthetic(skip_draco: bool = False) -> dict[str, Any]:
 
 
 def run_real(skip_draco: bool = False) -> dict[str, Any]:
-    from pipeline import build_buildings, build_population, build_roads, build_terrain, fetch_census, fetch_dem, fetch_imagery, fetch_osm
+    from pipeline import (
+        build_buildings,
+        build_population,
+        build_roads,
+        build_terrain,
+        fetch_census,
+        fetch_dem,
+        fetch_imagery,
+        fetch_osm,
+    )
 
     t0 = time.time()
     dirs = ensure_dirs()

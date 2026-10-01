@@ -146,6 +146,13 @@ export interface Range3 {
   p90: number;
 }
 
+/** Range whose values may be null (e.g. baseline of resident_approval_pct). */
+export interface MaybeRange3 {
+  median: number | null;
+  p10: number | null;
+  p90: number | null;
+}
+
 export interface MetricBlock {
   metrics: Array<MetricDef & { value: Range3 }>;
   per_school: unknown[];
@@ -239,9 +246,10 @@ export interface PlanCheck {
 export type PlanStatus = 'draft' | 'queued' | 'running' | 'done' | 'failed';
 
 export interface ReportMetric extends MetricDef {
-  baseline: Range3;
-  plan: Range3;
-  delta: Range3;
+  baseline: MaybeRange3;
+  plan: MaybeRange3;
+  delta: MaybeRange3;
+  note?: string;
 }
 
 export interface BaselinePlan {
@@ -318,6 +326,9 @@ export interface Plan {
   status: PlanStatus;
   check: PlanCheck | null;
   votes: number;
+  job_id?: string | null;
+  is_mine?: boolean;
+  my_vote?: number;
 }
 
 export interface Job {
@@ -347,6 +358,8 @@ export interface Reaction {
 export interface ResidentsResponse {
   approval_pct: number;
   reactions: Reaction[];
+  text_status?: 'complete' | 'pending' | 'partial' | 'unavailable' | string;
+  llm_available?: boolean;
 }
 
 export interface PlanListItem {

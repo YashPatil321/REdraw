@@ -180,14 +180,15 @@ export function fmtUsd(v: number): string {
 }
 
 export function fmtNum(v: number | null | undefined, unit = ''): string {
-  if (v === null || v === undefined || !Number.isFinite(v)) return '-';
+  if (v === null || v === undefined || !Number.isFinite(v)) return 'n/a';
   if (unit === 'USD') return fmtUsd(v);
   const a = Math.abs(v);
   const s = a >= 1000 ? Math.round(v).toLocaleString('en-US') : a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2);
   return s;
 }
 
-export function fmtSigned(v: number, unit = ''): string {
+export function fmtSigned(v: number | null | undefined, unit = ''): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return 'n/a';
   const s = fmtNum(Math.abs(v), unit);
   return `${v > 0 ? '+' : v < 0 ? '−' : '±'}${s}`;
 }

@@ -259,3 +259,6 @@ sim_engine:
   custom_max_capacity_factor: {value: 1.5, unit: ratio, range: null, source: "upper bound on LLM-proposed capacity multipliers for custom tools (sanity bound)", verified: true}
   custom_max_utility_shift: {value: 2.0, unit: utils, range: null, source: "upper bound on LLM-proposed mode utility shifts for custom tools (sanity bound)", verified: true}
   snap_max_distance_m: {value: 600, unit: m, range: null, source: "map inputs farther than this from the drive network are rejected as not near a road (validation threshold)", verified: true}
+  dropoff_balk_wait_min: {value: 6.0, unit: min, range: [3.0, 12.0], source: "a parent who reaches the drop-off line when the expected wait exceeds this drops the kid off on a nearby street instead (balking); bounds the formal queue; guess", verified: false}
+  informal_dropoff_stop_s: {value: 30.0, unit: s, range: [15.0, 60.0], source: "stop time for an informal (street) drop-off; guess", verified: false}
+  informal_dropoff_walk_min: {value: 4.0, unit: min, range: [2.0, 8.0], source: "extra walk for a kid dropped off on a nearby street instead of the curb; guess", verified: false}

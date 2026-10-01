@@ -392,7 +392,7 @@ def schools_scene(schools_cfg: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def build_layout(ext: Extent, schools_cfg: list[dict[str, Any]], target_houses: int, seed: int = SEED) -> Layout:
     rng = np.random.default_rng(seed)
-    zmin, zmax, xmin, xmax = ext.min_z + 5, ext.max_z - 5, ext.min_x + 5, ext.max_x - 5
+    zmin, zmax, xmin = ext.min_z + 5, ext.max_z - 5, ext.min_x + 5
 
     # Freeways: I 15 (east, north-south) and SR 56 (south, east-west). Positions GUESSED.
     i15 = make_freeway([(2650, zmax), (2850, 2500), (3150, 600), (3500, -1500), (3800, -3300), (3950, zmin)], "Escondido Freeway", "I 15", "4", True, True)

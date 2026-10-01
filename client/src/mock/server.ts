@@ -214,7 +214,13 @@ export async function createMockFetch(): Promise<FetchLike> {
     metrics.push(
       { ...METRICS[5]!, baseline: range(0, 0), plan: range(c.cost_upfront_usd, 0), delta: range(c.cost_upfront_usd, 0) },
       { ...METRICS[6]!, baseline: range(0, 0), plan: range(c.cost_per_year_usd, 0), delta: range(c.cost_per_year_usd, 0) },
-      { ...METRICS[7]!, baseline: range(50, 0), plan: range(48 + effect * 40, 4), delta: range(effect * 40 - 2, 4) },
+      {
+        ...METRICS[7]!,
+        baseline: { median: null, p10: null, p90: null },
+        plan: range(48 + effect * 40, 4),
+        delta: { median: null, p10: null, p90: null },
+        note: 'Share of residents who approve (mock). The status quo has no approval number.',
+      },
     );
     const sideEdges = [world.network.edges.find((e) => e.label === 'Test Canyon Drive')!, world.network.edges.find((e) => e.label === 'Mock Ranch Road')!];
     return {
@@ -267,7 +273,7 @@ export async function createMockFetch(): Promise<FetchLike> {
     };
   };
 
-  const residents = (p: Plan): { approval_pct: number; reactions: Reaction[] } => {
+  const residents = (p: Plan): { approval_pct: number; reactions: Reaction[]; text_status: string; llm_available: boolean } => {
     const pr = rng(p.id.charCodeAt(0) * 7);
     const names = ['Maya', 'Arjun', 'Lena', 'Diego', 'Priya', 'Tom', 'Grace', 'Kenji', 'Sofia', 'Omar', 'Hannah', 'Luis'];
     const values = ['time', 'safety', 'cost', 'environment', 'community', 'property', 'change averse'];
@@ -297,7 +303,7 @@ export async function createMockFetch(): Promise<FetchLike> {
       };
     });
     const approval_pct = Math.round((reactions.filter((x) => x.approves).length / reactions.length) * 1000) / 10;
-    return { approval_pct, reactions };
+    return { approval_pct, reactions, text_status: 'partial', llm_available: false };
   };
 
   const newPlan = (body: PlanInput, id?: string): Plan => ({
@@ -369,7 +375,7 @@ export async function createMockFetch(): Promise<FetchLike> {
 
   const headline = (p: Plan): Record<string, number> => {
     const out: Record<string, number> = {};
-    for (const m of p.report?.metrics ?? []) out[m.id] = m.plan.median;
+    for (const m of p.report?.metrics ?? []) if (m.plan.median !== null) out[m.id] = m.plan.median;
     return out;
   };
 

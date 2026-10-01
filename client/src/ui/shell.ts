@@ -2,6 +2,7 @@
 
 import { LitElement, css, html, nothing } from 'lit';
 import { navigate } from '../actions';
+import type { Quality } from '../scene/quality';
 import { store, type View } from '../state';
 import { StoreController, appCtx, humanize, fmtUsd, theme } from './base';
 
@@ -58,9 +59,14 @@ export class RdTopbar extends LitElement {
       .cal {
         font-size: 12px;
       }
+      select.q {
+        width: auto;
+        padding: 4px 4px;
+        font-size: 12px;
+      }
     `,
   ];
-  private st = new StoreController(this, ['view', 'meta', 'showStats', 'plan']);
+  private st = new StoreController(this, ['view', 'meta', 'showStats', 'plan', 'quality']);
 
   override render() {
     const s = this.st.s;
@@ -82,6 +88,10 @@ export class RdTopbar extends LitElement {
             >Calibration: ${humanize(cal.status)}${err !== null && err !== undefined ? ` (median error ${err.toFixed(0)}%)` : ''}</span
           >`
         : nothing}
+      ${s.showStats ? html`<rd-stats></rd-stats>` : nothing}
+      <select class="q" aria-label="Render quality" title="Render quality" @change=${(e: Event) => appCtx.scene?.setQuality((e.target as HTMLSelectElement).value as Quality)}>
+        ${(['high', 'medium', 'low'] as const).map((q) => html`<option value=${q} ?selected=${s.quality === q}>Quality: ${q}</option>`)}
+      </select>
       <button class=${s.showStats ? 'active' : ''} @click=${() => store.set({ showStats: !s.showStats })} title="FPS, draw calls, triangles">
         Stats
       </button>
@@ -292,9 +302,15 @@ export class RdStats extends LitElement {
     theme,
     css`
       .p {
-        padding: 6px 10px;
         font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-        min-width: 150px;
+        display: flex;
+        gap: 10px;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      b {
+        color: var(--text);
+        font-weight: 600;
       }
       .good {
         color: var(--good);
@@ -316,12 +332,12 @@ export class RdStats extends LitElement {
   override render() {
     const st = appCtx.scene?.viewer.stats;
     if (!st) return nothing;
-    return html`<div class="panel p">
-      <div>FPS <b class=${st.fps >= 30 ? 'good' : 'bad'}>${st.fps.toFixed(0)}</b></div>
-      <div>Draw calls ${st.calls}</div>
-      <div>Triangles ${(st.triangles / 1000).toFixed(0)}k</div>
-      <div>Geometries ${st.geometries}</div>
-      <div>Textures ${st.textures}</div>
+    return html`<div class="p" role="status" aria-label="Render stats">
+      <span>FPS <b class=${st.fps >= 30 ? 'good' : 'bad'}>${st.fps.toFixed(0)}</b></span>
+      <span>calls <b>${st.calls}</b></span>
+      <span>tris <b>${(st.triangles / 1000).toFixed(0)}k</b></span>
+      <span>geo <b>${st.geometries}</b></span>
+      <span>tex <b>${st.textures}</b></span>
     </div>`;
   }
 }

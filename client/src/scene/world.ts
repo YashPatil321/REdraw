@@ -64,22 +64,127 @@ export class World {
     return out;
   }
 
-  /** Lambert materials are cheaper than Standard on integrated GPUs. */
-  private toLambert(mesh: THREE.Mesh, opts: { vertexColors?: boolean } = {}): void {
-    const old = mesh.material as THREE.MeshStandardMaterial;
-    const mat = new THREE.MeshLambertMaterial({
-      map: old.map ?? null,
-      color: old.map ? 0xffffff : (old.color ?? new THREE.Color(0xcccccc)),
-      vertexColors: opts.vertexColors ?? Boolean(mesh.geometry.getAttribute('color')),
-      side: old.side,
-    });
+  /** shared uniforms for terrain tinting (height range of the loaded world) */
+  private terrainUniforms = { uMinH: { value: 0 }, uMaxH: { value: 500 } };
+  private standardBuildings = true;
+
+  /** Terrain: albedo (NAIP or procedural) times a slope / height tint; procedural palette if untextured. */
+  private terrainMaterial(old: THREE.MeshStandardMaterial): THREE.MeshLambertMaterial {
+    const mat = new THREE.MeshLambertMaterial({ map: old.map ?? null, color: 0xffffff });
     if (mat.map) {
-      mat.map.anisotropy = 4;
+      mat.map.anisotropy = 8;
       mat.map.colorSpace = THREE.SRGBColorSpace;
     }
-    old.dispose();
-    mesh.material = mat;
+    const uniforms = this.terrainUniforms;
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNrm;')
+        .replace(
+          '#include <worldpos_vertex>',
+          '#include <worldpos_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = normalize(mat3(modelMatrix) * objectNormal);',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNrm;\nuniform float uMinH;\nuniform float uMaxH;')
+        .replace(
+          '#include <map_fragment>',
+          `#include <map_fragment>
+          float slope = 1.0 - clamp(normalize(vWNrm).y, 0.0, 1.0);
+          float hN = clamp((vWPos.y - uMinH) / max(uMaxH - uMinH, 1.0), 0.0, 1.0);
+          float n1 = fract(sin(dot(floor(vWPos.xz / 9.0), vec2(12.9898, 78.233))) * 43758.5453);
+          #ifdef USE_MAP
+            diffuseColor.rgb *= mix(vec3(1.0), vec3(0.8, 0.76, 0.72), smoothstep(0.2, 0.65, slope));
+            diffuseColor.rgb *= 0.95 + 0.1 * hN;
+          #else
+            vec3 dry = vec3(0.60, 0.55, 0.38);
+            vec3 scrub = vec3(0.34, 0.40, 0.25);
+            vec3 rock = vec3(0.55, 0.50, 0.44);
+            vec3 c = mix(dry, scrub, smoothstep(0.25, 0.75, hN) * 0.8 + n1 * 0.2);
+            c = mix(c, rock, smoothstep(0.3, 0.7, slope));
+            diffuseColor.rgb = c * (0.9 + 0.2 * n1);
+          #endif`,
+        );
+    };
+    mat.customProgramCacheKey = () => `terrain-${mat.map ? 1 : 0}`;
+    return mat;
   }
+
+  /** Buildings: vertex-color palette with per-building variation, SoCal roof tones, roughness jitter. */
+  private buildingMaterial(old: THREE.Material | null, standard: boolean, hasColor: boolean): THREE.Material {
+    const oldStd = old as THREE.MeshStandardMaterial | null;
+    const params = { color: hasColor ? 0xffffff : (oldStd?.color ?? new THREE.Color(0xd8d0c4)), vertexColors: hasColor };
+    const mat: THREE.MeshStandardMaterial | THREE.MeshLambertMaterial = standard
+      ? new THREE.MeshStandardMaterial({ ...params, roughness: 0.82, metalness: 0.0 })
+      : new THREE.MeshLambertMaterial(params);
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float buildingId;\nvarying float vBid;\nvarying vec3 vBWN;')
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvBid = buildingId;\nvBWN = normalize(mat3(modelMatrix) * objectNormal);');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vBid;\nvarying vec3 vBWN;')
+        .replace(
+          '#include <color_fragment>',
+          `#include <color_fragment>
+          float bh = fract(sin(vBid * 12.9898 + 1.7) * 43758.5453);
+          float bh2 = fract(sin(vBid * 78.233 + 4.1) * 24634.6345);
+          diffuseColor.rgb *= 0.86 + 0.26 * bh;
+          float ny = normalize(vBWN).y;
+          if (ny > 0.35) {
+            bool pitched = ny < 0.985;
+            vec3 tile = mix(vec3(0.66, 0.34, 0.24), vec3(0.52, 0.28, 0.21), bh2);
+            vec3 slate = mix(vec3(0.42, 0.42, 0.44), vec3(0.58, 0.56, 0.52), bh2);
+            vec3 roof = pitched ? (bh < 0.7 ? tile : slate) : mix(vec3(0.82, 0.82, 0.80), vec3(0.62, 0.62, 0.64), bh2);
+            diffuseColor.rgb = mix(diffuseColor.rgb, roof, pitched ? 0.72 : 0.4);
+          } else {
+            // subtle ground-contact darkening via vertical facades
+            diffuseColor.rgb *= 0.92;
+          }`,
+        );
+      if (standard) {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <roughnessmap_fragment>',
+          '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + (bh2 - 0.5) * 0.3 - (ny > 0.985 ? 0.12 : 0.0), 0.35, 1.0);',
+        );
+      }
+    };
+    mat.customProgramCacheKey = () => `building-${standard ? 's' : 'l'}-${hasColor ? 1 : 0}`;
+    return mat;
+  }
+
+  /** Roads: darker asphalt (arterial vertex colors stay lighter), polygon offset over terrain. */
+  private roadMaterial(old: THREE.MeshStandardMaterial, hasColor: boolean): THREE.MeshLambertMaterial {
+    const mat = new THREE.MeshLambertMaterial({
+      map: old.map ?? null,
+      color: hasColor ? new THREE.Color(0.78, 0.78, 0.8) : new THREE.Color(0.2, 0.2, 0.22),
+      vertexColors: hasColor,
+      side: old.side,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -4,
+    });
+    return mat;
+  }
+
+  /** Switch building shading and shadow flags for a quality preset. */
+  applyQuality(opts: { standardBuildings: boolean; shadows: boolean; buildingDrawDistance: number }): void {
+    this.buildingDrawDistance = opts.buildingDrawDistance;
+    if (opts.standardBuildings !== this.standardBuildings) {
+      this.standardBuildings = opts.standardBuildings;
+      for (const m of this.buildingMeshes) {
+        const old = m.material as THREE.Material;
+        m.material = this.buildingMaterial(null, this.standardBuildings, Boolean(m.geometry.getAttribute('color')));
+        old.dispose();
+      }
+    }
+    for (const m of this.terrainMeshes) m.receiveShadow = opts.shadows;
+    for (const m of this.roadMeshes) m.receiveShadow = opts.shadows;
+    for (const m of this.buildingMeshes) {
+      m.castShadow = opts.shadows;
+      m.receiveShadow = opts.shadows;
+    }
+  }
+
+  private buildingDrawDistance = 9000;
 
   async load(manifest: Manifest, fetchAsset: AssetFetcher, onProgress: (msg: string, frac: number) => void): Promise<void> {
     this.group.clear();
@@ -114,23 +219,26 @@ export class World {
           m.updateMatrix();
           m.geometry.computeBoundingSphere();
           m.geometry.computeBoundingBox();
+          const old = m.material as THREE.MeshStandardMaterial;
+          const hasColor = Boolean(m.geometry.getAttribute('color'));
           if (job.kind === 'terrain') {
-            this.toLambert(m, { vertexColors: false });
             if (!m.geometry.getAttribute('normal')) m.geometry.computeVertexNormals();
+            m.material = this.terrainMaterial(old);
             m.renderOrder = 0;
             this.terrainMeshes.push(m);
           } else if (job.kind === 'buildings') {
-            this.toLambert(m);
+            const id = m.geometry.getAttribute('_building_id');
+            // alias without the leading underscore for use in shaders (same buffer)
+            if (id) m.geometry.setAttribute('buildingId', id);
+            else m.geometry.setAttribute('buildingId', new THREE.BufferAttribute(new Float32Array(m.geometry.getAttribute('position').count), 1));
+            m.material = this.buildingMaterial(old, this.standardBuildings, hasColor);
             this.buildingMeshes.push(m);
           } else {
-            this.toLambert(m);
-            const mat = m.material as THREE.Material;
-            mat.polygonOffset = true;
-            mat.polygonOffsetFactor = -2;
-            mat.polygonOffsetUnits = -4;
+            m.material = this.roadMaterial(old, hasColor);
             m.renderOrder = 1;
             this.roadMeshes.push(m);
           }
+          if (m.material !== old) old.dispose();
         }
         root.updateMatrixWorld(true);
         if (job.tile) {
@@ -151,6 +259,12 @@ export class World {
       while (queue.length) await runJob(queue.shift()!);
     });
     await Promise.all(workers);
+    const hb = new THREE.Box3();
+    for (const m of this.terrainMeshes) if (m.geometry.boundingBox) hb.union(m.geometry.boundingBox);
+    if (!hb.isEmpty()) {
+      this.terrainUniforms.uMinH.value = hb.min.y;
+      this.terrainUniforms.uMaxH.value = hb.max.y;
+    }
     if (errors.length) console.warn('Some world assets failed to load:', errors);
     if (errors.length === jobs.length && jobs.length > 0) throw new Error(`world assets failed to load: ${errors[0]}`);
   }
@@ -165,7 +279,7 @@ export class World {
       if (t.terrain) t.terrain.visible = inView;
       if (t.buildings) {
         const d = t.box.distanceToPoint(camPos);
-        t.buildings.visible = inView && d < 9000;
+        t.buildings.visible = inView && d < this.buildingDrawDistance;
       }
     }
   }

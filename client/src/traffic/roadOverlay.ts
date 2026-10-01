@@ -129,16 +129,23 @@ void main() {
 }
 `;
 
+// Ramp colors are display (sRGB) values; convert to linear and treat them as
+// slightly emissive so they read clearly after ACES tone mapping (both when
+// rendering directly and through the post-processing chain).
 const fragmentShader = /* glsl */ `
+#include <common>
 uniform vec3 fogColor;
 uniform float fogDensity;
 uniform float uOpacity;
+uniform float uBright;
 varying vec3 vColor;
 varying float vFogDepth;
 void main() {
   float f = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
-  vec3 fogSrgb = pow(max(fogColor, vec3(0.0)), vec3(1.0 / 2.2));
-  gl_FragColor = vec4(mix(vColor, fogSrgb, f * 0.65), uOpacity);
+  vec3 lin = pow(max(vColor, vec3(0.0)), vec3(2.2)) * uBright;
+  gl_FragColor = vec4(mix(lin, fogColor, f * 0.6), uOpacity);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
 }
 `;
 
@@ -172,6 +179,7 @@ export class RoadOverlay {
           uRampMax: { value: RAMP_MAX },
           uHighlight: { value: -1 },
           uOpacity: { value: 1 },
+          uBright: { value: 2.2 },
         },
       ]),
       fog: true,

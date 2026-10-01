@@ -21,31 +21,87 @@ const LANE_OFFSET_M = 2.2;
 
 const BUS_KINDS = new Set(['shuttle', 'school_bus']);
 
-function carGeometry(): THREE.BufferGeometry {
-  // low-poly car along +x: body + cabin (24 triangles)
-  const body = new THREE.BoxGeometry(4.4, 1.1, 1.9).translate(0, 0.75, 0);
-  const cabin = new THREE.BoxGeometry(2.3, 0.75, 1.7).translate(-0.3, 1.65, 0);
-  const g = mergeGeometries([body.toNonIndexed(), cabin.toNonIndexed()])!;
+/** Box with a constant `aLight` value (0 body, 1 headlight, 2 taillight, 3 dark glass). */
+function part(w: number, h: number, d: number, x: number, y: number, z: number, light: number): THREE.BufferGeometry {
+  const g = new THREE.BoxGeometry(w, h, d).translate(x, y, z).toNonIndexed();
   g.deleteAttribute('uv');
-  body.dispose();
-  cabin.dispose();
+  g.setAttribute('aLight', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(light), 1));
   return g;
 }
 
-function busGeometry(): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(11, 3.0, 2.5).translate(0, 1.8, 0);
-  g.deleteAttribute('uv');
+function merge(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const g = mergeGeometries(parts)!;
+  parts.forEach((p) => p.dispose());
   return g;
+}
+
+/** Low-poly car along +x with emissive head/tail lights (bloom picks them up). */
+export function carGeometry(): THREE.BufferGeometry {
+  return merge([
+    part(4.4, 0.9, 1.85, 0, 0.65, 0, 0),
+    part(2.3, 0.7, 1.65, -0.35, 1.45, 0, 3),
+    part(0.12, 0.22, 0.38, 2.21, 0.8, 0.6, 1),
+    part(0.12, 0.22, 0.38, 2.21, 0.8, -0.6, 1),
+    part(0.12, 0.2, 0.42, -2.21, 0.85, 0.62, 2),
+    part(0.12, 0.2, 0.42, -2.21, 0.85, -0.62, 2),
+  ]);
+}
+
+/** Bus / shuttle along +x. */
+export function busGeometry(): THREE.BufferGeometry {
+  return merge([
+    part(11, 2.6, 2.5, 0, 1.7, 0, 0),
+    part(10.2, 0.7, 2.54, -0.2, 2.25, 0, 3),
+    part(0.12, 0.28, 0.45, 5.51, 0.9, 0.85, 1),
+    part(0.12, 0.28, 0.45, 5.51, 0.9, -0.85, 1),
+    part(0.12, 0.28, 0.45, -5.51, 1.0, 0.85, 2),
+    part(0.12, 0.28, 0.45, -5.51, 1.0, -0.85, 2),
+  ]);
+}
+
+/** Shared uniforms driving vehicle light intensity (set from the sky's darkness). */
+export const vehicleLightUniforms = {
+  uHead: { value: 2.0 },
+  uTail: { value: 1.6 },
+};
+
+function vehicleMaterial(): THREE.MeshLambertMaterial {
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, vehicleLightUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aLight;\nvarying float vLight;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLight = aLight;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vLight;\nuniform float uHead;\nuniform float uTail;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\nif (vLight > 2.5) diffuseColor.rgb = diffuseColor.rgb * 0.25 + vec3(0.04, 0.05, 0.07);')
+      .replace(
+        '#include <opaque_fragment>',
+        `if (vLight > 0.5 && vLight < 1.5) outgoingLight = vec3(1.0, 0.93, 0.78) * uHead;
+        else if (vLight > 1.5 && vLight < 2.5) outgoingLight = vec3(1.0, 0.06, 0.04) * uTail;
+        #include <opaque_fragment>`,
+      );
+  };
+  mat.customProgramCacheKey = () => 'redraw-vehicle';
+  return mat;
 }
 
 let sharedCar: THREE.BufferGeometry | null = null;
 let sharedBus: THREE.BufferGeometry | null = null;
 let sharedBar: THREE.BufferGeometry | null = null;
 
+/** Optional vehicle meshes from the props library (fallback: procedural boxes). */
+export interface VehicleGeometries {
+  car?: THREE.BufferGeometry;
+  bus?: THREE.BufferGeometry;
+}
+
 export interface LayerOptions {
   /** accent color used for shuttles and the queue label border */
   accent: THREE.ColorRepresentation;
   showLabels: boolean;
+  vehicles?: VehicleGeometries;
+  castShadows?: boolean;
 }
 
 export class TrafficLayer {
@@ -94,7 +150,10 @@ export class TrafficLayer {
     sharedBus ??= busGeometry();
     sharedBar ??= new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
 
-    this.cars = new THREE.InstancedMesh(sharedCar, new THREE.MeshLambertMaterial({ color: 0xffffff }), Math.max(1, this.nTraj - nBus));
+    const carGeo = opts.vehicles?.car ?? sharedCar;
+    const busGeo = opts.vehicles?.bus ?? sharedBus;
+    this.cars = new THREE.InstancedMesh(carGeo, vehicleMaterial(), Math.max(1, this.nTraj - nBus));
+    this.cars.castShadow = opts.castShadows ?? false;
     this.cars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.cars.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, this.nTraj - nBus) * 3), 3);
     this.cars.instanceColor.setUsage(THREE.DynamicDrawUsage);
@@ -104,7 +163,8 @@ export class TrafficLayer {
     this.group.add(this.cars);
 
     this.shuttleColor = new THREE.Color(opts.accent);
-    this.buses = new THREE.InstancedMesh(sharedBus, new THREE.MeshLambertMaterial({ color: 0xffffff }), Math.max(1, nBus));
+    this.buses = new THREE.InstancedMesh(busGeo, vehicleMaterial(), Math.max(1, nBus));
+    this.buses.castShadow = opts.castShadows ?? false;
     this.buses.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.buses.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, nBus) * 3), 3);
     this.buses.frustumCulled = false;
@@ -179,6 +239,11 @@ export class TrafficLayer {
   setGhost(on: boolean): void {
     this.ghost = on;
     this.trails.visible = on;
+  }
+
+  setCastShadows(on: boolean): void {
+    this.cars.castShadow = on;
+    this.buses.castShadow = on;
   }
 
   setLabelsVisible(on: boolean): void {
@@ -304,9 +369,10 @@ export class TrafficLayer {
     let pz = out.z;
     speedColor(kph, this.col);
     // warm glow: blend speed color toward amber-white
-    const r0 = 0.55 + 0.45 * this.col[0];
-    const g0 = 0.35 + 0.4 * this.col[1];
-    const b0 = 0.15 + 0.3 * this.col[2];
+    // HDR values so the bloom pass makes them glow
+    const r0 = (0.55 + 0.45 * this.col[0]) * 2.2;
+    const g0 = (0.35 + 0.4 * this.col[1]) * 2.2;
+    const b0 = (0.15 + 0.3 * this.col[2]) * 2.2;
     let cc = c;
     for (let k = 1; k <= TRAIL_SEGMENTS; k++) {
       const tk = t - k * TRAIL_STEP_S;
@@ -355,8 +421,10 @@ export class TrafficLayer {
       const label = this.barLabels[idx];
       if (label) {
         label.position.set(e.x, e.y + h + 4, e.z);
-        const txt = `${Math.round(q)} car${Math.round(q) === 1 ? '' : 's'}`;
+        const n = Math.round(q);
+        const txt = `${n} car${n === 1 ? '' : 's'}`;
         if (label.element.textContent !== txt) label.element.textContent = txt;
+        label.element.style.opacity = n >= 1 ? '1' : '0';
       }
     });
     this.bars.instanceMatrix.needsUpdate = true;

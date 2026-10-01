@@ -1,5 +1,6 @@
 /** App state: a tiny observable store (no framework). */
 
+import type { Quality } from './scene/quality';
 import type { RoadNetwork } from './traffic/network';
 import type { Playback } from './traffic/playback';
 import type {
@@ -72,6 +73,7 @@ export interface AppState {
   school: School | null;
   highlightEdge: number | null;
   showStats: boolean;
+  quality: Quality;
   toasts: Toast[];
 }
 
@@ -153,6 +155,7 @@ export function initialState(): AppState {
     school: null,
     highlightEdge: null,
     showStats: false,
+    quality: 'medium',
     toasts: [],
   };
 }

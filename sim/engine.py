@@ -77,6 +77,7 @@ def compute_seed_metrics(world: WorldState, d: Demand, r: AssignmentResult, seed
     trips = d.trips
     P = len(world.persons)
     walk_curb = Af("schools.walk_from_curb_min") * 60.0
+    informal_walk = Af("sim_engine.informal_dropoff_walk_min") * 60.0
     late_tol = Af("schools.late_tolerance_min") * 60.0
     n_wp = (trips.wp_node >= 0).sum(axis=1)
     dur = (r.arrive - r.depart) / 60.0
@@ -116,7 +117,8 @@ def compute_seed_metrics(world: WorldState, d: Demand, r: AssignmentResult, seed
         leave = r.wp_leave[rows, cols]
         arrive_wp = r.wp_arrive[rows, cols]
         queued = trips.wp_queue[rows, cols]
-        at_class = np.where(queued, leave, arrive_wp) + walk_curb
+        balked = r.wp_balk[rows, cols]
+        at_class = np.where(queued, leave, arrive_wp) + np.where(balked, informal_walk, walk_curb)
         is_shuttle = trips.kind[rows] == 2
         start = np.where(is_shuttle, np.nan, r.depart[rows])
         tmin = (at_class - start) / 60.0
@@ -163,6 +165,7 @@ def compute_seed_metrics(world: WorldState, d: Demand, r: AssignmentResult, seed
             "avg_wait_min": float(np.mean([e["avg_wait_min"] for e in ents])) if ents else 0.0,
             "late_kids": float(late_s[in_school].sum()),
             "students": int(in_school.sum()),
+            "balked_share": float(np.sum(dw[m] * r.wp_balk[drop_rows[m], drop_cols[m]]) / np.sum(dw[m])) if m.any() else 0.0,
             "dropoff_share": float((d.modes.student_mode[in_school] == S_IDX["drive_dropoff"]).mean()) if in_school.any() else 0.0,
             "entrances": ents,
         }

@@ -1,7 +1,7 @@
 /** Redraw web client entry point. */
 
 import { initActions, loadBaselinePlayback, openPlan } from './actions';
-import { api, initApi } from './api';
+import { api, initApi, with503Retry } from './api';
 import { parseHash } from './router';
 import { SceneController } from './scene/controller';
 import { store, toast } from './state';
@@ -20,7 +20,12 @@ async function boot(): Promise<void> {
   initActions();
 
   store.set({ bootMessage: 'Loading world info…' });
-  const [meta, schools, tools] = await Promise.all([api.getMeta(), api.getSchools(), api.getTools()]);
+  const waiting = (): void => store.set({ bootMessage: 'The server is loading the world, retrying…' });
+  const [meta, schools, tools] = await Promise.all([
+    with503Retry(() => api.getMeta(), waiting),
+    with503Retry(() => api.getSchools(), waiting),
+    with503Retry(() => api.getTools(), waiting),
+  ]);
   store.set({
     meta,
     schools,
@@ -32,8 +37,7 @@ async function boot(): Promise<void> {
   store.set({ booting: false });
 
   void scene.loadWorld();
-  api
-    .getNetwork()
+  with503Retry(() => api.getNetwork())
     .then((json) => {
       const net = new RoadNetwork(json);
       store.set({ network: net });

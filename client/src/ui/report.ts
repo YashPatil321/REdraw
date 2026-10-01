@@ -5,16 +5,22 @@ import { navigate } from '../actions';
 import { store } from '../state';
 import { formatHHMM } from '../time';
 import { vcColor, rgbToCss } from '../traffic/congestion';
-import type { BaselinePlan, MetricDef, Range3, Reaction, Report } from '../types';
+import type { BaselinePlan, MaybeRange3, MetricDef, Reaction, Report } from '../types';
 import { StoreController, appCtx, fmtNum, fmtSigned, fmtUsd, humanize, theme } from './base';
 
 const W = 210;
 const H = 34;
 
-/** Two horizontal p10-p90 bars with whiskers and a median tick (baseline top, plan bottom). */
-export function rangeChart(b: Range3, p: Range3): TemplateResult {
-  let lo = Math.min(b.p10, p.p10, b.median, p.median);
-  let hi = Math.max(b.p90, p.p90, b.median, p.median);
+function complete(r: MaybeRange3 | null | undefined): r is { median: number; p10: number; p90: number } {
+  return !!r && Number.isFinite(r.median) && Number.isFinite(r.p10) && Number.isFinite(r.p90);
+}
+
+/** Two horizontal p10-p90 bars with whiskers and a median tick (baseline top, plan bottom). Null ranges are skipped. */
+export function rangeChart(b: MaybeRange3, p: MaybeRange3): TemplateResult {
+  const rows = [b, p].filter(complete);
+  if (!rows.length) return html`<svg width=${W} height=${H} aria-hidden="true"></svg>`;
+  let lo = Math.min(...rows.flatMap((r) => [r.p10, r.p90, r.median]));
+  let hi = Math.max(...rows.flatMap((r) => [r.p10, r.p90, r.median]));
   if (!(hi > lo)) {
     lo -= 1;
     hi += 1;
@@ -23,19 +29,22 @@ export function rangeChart(b: Range3, p: Range3): TemplateResult {
   lo -= pad;
   hi += pad;
   const x = (v: number): number => ((v - lo) / (hi - lo)) * (W - 8) + 4;
-  const row = (r: Range3, y: number, color: string) => svg`
+  const row = (r: MaybeRange3, y: number, color: string) => {
+    if (!complete(r)) return svg`<text x="4" y=${y + 4} font-size="10" fill="var(--muted)">n/a</text>`;
+    return svg`
     <line x1=${x(r.p10)} x2=${x(r.p90)} y1=${y} y2=${y} stroke=${color} stroke-width="1.5" />
     <line x1=${x(r.p10)} x2=${x(r.p10)} y1=${y - 4} y2=${y + 4} stroke=${color} stroke-width="1.5" />
     <line x1=${x(r.p90)} x2=${x(r.p90)} y1=${y - 4} y2=${y + 4} stroke=${color} stroke-width="1.5" />
     <rect x=${Math.min(x(r.p10), x(r.p90))} y=${y - 3} width=${Math.max(1, Math.abs(x(r.p90) - x(r.p10)))} height="6" rx="2" fill=${color} opacity="0.45" />
     <line x1=${x(r.median)} x2=${x(r.median)} y1=${y - 6} y2=${y + 6} stroke="#fff" stroke-width="2.5" />`;
+  };
   return html`<svg width=${W} height=${H} viewBox="0 0 ${W} ${H}" aria-hidden="true">
     ${row(b, 10, 'var(--base)')} ${row(p, 25, 'var(--plan)')}
   </svg>`;
 }
 
-function deltaClass(delta: number, better: string): string {
-  if (Math.abs(delta) < 1e-9) return 'muted';
+function deltaClass(delta: number | null | undefined, better: string): string {
+  if (delta === null || delta === undefined || !Number.isFinite(delta) || Math.abs(delta) < 1e-9) return 'muted';
   const good = better === 'higher' ? delta > 0 : delta < 0;
   return good ? 'good' : 'bad';
 }
@@ -199,8 +208,11 @@ export class RdReport extends LitElement {
             <div class="vals">
               <span class="b">${fmtNum(m.baseline.median, m.unit)}</span> →
               <span class="pl">${fmtNum(m.plan.median, m.unit)}</span>
-              <span class=${deltaClass(m.delta.median, m.better)}>(${fmtSigned(m.delta.median, m.unit)}; ${fmtSigned(m.delta.p10, m.unit)} to ${fmtSigned(m.delta.p90, m.unit)})</span>
+              ${complete(m.delta)
+                ? html`<span class=${deltaClass(m.delta.median, m.better)}>(${fmtSigned(m.delta.median, m.unit)}; ${fmtSigned(m.delta.p10, m.unit)} to ${fmtSigned(m.delta.p90, m.unit)})</span>`
+                : nothing}
             </div>
+            ${m.note ? html`<div class="small muted">${m.note}</div>` : nothing}
           </div>
           ${rangeChart(m.baseline, m.plan)}
         </div>`,
@@ -340,8 +352,6 @@ export class RdReport extends LitElement {
               <button class=${s.reportTab === 'report' ? 'active' : ''} @click=${() => store.set({ reportTab: 'report' })}>Report</button>
               <button class=${s.reportTab === 'residents' ? 'active' : ''} @click=${() => store.set({ reportTab: 'residents' })}>
                 Residents${s.residents ? ` (${s.residents.approval_pct.toFixed(0)}% approve)` : ''}</button>
-              <span class="spacer"></span>
-              <button class=${s.split ? 'active' : ''} ?disabled=${!s.planPlayback} @click=${() => store.set({ split: !s.split })} title="Left half baseline, right half plan">Before / after</button>
             </div>
             ${s.reportTab === 'residents' ? html`<rd-residents></rd-residents>` : this.renderReport(r)}`}
     </div>`;

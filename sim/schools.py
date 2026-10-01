@@ -11,7 +11,11 @@ service starts at ``B_k = C_k - w_k / mu``; the car waits ``B_k - A_k`` in the
 queue and then occupies a curb spot for ``unload_seconds``.
 
 Queue length (cars waiting, not yet at the curb) times ``car_length_m`` is the
-spillback. When spillback exceeds the approach edge length the approach
+spillback. Balking: a parent who reaches the line when the expected wait is
+longer than ``sim_engine.dropoff_balk_wait_min`` drops the kid off on a nearby
+street instead (``informal_dropoff_stop_s`` stop, kid walks
+``informal_dropoff_walk_min`` extra), so the formal queue is bounded by
+behaviour, as observed at real schools. When spillback exceeds the approach edge length the approach
 edge's capacity is multiplied by ``queue_capacity_reduction_per_spill`` and
 the edges feeding the approach get ``upstream_spill_delay_s_per_car`` per
 spilled car, in that 5-minute bin. These effects are fed back inside the
@@ -37,7 +41,8 @@ class QueueOutput:
     queue_max: np.ndarray  # (n_bins,) max cars waiting during the bin
     spill_m: np.ndarray  # (n_bins,) max spillback (m) during the bin
     avg_wait_s: np.ndarray  # (n_bins,) mean wait of vehicles arriving in the bin (NaN if none)
-    arrivals: np.ndarray  # (n_bins,) vehicles (weighted) arriving in the bin
+    arrivals: np.ndarray  # (n_bins,) vehicles (weighted) joining the line in the bin
+    balked: np.ndarray  # per arrival: dropped off informally on a nearby street instead of queueing
 
 
 def service_rate(curb_spots: float, unload_s: float) -> float:
@@ -45,23 +50,51 @@ def service_rate(curb_spots: float, unload_s: float) -> float:
     return max(float(curb_spots), 1e-6) / max(float(unload_s), 1e-6)
 
 
-def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: float, tg: TimeGrid) -> QueueOutput:
+def _serve_with_balking(A_: np.ndarray, s: np.ndarray, balk_s: float) -> tuple[np.ndarray, np.ndarray]:
+    """Sequential fluid server where arrivals facing a wait > balk_s leave (informal drop-off)."""
+    n = len(A_)
+    B = np.empty(n)
+    balked = np.zeros(n, dtype=bool)
+    c = -np.inf
+    last_b = -np.inf
+    for k in range(n):
+        a = A_[k]
+        wait = c - a if c > a else 0.0
+        if wait > balk_s:
+            balked[k] = True
+            B[k] = max(last_b, a) if last_b > -np.inf else a  # keeps B sorted; zero weight
+            continue
+        B[k] = a + wait
+        last_b = B[k]
+        c = B[k] + s[k]
+    return B, balked
+
+
+def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: float, tg: TimeGrid,
+              balk_wait_s: float | None = None) -> QueueOutput:
+    """Fluid curb queue. With ``balk_wait_s`` set, arrivals facing a longer expected wait balk."""
     n_b = tg.n_bins
     car_len = Af("schools.car_length_m")
     if len(arr_t) == 0:
         z = np.zeros(n_b)
-        return QueueOutput(np.zeros(0), np.zeros(0), np.zeros(0), z, z.copy(), z.copy(), np.full(n_b, np.nan), z.copy())
+        return QueueOutput(np.zeros(0), np.zeros(0), np.zeros(0), z, z.copy(), z.copy(), np.full(n_b, np.nan), z.copy(),
+                           np.zeros(0, bool))
     mu = service_rate(curb_spots, unload_s)
     order = np.argsort(arr_t, kind="stable")
     A_ = arr_t[order].astype(np.float64)
     W = w[order].astype(np.float64)
     s = W / mu
-    S = np.cumsum(s)
-    C = S + np.maximum.accumulate(A_ - (S - s))
-    B = C - s
-    wait_sorted = np.maximum(B - A_, 0.0)
+    if balk_wait_s is None:
+        S = np.cumsum(s)
+        C = S + np.maximum.accumulate(A_ - (S - s))
+        B = C - s
+        balked_sorted = np.zeros(len(A_), dtype=bool)
+    else:
+        B, balked_sorted = _serve_with_balking(A_, s, float(balk_wait_s))
+    wait_sorted = np.where(balked_sorted, 0.0, np.maximum(B - A_, 0.0))
+    W = np.where(balked_sorted, 0.0, W)  # balked cars never join the line
     cumA = np.cumsum(W)
-    cumB = cumA  # B is nondecreasing in the same order
+    cumB = cumA  # B is nondecreasing in the same order (balked cars have zero weight)
     started_at_arrival = np.where(
         (k := np.searchsorted(B, A_, side="right")) > 0, cumB[np.maximum(k - 1, 0)], 0.0)
     q_after = cumA - started_at_arrival
@@ -85,6 +118,7 @@ def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: flo
     return QueueOutput(
         wait_s=wait_sorted[inv], start_s=B[inv], done_s=B[inv] + unload_s,
         queue_end=q_end, queue_max=q_max, spill_m=q_max * car_len, avg_wait_s=avg_wait, arrivals=arrivals,
+        balked=balked_sorted[inv],
     )
 
 

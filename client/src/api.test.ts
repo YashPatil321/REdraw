@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError, RedrawApi, assetUrl, buildUrl, isMockMode } from './api';
+import { ApiError, RedrawApi, assetUrl, buildUrl, isMockMode, with503Retry } from './api';
 import type { WorldMeta } from './types';
 
 interface Call {
@@ -64,6 +64,8 @@ describe('RedrawApi endpoints', () => {
     ['residents', (a) => a.getResidents('abc'), 'GET', '/api/plans/abc/residents'],
     ['list', (a) => a.listPlans({ mission: 'morning_crunch', sort: 'votes' }), 'GET', '/api/plans?mission=morning_crunch&sort=votes'],
     ['vote', (a) => a.vote('abc', -1), 'POST', '/api/plans/abc/vote', { value: -1 }],
+    ['update', (a) => a.updatePlan('abc', { mission: 'm', title: 't', pitch: '', tools: [] }), 'PUT', '/api/plans/abc', { mission: 'm', title: 't', pitch: '', tools: [] }],
+    ['list paged', (a) => a.listPlans({ sort: 'new', limit: 20, offset: 40 }), 'GET', '/api/plans?sort=new&limit=20&offset=40'],
   ];
   for (const [name, fn, method, url, body] of cases) {
     it(name, async () => {
@@ -104,6 +106,22 @@ describe('RedrawApi endpoints', () => {
     const a = new RedrawApi(r.f);
     await expect(a.runPlan('x')).rejects.toBeInstanceOf(ApiError);
     await expect(a.runPlan('x')).rejects.toMatchObject({ status: 400, detail: 'check.ok is false' });
+  });
+});
+
+describe('with503Retry', () => {
+  it('retries while the server is warming up', async () => {
+    let n = 0;
+    const out = await with503Retry(async () => {
+      n++;
+      if (n < 2) throw new ApiError(503, 'warming up', '/api/baseline');
+      return 'ok';
+    });
+    expect(out).toBe('ok');
+    expect(n).toBe(2);
+  });
+  it('does not retry other errors', async () => {
+    await expect(with503Retry(async () => Promise.reject(new ApiError(404, 'nope', '/x')))).rejects.toMatchObject({ status: 404 });
   });
 });
 

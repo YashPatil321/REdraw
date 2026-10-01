@@ -3,7 +3,7 @@
  * logic: costs, validation and results always come from the server.
  */
 
-import { ApiError, api } from './api';
+import { ApiError, api, with503Retry } from './api';
 import { hashFor } from './router';
 import { store, toast, type View } from './state';
 import { parsePlayback } from './traffic/playback';
@@ -107,7 +107,9 @@ async function runCheck(): Promise<void> {
 
 export async function savePlan(): Promise<string | null> {
   try {
-    const plan = await api.createPlan(draftInput());
+    const cur = store.get().plan;
+    // the author can update in place; anyone else saves a new plan (fork)
+    const plan = cur?.is_mine ? await api.updatePlan(cur.id, draftInput()) : await api.createPlan(draftInput());
     savedDraftKey = draftKey();
     store.set({ plan, check: plan.check ?? store.get().check });
     history.replaceState(null, '', hashFor({ view: 'plan', planId: plan.id }));
@@ -120,11 +122,10 @@ export async function savePlan(): Promise<string | null> {
 }
 
 export async function runPlan(): Promise<void> {
-  let s = store.get();
+  const s = store.get();
   let id = s.plan?.id ?? null;
   if (!id || isDraftDirty()) id = await savePlan();
   if (!id) return;
-  s = store.get();
   try {
     const { job_id } = await api.runPlan(id);
     store.set({ job: { id: job_id, plan_id: id, status: 'queued', progress: 0, message: 'queued', error: null } });
@@ -175,6 +176,22 @@ async function loadPlanResults(planId: string, goToReport: boolean): Promise<voi
     console.warn('plan playback unavailable', pb.reason);
   }
   store.set({ residents: res.status === 'fulfilled' ? res.value : null });
+  if (res.status === 'fulfilled' && res.value.text_status === 'pending') refreshResidentsLater(planId);
+}
+
+/** Resident quotes are written in the background; poll until complete. */
+function refreshResidentsLater(planId: string, tries = 0): void {
+  if (tries > 40) return;
+  setTimeout(() => {
+    if (store.get().plan?.id !== planId) return;
+    api
+      .getResidents(planId)
+      .then((r) => {
+        store.set({ residents: r });
+        if (r.text_status === 'pending') refreshResidentsLater(planId, tries + 1);
+      })
+      .catch(() => undefined);
+  }, 4000);
 }
 
 /** Open a plan by id (from a #/plan/{id} link). */
@@ -197,7 +214,10 @@ export async function openPlan(id: string): Promise<void> {
     });
     savedDraftKey = draftKey();
     if (plan.status === 'done') await loadPlanResults(id, false);
-    else if (plan.status === 'queued' || plan.status === 'running') waitForPlan(id);
+    else if ((plan.status === 'queued' || plan.status === 'running') && plan.job_id) {
+      store.set({ job: { id: plan.job_id, plan_id: id, status: plan.status, progress: 0, message: plan.status, error: null } });
+      pollJob(plan.job_id, id);
+    } else if (plan.status === 'queued' || plan.status === 'running') waitForPlan(id);
   } catch (e) {
     toast(`Could not open plan ${id}: ${errText(e)}`, 'error');
     store.set({ view: 'browse' });
@@ -237,7 +257,11 @@ export async function vote(id: string, value: 1 | -1): Promise<number | null> {
 export async function loadBaselinePlayback(): Promise<void> {
   if (store.get().baselinePlayback) return;
   try {
-    const buf = await api.getBaselinePlayback();
+    const buf = await with503Retry(
+      () => api.getBaselinePlayback(),
+      () => store.set({ worldStatus: 'Baseline traffic is warming up on the server…' }),
+    );
+    if (store.get().worldStatus.startsWith('Baseline')) store.set({ worldStatus: '' });
     store.set({ baselinePlayback: parsePlayback(buf) });
   } catch (e) {
     toast(`Baseline traffic unavailable: ${errText(e)}`, 'error', 8000);

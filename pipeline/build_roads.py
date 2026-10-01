@@ -264,7 +264,7 @@ def add_exit_turnarounds(G: nx.MultiDiGraph, exits_xy: list[tuple[dict[str, Any]
         e, n = x + o.easting, o.northing - z
         prefix, refs = exit_matcher(ex, labels)
 
-        def on_road(node: Any, incoming: bool) -> dict[str, Any] | None:
+        def on_road(node: Any, incoming: bool, prefix: str = prefix, refs: list[str] = refs) -> dict[str, Any] | None:
             it = G.in_edges(node, keys=True, data=True) if incoming else G.out_edges(node, keys=True, data=True)
             for _, _, _, d in it:
                 if edge_matches(d, prefix, refs):

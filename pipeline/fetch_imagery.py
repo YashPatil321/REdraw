@@ -19,7 +19,13 @@ if __package__ in (None, ""):
 
 import numpy as np
 
-from pipeline.common import DataSourceUnavailable, bbox_lonlat_of_extent, load_env, log, terrain_extent
+from pipeline.common import (
+    DataSourceUnavailable,
+    bbox_lonlat_of_extent,
+    load_env,
+    log,
+    terrain_extent,
+)
 from pipeline.config import raw_dir
 from pipeline.geo import scene_origin
 

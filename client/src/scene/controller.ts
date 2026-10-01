@@ -9,13 +9,14 @@ import { api } from '../api';
 import { originFromLatLon, sceneToLatLon, type Origin } from '../geo';
 import { store, toast, type AppState } from '../state';
 import { advanceClock } from '../time';
-import { TrafficLayer } from '../traffic/layer';
+import { TrafficLayer, vehicleLightUniforms, type VehicleGeometries } from '../traffic/layer';
 import type { RoadNetwork } from '../traffic/network';
 import type { Playback } from '../traffic/playback';
 import { buildRoadOverlayGeometry } from '../traffic/roadOverlay';
 import type { School, WorldMeta } from '../types';
 import { applyMapClick, setParam, type MapType } from '../ui/formgen';
 import { ArterialLabels, BASELINE_COLOR, EdgeHighlight, LocationPin, PLAN_COLOR, PlanOverlay, SchoolMarkers } from './markers';
+import { QUALITY, initialQuality, saveQuality, type Quality } from './quality';
 import { SkySystem } from './sky';
 import { Viewer } from './viewer';
 import { World } from './world';
@@ -45,6 +46,10 @@ export class SceneController {
   private down: { x: number; y: number; t: number } | null = null;
   private unsub: Array<() => void> = [];
   private worldLoaded = false;
+  private qualityPinned = false;
+  private lastQualityChange = 0;
+  /** vehicle meshes from the props library, when available */
+  vehicleGeoms: VehicleGeometries = {};
 
   constructor(container: HTMLElement) {
     this.viewer = new Viewer(container);
@@ -71,7 +76,43 @@ export class SceneController {
       },
       after: () => this.applyVisibility(store.get()),
     };
+    const iq = initialQuality(this.viewer.renderer.getContext());
+    this.qualityPinned = iq.pinned;
+    store.set({ quality: iq.q });
+    this.viewer.setQuality(iq.q);
     this.viewer.start();
+  }
+
+  private applyQuality(q: Quality): void {
+    const qs = QUALITY[q];
+    this.viewer.setQuality(q);
+    this.sky?.configureShadows(qs.shadows, qs.shadowMapSize);
+    this.world.applyQuality(qs);
+    this.baseline?.setCastShadows(qs.carShadows && qs.shadows);
+    this.plan?.setCastShadows(qs.carShadows && qs.shadows);
+    this.lastQualityChange = performance.now();
+  }
+
+  /** User picked a quality preset in the top bar. */
+  setQuality(q: Quality): void {
+    this.qualityPinned = true;
+    saveQuality(q);
+    store.set({ quality: q });
+  }
+
+  /** Drop one quality step if the frame rate stays below 24 FPS (unless the user chose a preset). */
+  private autoQuality(now: number): void {
+    if (this.qualityPinned || !this.worldLoaded || now - this.lastQualityChange < 8000) return;
+    const h = this.viewer.fpsHistory;
+    if (h.length < 10) return;
+    const avg = h.slice(-10).reduce((a, b) => a + b, 0) / 10;
+    const q = store.get().quality;
+    if (avg < 24 && q !== 'low') {
+      const next: Quality = q === 'high' ? 'medium' : 'low';
+      h.length = 0;
+      store.set({ quality: next });
+      toast(`Quality lowered to ${next} to keep the frame rate up.`, 'info', 4000);
+    }
   }
 
   /** First-time setup once /world/meta and schools are known. */
@@ -90,6 +131,8 @@ export class SceneController {
     this.viewer.controls.target.set(cx, 0, cz);
     this.viewer.camera.position.set(cx, span * 1.15, cz + span * 0.9);
     this.sky = new SkySystem(this.viewer.scene, meta.region.origin.lat, meta.region.origin.lon, meta.region.timezone || 'America/Los_Angeles');
+    const qs = QUALITY[store.get().quality];
+    this.sky.configureShadows(qs.shadows, qs.shadowMapSize);
     this.clockT = store.get().simTime;
 
     this.schoolMarkers = new SchoolMarkers(schools, (s) => this.selectSchool(s), meta.hero?.school_id);
@@ -107,6 +150,7 @@ export class SceneController {
       const manifest = await api.getManifest(meta);
       store.set({ worldStatus: 'Loading world…' });
       await this.world.load(manifest, (rel) => api.getAsset(meta, rel), (msg) => store.set({ worldStatus: msg }));
+      this.world.applyQuality(QUALITY[store.get().quality]);
       store.set({ worldStatus: '' });
       const b = this.world.bounds;
       if (!b.isEmpty()) this.viewer.groundY = (b.min.y + b.max.y) / 2;
@@ -162,9 +206,12 @@ export class SceneController {
       if (pb.nEdges !== this.net.nEdges) {
         console.warn(`playback n_edges ${pb.nEdges} != network ${this.net.nEdges}`);
       }
+      const qs = QUALITY[store.get().quality];
       layer = new TrafficLayer(this.net, pb, this.overlayGeom, store.get().schools, {
         accent: which === 'plan' ? PLAN_COLOR : BASELINE_COLOR,
         showLabels: true,
+        vehicles: this.vehicleGeoms,
+        castShadows: qs.shadows && qs.carShadows,
       });
       layer.setGhost(store.get().ghost);
       this.viewer.scene.add(layer.group);
@@ -191,10 +238,12 @@ export class SceneController {
     }
     if (this.planOverlay) this.planOverlay.group.visible = s.view === 'plan' || s.view === 'report';
     if (this.sky) this.sky.dim = show && s.ghost ? 1 : 0;
+    this.viewer.setGhostLook(show && s.ghost);
     this.viewer.canvas.style.cursor = s.mapPick ? 'crosshair' : '';
   }
 
   private onState(s: AppState, prev: AppState): void {
+    if (s.quality !== prev.quality) this.applyQuality(s.quality);
     if (s.baselinePlayback !== prev.baselinePlayback) this.setPlayback('baseline', s.baselinePlayback);
     if (s.planPlayback !== prev.planPlayback) this.setPlayback('plan', s.planPlayback);
     if (s.ghost !== prev.ghost) {
@@ -237,8 +286,15 @@ export class SceneController {
       }
     }
     this.world.updateCulling(this.viewer.camera);
-    this.sky?.update(this.clockT, this.viewer.renderer);
     const dist = this.viewer.distance;
+    if (this.sky) {
+      this.sky.update(this.clockT, this.viewer.renderer);
+      this.sky.followTarget(this.viewer.controls.target, dist);
+      const dark = Math.max(this.sky.darkness, this.sky.dim);
+      vehicleLightUniforms.uHead.value = 1.2 + 4.5 * dark;
+      vehicleLightUniforms.uTail.value = 0.9 + 3.2 * dark;
+    }
+    this.autoQuality(now);
     const scale = THREE.MathUtils.clamp(dist / 650, 1, 9);
     const h = this.viewer.canvas.clientHeight;
     for (const l of [this.baseline, this.plan]) {

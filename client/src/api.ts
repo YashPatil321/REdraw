@@ -144,6 +144,10 @@ export class RedrawApi {
   createPlan(plan: PlanInput): Promise<Plan> {
     return this.json('POST', '/plans', { body: plan });
   }
+  /** PUT /plans/{id} (author only); resets the plan to draft. */
+  updatePlan(id: string, plan: PlanInput): Promise<Plan> {
+    return this.json('PUT', `/plans/${encodeURIComponent(id)}`, { body: plan });
+  }
   checkPlan(plan: PlanInput): Promise<PlanCheck> {
     return this.json('POST', '/plans/check', { body: plan });
   }
@@ -162,11 +166,25 @@ export class RedrawApi {
   getResidents(id: string): Promise<ResidentsResponse> {
     return this.json('GET', `/plans/${encodeURIComponent(id)}/residents`);
   }
-  listPlans(opts: { mission?: string; sort?: string } = {}): Promise<{ plans: PlanListItem[] }> {
-    return this.json('GET', '/plans', { query: { mission: opts.mission, sort: opts.sort } });
+  listPlans(opts: { mission?: string; sort?: string; limit?: number; offset?: number } = {}): Promise<{ plans: PlanListItem[]; total?: number }> {
+    return this.json('GET', '/plans', { query: { mission: opts.mission, sort: opts.sort, limit: opts.limit, offset: opts.offset } });
   }
   vote(id: string, value: 1 | -1 | 0): Promise<{ votes: number }> {
     return this.json('POST', `/plans/${encodeURIComponent(id)}/vote`, { body: { value } });
+  }
+}
+
+/** Retry a call while the server answers 503 (world loading / baseline warming up). */
+export async function with503Retry<T>(fn: () => Promise<T>, onWait?: (attempt: number) => void, maxWaitMs = 600000): Promise<T> {
+  const start = Date.now();
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 503 || Date.now() - start > maxWaitMs) throw e;
+      onWait?.(attempt);
+      await new Promise((r) => setTimeout(r, Math.min(5000, 1000 * attempt)));
+    }
   }
 }
 

@@ -155,7 +155,7 @@ export class RdApp extends LitElement {
       }
     `,
   ];
-  private st = new StoreController(this, ['view', 'booting', 'bootMessage', 'fatal', 'showStats', 'worldStatus', 'building', 'school', 'buildingLoading', 'mapPick', 'meta']);
+  private st = new StoreController(this, ['view', 'booting', 'bootMessage', 'fatal', 'worldStatus', 'building', 'school', 'buildingLoading', 'mapPick', 'meta']);
 
   override render() {
     const s = this.st.s;
@@ -189,7 +189,6 @@ export class RdApp extends LitElement {
       <main>
         ${content}
         ${s.worldStatus ? html`<div class="status">${s.worldStatus}</div>` : nothing}
-        ${s.showStats ? html`<div class="stats"><rd-stats></rd-stats></div>` : nothing}
         <div class="toasts"><rd-toasts></rd-toasts></div>
       </main>
       ${s.booting || s.fatal
