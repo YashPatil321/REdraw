@@ -1299,18 +1299,32 @@ MAT_IDS = {
     4: {"name": "trim", "atlas": "facade_walls", "variants": ["stucco_smooth", "stone_veneer"],
         "tint": "COLOR_0 as for walls (pass a trim color: white / cream / dark bronze)"},
     5: {"name": "garage_door", "atlas": "facade_openings", "variants": ["garage_2car", "garage_3car"],
-        "notes": "either map whole garage bays with facade UVs (span cells), or a door quad onto door_rect_m"},
+        "notes": "either map whole garage bays with facade UVs (span cells), or a door quad onto the cell's opening_rects_m.door"},
+}
+
+
+# openings inside facade_openings cells, meters from the cell's (span's) bottom-left corner: [x0, y0, x1, y1]
+OPENING_RECTS: dict[str, dict[str, list[list[float]]]] = {
+    "window_slider": {"glass": [[0.6, 1.0, 2.4, 2.2]]},
+    "window_pair": {"glass": [[0.45, 0.85, 1.43, 2.4], [1.57, 0.85, 2.55, 2.4]]},
+    "window_picture": {"glass": [[0.3, 0.75, 2.7, 2.4]]},
+    "window_small": {"glass": [[1.05, 1.65, 1.95, 2.3]]},
+    "window_arched": {"glass": [[0.85, 0.8, 2.15, 2.65]]},
+    "door_front": {"door": [[0.95, 0.0, 1.9, 2.44]], "glass": [[1.98, 0.05, 2.36, 2.44]]},
+    "door_slider": {"door": [[0.3, 0.04, 2.7, 2.1]]},
+    "garage_2car": {"door": [[0.56, 0.0, 5.44, 2.13]]},
+    "garage_3car": {"door": [[0.45, 0.0, 5.33, 2.13], [6.13, 0.0, 8.57, 2.13]]},
+    "storefront": {"glass": [[0.0, 0.38, 3.0, 2.94]]},
+    "storefront_sign": {},
+    "school_window_band": {"glass": [[0.0, 0.95, 3.0, 2.4]]},
+    "school_door": {"door": [[0.58, 0.0, 2.42, 2.13]], "glass": [[0.58, 2.19, 2.42, 2.69]]},
 }
 
 
 def manifest(atlases: list[dict[str, Any]], markings: list[dict[str, Any]]) -> dict[str, Any]:
     by = {a["name"]: a for a in atlases}
-    # door rects inside the garage spans (meters from the span's bottom-left corner)
     for c in by["facade_openings"]["cells"]:
-        if c["name"] == "garage_2car":
-            c["door_rect_m"] = [[0.56, 0.0, 5.44, 2.13]]
-        elif c["name"] == "garage_3car":
-            c["door_rect_m"] = [[0.45, 0.0, 5.33, 2.13], [6.13, 0.0, 8.57, 2.13]]
+        c["opening_rects_m"] = OPENING_RECTS.get(c["name"], {})
     return {
         "format": "redraw-materials",
         "version": 1,

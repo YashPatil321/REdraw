@@ -29,10 +29,11 @@ import numpy as np
 
 from .mesh import Part
 
-TEX = 512
-LEAF_W = 448
-CELL_W, CELL_H = 224, 256
-SS = 2  # supersampling for drawing
+TEX = 1024
+LEAF_W = 896
+CELL_W, CELL_H = 448, 512
+RES = 2  # drawing functions work in "design" pixels (224 x 256 per cell) and output RES x that
+SS = 4  # canvas scale relative to design pixels (2x supersampling of the RES output)
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +65,7 @@ def _finish(im, w: int, h: int):  # noqa: ANN001, ANN202
     """Downsample and bleed leaf colors into transparent texels (no dark fringes in mip levels)."""
     from PIL import Image, ImageFilter
 
+    w, h = w * RES, h * RES
     im = im.resize((w, h), Image.LANCZOS)
     a = np.asarray(im).astype(np.float32)
     rgb, al = a[..., :3], a[..., 3:4] / 255.0
@@ -87,6 +89,17 @@ def _leaf_poly(cx: float, cy: float, length: float, width: float, ang: float, n:
     return [(cx + x * c - y * s, cy + x * s + y * c) for x, y in pts]
 
 
+def _leaf(d, x: float, y: float, ln: float, wd: float, ang: float, c: np.ndarray, rng: np.random.Generator) -> None:  # noqa: ANN001
+    """One leaf: base color, a slightly darker half (folded blade), a lighter midrib."""
+    pts = _leaf_poly(x, y, ln, wd, ang)
+    d.polygon(pts, fill=_jit(c, rng, 0.12))
+    half = len(pts) // 2
+    d.polygon(pts[: half + 1], fill=_jit(c * 0.86, rng, 0.06))
+    if ln > 6 * SS:
+        tip = (x + math.cos(ang) * ln * 0.92, y + math.sin(ang) * ln * 0.92)
+        d.line([(x, y), tip], fill=_jit(np.minimum(c * 1.25 + 12, 255), rng, 0.05), width=max(1, int(0.5 * SS)))
+
+
 def draw_broadleaf(w: int, h: int, seed: int, colors: Sequence[str], leaf_len: tuple[float, float],
                    leaf_w: float, n_leaves: int, twig: str = "#5A4A3A", clumps: int = 7, spread: float = 0.42,
                    flowers: str | None = None, flower_frac: float = 0.0, droop: float = 0.0,
@@ -104,7 +117,13 @@ def draw_broadleaf(w: int, h: int, seed: int, colors: Sequence[str], leaf_len: t
         cx = base[0] + math.sin(a) * r * 0.62
         cy = base[1] - math.cos(a) * r
         centers.append((cx, cy))
-        d.line([base, (cx, cy)], fill=_jit(_hex(twig), rng, 0.1), width=int(3 * SS))
+        mx = (base[0] + cx) / 2 + rng.normal(0, 0.08) * W
+        my = (base[1] + cy) / 2 + rng.normal(0, 0.05) * H
+        pts = [((1 - t) ** 2 * base[0] + 2 * (1 - t) * t * mx + t * t * cx, (1 - t) ** 2 * base[1] + 2 * (1 - t) * t * my + t * t * cy)
+               for t in np.linspace(0, 1, 9)]
+        tw = _jit(_hex(twig), rng, 0.1)
+        for j in range(8):
+            d.line([pts[j], pts[j + 1]], fill=tw, width=max(1, int((3.2 - 2.4 * j / 8) * SS)))
     centers.append((W / 2, H * 0.35))
     for _i in range(n_leaves):
         cx, cy = centers[rng.integers(len(centers))]
@@ -120,7 +139,8 @@ def draw_broadleaf(w: int, h: int, seed: int, colors: Sequence[str], leaf_len: t
         if flowers and rng.random() < flower_frac:
             c = _hex(flowers)
             ln *= 0.6
-        d.polygon(_leaf_poly(x, y, ln, ln * leaf_w, ang), fill=_jit(c, rng, 0.14))
+        depth = 0.72 + 0.28 * _i / n_leaves  # leaves drawn first sit deeper in the cluster: darker
+        _leaf(d, x, y, ln, ln * leaf_w, ang, c * depth, rng)
     return _finish(im, w, h)
 
 
@@ -282,8 +302,8 @@ def build_atlas(path: Path, cells: Sequence[tuple[Cell, Callable]], bark: Callab
 
     atlas = Image.new("RGBA", (TEX, TEX), (90, 100, 60, 0))
     for cell, fn in cells:
-        w = CELL_W * cell.colspan
-        img = fn(w, CELL_H)
+        w = CELL_W // RES * cell.colspan
+        img = fn(w, CELL_H // RES)
         atlas.paste(img, (cell.col * CELL_W, cell.row * CELL_H))
     if bark is not None:
         atlas.paste(bark(TEX - LEAF_W, TEX), (LEAF_W, 0))
@@ -317,16 +337,16 @@ class Plant:
     def __init__(self, cells: dict[str, Cell]):
         self.part = Part()
         self.normals: list[np.ndarray | None] = []  # per vertex (None = automatic)
+        self.kinds: list[int] = []  # per vertex: 0 bark / solid, 1 foliage card
         self.cells = cells
 
-    def _add(self, V: np.ndarray, F: list[list[int]], U: list, N: np.ndarray | None) -> None:
-        off = len(self.part.V)
+    def _add(self, V: np.ndarray, F: list[list[int]], U: list, N: np.ndarray | None, kind: int = 1) -> None:
         self.part.add(Part(np.asarray(V, dtype=float), F, ["foliage"] * len(F), U))
         if N is None:
             self.normals.extend([None] * len(V))
         else:
             self.normals.extend(list(N))
-        del off
+        self.kinds.extend([kind] * len(V))
 
     def tube(self, pts: Sequence[Sequence[float]], radii: Sequence[float], n: int = 6, v_scale: float = 0.08,
              cap: bool = False) -> None:
@@ -363,7 +383,7 @@ class Plant:
             F.append([last + k for k in range(n)])
             U.append([(u0 + 0.01, vs[-1])] * n)
         # outward fix: tubes built with x,y frame are CCW around t -> faces point outward already
-        self._add(np.array(V), F, U, None)
+        self._add(np.array(V), F, U, None, kind=0)
 
     def card(self, center: Sequence[float], normal: Sequence[float], width: float, height: float, cell: str,
              roll: float = 0.0, canopy_center: Sequence[float] | None = None, bend: float = 0.7,
@@ -409,7 +429,8 @@ class Plant:
         self._add(V, F, U, N)
 
     def strip(self, pts: Sequence[Sequence[float]], side: Sequence[float], width: float, cell: str,
-              canopy_center: Sequence[float] | None = None, bend: float = 0.5, fold: float = 0.25) -> None:
+              canopy_center: Sequence[float] | None = None, bend: float = 0.5, fold: float = 0.25, mid: float = 0.32,
+              taper: bool = False) -> None:
         """A V-folded ribbon along a 3D polyline (pinnate palm fronds). Texture u along the ribbon."""
         P = [np.asarray(p, float) for p in pts]
         s = np.asarray(side, float)
@@ -424,7 +445,7 @@ class Plant:
             t /= np.linalg.norm(t)
             up = np.cross(t, s)
             up /= np.linalg.norm(up) + 1e-9
-            w = width * (0.55 + 0.45 * math.sin(math.pi * min(1.0, 0.15 + 0.85 * L[i] / L[-1])))
+            w = width if taper else width * (0.55 + 0.45 * math.sin(math.pi * min(1.0, 0.15 + 0.85 * L[i] / L[-1])))
             V += [p + s * w / 2 - up * fold * w / 2, p + up * 0.02, p - s * w / 2 - up * fold * w / 2]
             uu = u0 + (u1 - u0) * L[i] / L[-1]
             U.append(uu)
@@ -437,7 +458,7 @@ class Plant:
         for i in range(len(P) - 1):
             ua, ub = U[i], U[i + 1]
             # the texture's rachis sits at 32% from the top of the cell: map it to the strip center
-            vr = v1 - (v1 - v0) * 0.32
+            vr = v1 - (v1 - v0) * mid
             UV.append([(ua, v1), (ub, v1), (ub, vr), (ua, vr)])
             UV.append([(ua, vr), (ub, vr), (ub, v0), (ua, v0)])
         del vm
@@ -479,6 +500,27 @@ class Plant:
     def build(self) -> tuple[Part, np.ndarray]:
         N = np.array([n if n is not None else np.zeros(3) for n in self.normals], dtype=float)
         return self.part, N
+
+    def ao(self, inner: float = 0.45, bottom: float = 0.3) -> np.ndarray:
+        """Per-vertex ambient occlusion baked into COLOR_0: cards deep inside the crown and on its
+        underside are darker (self-shadowing a flat card cloud cannot produce); bark under the crown too."""
+        V = self.part.V
+        k = np.array(self.kinds)
+        ao = np.ones(len(V))
+        if not (k == 1).any():
+            return ao
+        C = V[k == 1]
+        lo, hi = np.percentile(C, 2, axis=0), np.percentile(C, 98, axis=0)
+        c = (lo + hi) / 2
+        R = np.maximum((hi - lo) / 2, 0.05)
+        r = np.linalg.norm((V - c) / R, axis=1)
+        zt = np.clip((V[:, 2] - lo[2]) / max(hi[2] - lo[2], 1e-3), 0, 1)
+        t = np.clip((r - 0.15) / 0.8, 0, 1)
+        card = (1 - inner) + inner * t * t * (3 - 2 * t)
+        card *= (1 - bottom) + bottom * zt
+        bark = np.where(V[:, 2] > lo[2] - 0.5, 0.62, 0.85)
+        ao = np.where(k == 1, card, bark)
+        return np.clip(ao, 0.25, 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -530,9 +572,9 @@ def coast_live_oak(tex: Path) -> tuple[Part, np.ndarray, Path]:
     clumps = [((0.0, 0.0, 6.4), (3.6, 3.6, 2.4)), ((3.6, 1.2, 5.4), (2.8, 2.6, 2.0)), ((-3.2, 2.0, 5.6), (2.9, 2.7, 2.0)),
               ((-1.0, -3.5, 5.2), (2.8, 2.6, 1.9)), ((2.6, -2.6, 5.0), (2.4, 2.4, 1.8)), ((-1.8, 3.8, 4.9), (2.3, 2.2, 1.7)),
               ((1.6, 3.4, 6.1), (2.4, 2.3, 1.8)), ((-3.8, -1.4, 4.8), (2.2, 2.3, 1.7))]
-    pl.canopy(rng, clumps, 760, ["a", "b", "c", "d"], (1.6, 2.6), cen, weights=[0.32, 0.28, 0.25, 0.15])
+    pl.canopy(rng, clumps, 1150, ["a", "b", "c", "d"], (1.4, 2.3), cen, weights=[0.32, 0.28, 0.25, 0.15])
     p, N = pl.build()
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
 FAN_CELLS = {"frond": Cell("frond", 0, 0), "old": Cell("old", 1, 0), "skirt": Cell("skirt", 0, 1), "skirt2": Cell("skirt2", 1, 1)}
@@ -567,7 +609,7 @@ def mexican_fan_palm(tex: Path) -> tuple[Part, np.ndarray, Path]:
                 rng.uniform(1.5, 2.0), "skirt" if k % 2 else "skirt2", roll=rng.normal(0, 0.12))
     # crown: ~28 fan fronds on long petioles; blades V-folded and rolled about the petiole
     cen = top + np.array([0, 0, 0.5])
-    n_f = 28
+    n_f = 34
     for k in range(n_f):
         az = k * 2.39996 + rng.normal(0, 0.08)  # golden-angle phyllotaxis
         elev = math.radians(float(np.interp(k / n_f, [0, 0.35, 1], [72, 30, -55])) + rng.normal(0, 6))
@@ -596,7 +638,7 @@ def mexican_fan_palm(tex: Path) -> tuple[Part, np.ndarray, Path]:
         pl.card(hub + dvec * size * 0.42, nrm, size, size * 1.0, "old" if old else "frond", roll=roll,
                 canopy_center=cen, bend=0.4, fold=0.3)
     p, N = pl.build()
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
 QUEEN_CELLS = {"frond": Cell("frond", 0, 0, 2), "frond2": Cell("frond2", 0, 1, 2)}
@@ -617,7 +659,7 @@ def queen_palm(tex: Path) -> tuple[Part, np.ndarray, Path]:
     top = np.array(pts[-1])
     pl.tube([top, top + np.array([0, 0, 0.9])], [0.24, 0.14], n=6, v_scale=0.05)  # green crownshaft
     cen = top + np.array([0, 0, 0.8])
-    n_f = 18
+    n_f = 24
     for k in range(n_f):
         az = k * 2.39996 + rng.normal(0, 0.1)
         elev = math.radians(rng.uniform(15, 70))
@@ -625,14 +667,15 @@ def queen_palm(tex: Path) -> tuple[Part, np.ndarray, Path]:
         d0 = np.array([math.cos(az), math.sin(az), 0.0])
         frond = []
         base = top + np.array([0, 0, 0.8])
-        for i in range(5):
-            t = i / 4
-            ang = elev - t * math.radians(rng.uniform(80, 115))  # arches over and droops
+        droop = math.radians(rng.uniform(80, 115))
+        for i in range(8):
+            t = i / 7
+            ang = elev - t * droop  # arches over and droops
             frond.append(base + d0 * L * 0.85 * t * math.cos(ang * 0.5) + np.array([0, 0, L * 0.5 * math.sin(elev) * t - L * 0.55 * t * t]))
         side = np.array([-math.sin(az), math.cos(az), 0.0])
         pl.strip(frond, side, rng.uniform(1.8, 2.2), "frond" if k % 2 else "frond2", canopy_center=cen, bend=0.5, fold=0.35)
     p, N = pl.build()
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
 EUC_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), "d": Cell("d", 1, 1)}
@@ -660,9 +703,9 @@ def eucalyptus(tex: Path) -> tuple[Part, np.ndarray, Path]:
     clumps = [((3.6, 1.9, 17.4), (2.6, 2.4, 2.4)), ((-1.5, -0.6, 18.6), (2.8, 2.6, 2.4)), ((-3.0, 1.7, 13.4), (2.3, 2.2, 2.1)),
               ((1.9, -1.8, 19.8), (2.3, 2.2, 2.0)), ((0.6, 0.8, 15.6), (2.4, 2.4, 2.2)), ((3.3, -1.0, 10.6), (2.0, 1.9, 1.8)),
               ((-0.4, 2.4, 16.8), (2.0, 2.0, 2.0))]
-    pl.canopy(rng, clumps, 620, ["a", "b", "c", "d"], (1.8, 2.8), cen, bend=0.7, shell=0.35, aspect=1.2)
+    pl.canopy(rng, clumps, 1000, ["a", "b", "c", "d"], (1.6, 2.5), cen, bend=0.7, shell=0.35, aspect=1.2)
     p, N = pl.build()
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
 JAC_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "flower": Cell("flower", 0, 1), "c": Cell("c", 1, 1)}
@@ -688,9 +731,9 @@ def jacaranda(tex: Path) -> tuple[Part, np.ndarray, Path]:
     cen = (0.0, 0.0, 5.0)
     clumps = [((0, 0, 6.8), (3.2, 3.2, 1.5)), ((2.7, 1.2, 6.1), (2.4, 2.3, 1.4)), ((-2.5, 1.7, 6.0), (2.4, 2.3, 1.4)),
               ((-0.4, -2.8, 6.1), (2.4, 2.3, 1.4)), ((2.1, -1.9, 6.0), (2.0, 2.0, 1.3)), ((-2.3, -1.3, 5.8), (2.0, 2.0, 1.3))]
-    pl.canopy(rng, clumps, 620, ["a", "b", "flower", "c"], (1.4, 2.3), cen, weights=[0.33, 0.3, 0.12, 0.25])
+    pl.canopy(rng, clumps, 950, ["a", "b", "flower", "c"], (1.25, 2.0), cen, weights=[0.33, 0.3, 0.12, 0.25])
     p, N = pl.build()
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
 ST_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), "d": Cell("d", 1, 1)}
@@ -714,9 +757,9 @@ def street_tree(tex: Path) -> tuple[Part, np.ndarray, Path]:
     cen = (0.0, 0.0, 5.0)
     clumps = [((0, 0, 5.6), (2.7, 2.7, 2.4)), ((1.2, 0.7, 4.8), (1.9, 1.8, 1.7)), ((-1.2, 0.6, 5.0), (1.9, 1.8, 1.7)),
               ((0.1, -1.3, 4.8), (1.8, 1.8, 1.6)), ((0.2, 0.3, 6.8), (1.7, 1.7, 1.4))]
-    pl.canopy(rng, clumps, 560, ["a", "b", "c", "d"], (1.3, 2.1), cen)
+    pl.canopy(rng, clumps, 950, ["a", "b", "c", "d"], (1.15, 1.8), cen, shell=0.6)
     p, N = pl.build()
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
 SHRUB_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "flower": Cell("flower", 0, 1), "c": Cell("c", 1, 1)}
@@ -736,10 +779,10 @@ def shrub(tex: Path) -> tuple[Part, np.ndarray, Path]:
     pl = Plant(SHRUB_CELLS)
     cen = (0.0, 0.0, 0.3)
     clumps = [((0, 0, 0.65), (0.9, 0.9, 0.6)), ((0.45, 0.25, 0.5), (0.6, 0.6, 0.45)), ((-0.4, -0.3, 0.5), (0.6, 0.55, 0.45))]
-    pl.canopy(rng, clumps, 110, ["a", "b", "flower", "c"], (0.7, 1.0), cen, weights=[0.35, 0.3, 0.1, 0.25], shell=0.4)
+    pl.canopy(rng, clumps, 170, ["a", "b", "flower", "c"], (0.6, 0.9), cen, weights=[0.35, 0.3, 0.1, 0.25], shell=0.4)
     p, N = pl.build()
     p.V[:, 2] = np.maximum(p.V[:, 2], 0.0)
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
 GRASS_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), "d": Cell("d", 1, 1)}
@@ -762,10 +805,359 @@ def ornamental_grass(tex: Path) -> tuple[Part, np.ndarray, Path]:
         pl.card((rng.normal(0, 0.05), rng.normal(0, 0.05), 0.0), nrm, 1.0, 0.85, cell, roll=rng.normal(0, 0.08),
                 canopy_center=(0, 0, -0.3), bend=0.6, anchor="bottom")
     p, N = pl.build()
-    return p, N, path
+    return p, N, path, pl.ao()
 
 
-SPECIES: dict[str, tuple[Callable[[Path], tuple[Part, np.ndarray, Path]], dict]] = {
+
+# ---------------------------------------------------------------------------
+# additional species (2026-10 upgrade): pine, ficus, bougainvillea, agave, hedge, lawn tuft
+# ---------------------------------------------------------------------------
+
+
+def draw_pine_tuft(w: int, h: int, seed: int, colors: Sequence[str], n_tufts: int = 5):  # noqa: ANN201
+    """Canary Island pine: long (25-30 cm) needles in drooping bundles radiating from twig tips."""
+    rng = np.random.default_rng(seed)
+    im, d = _canvas(w, h)
+    W, H = w * SS, h * SS
+    cols = [_hex(c) for c in colors]
+    stem = _hex("#6E5A44")
+    for _t in range(n_tufts):
+        cx, cy = rng.uniform(0.25, 0.75) * W, rng.uniform(0.3, 0.7) * H
+        ang0 = rng.uniform(-0.6, 0.6) - math.pi / 2
+        L = rng.uniform(0.18, 0.3) * H
+        tip = (cx + math.cos(ang0) * L * 0.4, cy + math.sin(ang0) * L * 0.4)
+        d.line([(cx, cy + L * 0.3), tip], fill=_jit(stem, rng, 0.1), width=int(2.4 * SS))
+        for _k in range(rng.integers(140, 200)):
+            a = rng.uniform(0, 2 * math.pi)
+            ln = rng.uniform(0.45, 1.0) * L
+            droop = 0.35 * ln
+            p0 = (tip[0] + rng.normal(0, 2 * SS), tip[1] + rng.normal(0, 2 * SS))
+            p1 = (p0[0] + math.cos(a) * ln * 0.55, p0[1] + math.sin(a) * ln * 0.55 + droop * 0.2)
+            p2 = (p0[0] + math.cos(a) * ln, p0[1] + math.sin(a) * ln * 0.85 + droop)
+            c = cols[rng.integers(len(cols))] * (0.8 + 0.35 * (1 - (p2[1] / H)))
+            d.line([p0, p1, p2], fill=_jit(c, rng, 0.1), width=max(1, int(0.9 * SS)))
+    return _finish(im, w, h)
+
+
+def draw_bracts(w: int, h: int, seed: int, leaf_cols: Sequence[str], bract: str, frac: float):  # noqa: ANN201
+    """Bougainvillea: arching canes with heart-shaped leaves and papery magenta bract clusters."""
+    rng = np.random.default_rng(seed)
+    im, d = _canvas(w, h)
+    W, H = w * SS, h * SS
+    lc = [_hex(c) for c in leaf_cols]
+    bc = _hex(bract)
+    for _c in range(9):
+        x0 = rng.uniform(0.1, 0.9) * W
+        pts = [(x0 + math.sin(t * 2.2 + rng.uniform(0, 3)) * W * 0.2 * t, H * (0.98 - 0.9 * t)) for t in np.linspace(0, 1, 10)]
+        d.line(pts, fill=_jit(_hex("#5C4A35"), rng, 0.1), width=int(1.6 * SS))
+        for _k in range(70):
+            px, py = pts[rng.integers(1, len(pts))]
+            px += rng.normal(0, 12 * SS)
+            py += rng.normal(0, 12 * SS)
+            if rng.random() < frac:  # bract triplet
+                for _b in range(3):
+                    a = rng.uniform(0, 2 * math.pi)
+                    r = rng.uniform(3.5, 5.5) * SS
+                    q = (px + math.cos(a) * r * 0.6, py + math.sin(a) * r * 0.6)
+                    d.polygon(_leaf_poly(q[0], q[1], r * 1.6, r * 0.9, a, n=6), fill=_jit(bc * rng.uniform(0.75, 1.1), rng, 0.08))
+            else:
+                ln = rng.uniform(6, 10) * SS
+                _leaf(d, px, py, ln, ln * 0.6, rng.uniform(0, 2 * math.pi), lc[rng.integers(len(lc))], rng)
+    return _finish(im, w, h)
+
+
+def draw_agave_leaf(w: int, h: int, seed: int, color: str, edge: str):  # noqa: ANN201
+    """Agave americana leaf laid along x (base at x=0, tip at x=w, midline at h/2): thick tapered blade,
+    marginal teeth, terminal spine, pale bud imprints. Mapped by Plant.strip(mid=0.5)."""
+    rng = np.random.default_rng(seed)
+    im, d = _canvas(w, h)
+    W, H = w * SS, h * SS
+    c0, ce = _hex(color), _hex(edge)
+    top, bot = [], []
+    n = 48
+    for i in range(n + 1):
+        t = i / n
+        x = W * (0.01 + 0.95 * t)
+        hw = H * 0.46 * (1 - t) ** 0.85 * (0.7 + 0.3 * math.sin(math.pi * min(1.0, t * 1.7)))
+        tooth = (2.2 * SS) * (i % 3 == 0) * (1 - t) ** 0.5
+        top.append((x, H / 2 - hw - tooth))
+        bot.append((x, H / 2 + hw + tooth))
+    poly = top + bot[::-1]
+    d.polygon(poly, fill=_jit(ce, rng, 0.03))
+    inner = [(x, H / 2 + (y - H / 2) * 0.84) for x, y in poly]
+    d.polygon(inner, fill=_jit(c0, rng, 0.03))
+    for k in range(4):  # bud imprints echo the toothed margin
+        f = 0.5 + 0.11 * k
+        band = [(x, H / 2 + (y - H / 2) * f) for x, y in top]
+        d.line(band, fill=_jit(c0 * 1.12 + 8, rng, 0.02), width=max(1, int(1.0 * SS)))
+    d.line([(W * 0.95, H / 2), (W * 0.999, H / 2)], fill=(60, 45, 32, 255), width=int(2.5 * SS))
+    return _finish(im, w, h)
+
+
+def draw_dense(w: int, h: int, seed: int, colors: Sequence[str], leaf_len: tuple[float, float], n: int = 2600):  # noqa: ANN201
+    """Opaque clipped-hedge surface: a dark leafy background fully covered with small leaves."""
+    rng = np.random.default_rng(seed)
+    im, d = _canvas(w, h)
+    W, H = w * SS, h * SS
+    cols = [_hex(c) for c in colors]
+    d.rectangle([0, 0, W, H], fill=tuple(int(v) for v in cols[0] * 0.55) + (255,))
+    for i in range(n):
+        x, y = rng.uniform(0, W), rng.uniform(0, H)
+        ln = rng.uniform(*leaf_len) * SS
+        _leaf(d, x, y, ln, ln * 0.55, rng.uniform(0, 2 * math.pi), cols[rng.integers(len(cols))] * (0.7 + 0.3 * i / n), rng)
+    return _finish(im, w, h)
+
+
+def draw_bark_plated(w: int, h: int, seed: int):  # noqa: ANN201
+    """Canary Island pine: thick reddish-brown bark broken into irregular plates with dark fissures."""
+    from PIL import Image
+
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    n = rng.random((h // 6 + 2, w // 6 + 2)).astype(np.float32)
+    nimg = np.asarray(Image.fromarray((n * 255).astype(np.uint8)).resize((w, h), Image.BICUBIC)).astype(np.float32) / 255
+    plates = np.abs(np.sin(xx / w * math.pi * 7 + nimg * 4)) * np.abs(np.sin(yy / 37.0 + nimg * 3 + (xx // 18) * 1.7))
+    t = np.clip((0.18 - plates) * 6, 0, 1)
+    base = _hex("#7A5440") * (0.8 + 0.35 * nimg[..., None])
+    img = base * (1 - t[..., None]) + _hex("#2E211A") * t[..., None]
+    out = np.concatenate([np.clip(img, 0, 255), np.full((h, w, 1), 255.0)], axis=-1).astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
+
+
+PINE_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), "d": Cell("d", 1, 1)}
+
+
+def canary_pine(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
+    """Pinus canariensis: ~20 m, straight trunk, short tiered branches with long drooping needle tufts,
+    columnar-irregular crown ~6 m wide, epicormic tufts on the trunk."""
+    cols = ["#4F6E3E", "#5E7F4A", "#6B8A55", "#466238"]
+    path = build_atlas(tex, [
+        (PINE_CELLS["a"], lambda w, h: draw_pine_tuft(w, h, 91, cols, 5)),
+        (PINE_CELLS["b"], lambda w, h: draw_pine_tuft(w, h, 92, cols, 4)),
+        (PINE_CELLS["c"], lambda w, h: draw_pine_tuft(w, h, 93, cols[1:], 6)),
+        (PINE_CELLS["d"], lambda w, h: draw_pine_tuft(w, h, 94, cols[:3], 3)),
+    ], lambda w, h: draw_bark_plated(w, h, 95))
+    rng = np.random.default_rng(909)
+    pl = Plant(PINE_CELLS)
+    H = 19.5
+    trunk = [(0.25 * (i / 8) ** 2, 0.1 * (i / 8) ** 2, -0.3 + (H + 0.3) * i / 8) for i in range(9)]
+    pl.tube(trunk, [0.42, 0.36, 0.32, 0.28, 0.24, 0.2, 0.16, 0.12, 0.08], n=7, v_scale=0.05)
+    tip_cards: list[tuple[np.ndarray, np.ndarray]] = []
+    z = 4.5
+    k = 0
+    while z < H - 0.6:
+        t = (z - 4.5) / (H - 4.5)
+        nb = int(rng.integers(3, 5))
+        L = 2.9 * (1 - t) ** 0.6 + 0.7
+        az0 = rng.uniform(0, 2 * math.pi)
+        tz = np.interp(z, [p[2] for p in trunk], [p[0] for p in trunk]), np.interp(z, [p[2] for p in trunk], [p[1] for p in trunk])
+        for b in range(nb):
+            az = az0 + 2 * math.pi * b / nb + rng.normal(0, 0.3)
+            d0 = np.array([math.cos(az), math.sin(az), 0.0])
+            base = np.array([tz[0], tz[1], z])
+            Lb = L * rng.uniform(0.7, 1.15)
+            end = base + d0 * Lb + np.array([0, 0, rng.uniform(0.2, 0.9)])
+            pts = _limb(pl, base, end, 0.09 * (1 - t) + 0.04, 0.025, n=4, segs=2, bend=0.25, v_scale=0.05)
+            for s_ in np.linspace(0.35, 1.0, max(2, int(Lb / 0.45))):
+                q = base + (end - base) * s_
+                tip_cards.append((q, d0))
+            k += 1
+        z += rng.uniform(1.0, 1.5)
+    cen = (0.2, 0.1, H * 0.62)
+    for q, d0 in tip_cards:
+        for _ in range(3):
+            nrm = d0 * 0.7 + rng.normal(size=3) * 0.6 + np.array([0, 0, 0.3])
+            sz = rng.uniform(1.1, 1.6)
+            pl.card(q + rng.normal(size=3) * 0.25, nrm, sz, sz * 1.14, "abcd"[rng.integers(4)], roll=rng.uniform(-0.8, 0.8),
+                    canopy_center=cen, bend=0.6)
+    for _ in range(26):  # top tuft cluster and epicormic tufts on the trunk
+        zz = rng.uniform(H - 1.2, H + 0.6) if rng.random() < 0.6 else rng.uniform(2.5, H - 2)
+        tx = np.interp(zz, [p[2] for p in trunk], [p[0] for p in trunk])
+        ty = np.interp(zz, [p[2] for p in trunk], [p[1] for p in trunk])
+        sz = rng.uniform(0.9, 1.4) if zz > H - 2 else rng.uniform(0.6, 0.9)
+        pl.card((tx + rng.normal(0, 0.3), ty + rng.normal(0, 0.3), zz), rng.normal(size=3) + np.array([0, 0, 0.4]), sz, sz * 1.14,
+                "abcd"[rng.integers(4)], roll=rng.uniform(-1, 1), canopy_center=cen, bend=0.5)
+    p, N = pl.build()
+    return p, N, path, pl.ao(inner=0.35)
+
+
+FICUS_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), "d": Cell("d", 1, 1)}
+
+
+def ficus(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
+    """Indian laurel fig (Ficus microcarpa 'Nitida'): commercial / parking-lot tree, ~8 m, dense clipped
+    dome of small glossy leaves, smooth pale gray trunk branching low."""
+    cols = ["#2F4F22", "#3A5E28", "#467030", "#2A4720"]
+    path = build_atlas(tex, [
+        (FICUS_CELLS["a"], lambda w, h: draw_broadleaf(w, h, 101, cols, (6, 9), 0.5, 1700, twig="#3E3A30", clumps=8, spread=0.55)),
+        (FICUS_CELLS["b"], lambda w, h: draw_broadleaf(w, h, 102, cols, (6, 9), 0.5, 1600, twig="#3E3A30", clumps=8, spread=0.55)),
+        (FICUS_CELLS["c"], lambda w, h: draw_broadleaf(w, h, 103, cols[1:], (6, 9), 0.5, 1500, twig="#3E3A30", spread=0.6, sun_bias=0.35)),
+        (FICUS_CELLS["d"], lambda w, h: draw_broadleaf(w, h, 104, cols[:3], (5, 8), 0.5, 1400, clumps=9, spread=0.6)),
+    ], lambda w, h: draw_bark(w, h, 105, "#9A968C", "#6F6B63", "#B4B0A6", "patchy"))
+    rng = np.random.default_rng(1010)
+    pl = Plant(FICUS_CELLS)
+    pl.tube([(0, 0, -0.3), (0.02, 0.0, 0.9), (0.05, 0.02, 1.8)], [0.36, 0.3, 0.26], n=7, v_scale=0.1)
+    for a, b in [((0.05, 0.02, 1.7), (1.8, 0.7, 3.6)), ((0.05, 0.02, 1.7), (-1.6, 1.0, 3.8)), ((0.05, 0.02, 1.7), (-0.3, -1.9, 3.7)),
+                 ((0.05, 0.02, 1.7), (1.2, -1.4, 4.1)), ((0.05, 0.02, 1.8), (0.1, 0.3, 4.6))]:
+        pts = _limb(pl, a, b, 0.15, 0.06, n=5, segs=2, bend=0.25, rng=rng)
+        _limb(pl, pts[-1], np.asarray(pts[-1]) + np.array([0, 0, 1.0]) + rng.normal(size=3) * 0.7, 0.05, 0.02, n=3, segs=1, bend=0)
+    cen = (0.0, 0.0, 4.8)
+    clumps = [((0, 0, 5.3), (3.6, 3.6, 2.6)), ((1.6, 0.8, 4.9), (2.4, 2.3, 2.0)), ((-1.5, 0.9, 5.0), (2.4, 2.3, 2.0)),
+              ((0.0, -1.7, 4.9), (2.3, 2.3, 1.9)), ((0.3, 0.3, 6.6), (2.4, 2.4, 1.6))]
+    pl.canopy(rng, clumps, 1350, ["a", "b", "c", "d"], (1.0, 1.6), cen, shell=0.8, outward=0.85, bend=0.8)
+    p, N = pl.build()
+    return p, N, path, pl.ao(inner=0.55)
+
+
+BOUG_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), "d": Cell("d", 1, 1)}
+
+
+def bougainvillea(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
+    """Bougainvillea mound (walls, slopes, entries): ~2.2 m tall, 3 m wide, arching canes, magenta bracts."""
+    lc = ["#3E6127", "#4A6F2E", "#355421"]
+    path = build_atlas(tex, [
+        (BOUG_CELLS["a"], lambda w, h: draw_bracts(w, h, 111, lc, "#C81E6E", 0.55)),
+        (BOUG_CELLS["b"], lambda w, h: draw_bracts(w, h, 112, lc, "#D42A7E", 0.45)),
+        (BOUG_CELLS["c"], lambda w, h: draw_bracts(w, h, 113, lc, "#B5185F", 0.7)),
+        (BOUG_CELLS["d"], lambda w, h: draw_bracts(w, h, 114, lc, "#D23F86", 0.3)),
+    ], lambda w, h: draw_bark(w, h, 115, "#6B5A48", "#3E332A", "#857260", "fissured"))
+    rng = np.random.default_rng(1111)
+    pl = Plant(BOUG_CELLS)
+    for k in range(7):  # arching canes
+        az = 2 * math.pi * k / 7 + rng.normal(0, 0.2)
+        d0 = np.array([math.cos(az), math.sin(az), 0.0])
+        pts = [d0 * 1.4 * t + np.array([0, 0, 2.0 * math.sin(math.pi * 0.7 * t) * (1 - 0.3 * t)]) for t in np.linspace(0, 1, 5)]
+        pl.tube(pts, [0.05, 0.04, 0.03, 0.02, 0.015], n=4, v_scale=0.1)
+    cen = (0.0, 0.0, 0.7)
+    clumps = [((0, 0, 1.2), (1.3, 1.3, 0.9)), ((0.8, 0.4, 0.9), (0.9, 0.9, 0.7)), ((-0.8, -0.3, 0.8), (0.9, 0.9, 0.7)),
+              ((0.2, -0.8, 1.5), (0.8, 0.8, 0.6))]
+    pl.canopy(rng, clumps, 300, ["a", "b", "c", "d"], (0.8, 1.2), cen, shell=0.45)
+    p, N = pl.build()
+    p.V[:, 2] = np.maximum(p.V[:, 2], 0.0)
+    return p, N, path, pl.ao(inner=0.4)
+
+
+AGAVE_CELLS = {"leaf": Cell("leaf", 0, 0), "leaf2": Cell("leaf2", 1, 0), "small": Cell("small", 0, 1), "gravel": Cell("gravel", 1, 1)}
+
+
+def agave_cluster(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
+    """Agave americana rosettes with pups and small echeveria (front-yard xeriscape): leaves are
+    V-folded tapered blades (geometry), alpha-cut by the drawn teeth."""
+    path = build_atlas(tex, [
+        (AGAVE_CELLS["leaf"], lambda w, h: draw_agave_leaf(w, h, 121, "#7E9C90", "#B9B48A")),
+        (AGAVE_CELLS["leaf2"], lambda w, h: draw_agave_leaf(w, h, 122, "#6F8E86", "#A9A47C")),
+        (AGAVE_CELLS["small"], lambda w, h: draw_agave_leaf(w, h, 123, "#8DA79A", "#C4A6A0")),
+        (AGAVE_CELLS["gravel"], lambda w, h: draw_dense(w, h, 124, ["#9C9284", "#B3A996", "#857B6E"], (3, 5), 1800)),
+    ], None)
+    rng = np.random.default_rng(1212)
+    pl = Plant(AGAVE_CELLS)
+
+    def rosette(cx: float, cy: float, scale: float, n: int, cell: str) -> None:
+        for i in range(n):
+            az = i * 2.39996 + rng.normal(0, 0.05)
+            t = i / n
+            elev = math.radians(80 - 65 * t + rng.normal(0, 4))  # inner leaves upright, outer leaves spread
+            L = scale * (0.55 + 0.45 * math.sin(math.pi * min(1, 0.25 + t)))
+            dvec = np.array([math.cos(az) * math.cos(elev), math.sin(az) * math.cos(elev), math.sin(elev)])
+            side = np.array([-math.sin(az), math.cos(az), 0.0])
+            pts = []
+            for k in range(6):
+                s_ = k / 5
+                curl = np.array([0, 0, -0.18 * L * s_ * s_]) if elev < math.radians(45) else np.zeros(3)
+                pts.append(np.array([cx, cy, 0.05]) + dvec * L * s_ + curl)
+            pl.strip(pts, side, L * 0.3, cell, canopy_center=(cx, cy, -0.3 * scale), bend=0.35, fold=0.45, mid=0.5, taper=True)
+
+    rosette(0.0, 0.0, 0.95, 22, "leaf")
+    rosette(0.95, 0.35, 0.55, 15, "leaf2")
+    rosette(-0.7, 0.75, 0.45, 13, "leaf2")
+    for _ in range(5):  # echeveria-like small rosettes
+        a, r = rng.uniform(0, 2 * math.pi), rng.uniform(0.9, 1.4)
+        rosette(math.cos(a) * r, math.sin(a) * r, 0.16, 9, "small")
+    p, N = pl.build()
+    return p, N, path, pl.ao(inner=0.3, bottom=0.25)
+
+
+HEDGE_CELLS = {"dense": Cell("dense", 0, 0), "dense2": Cell("dense2", 1, 0), "tuft": Cell("tuft", 0, 1), "tuft2": Cell("tuft2", 1, 1)}
+
+
+def hedge(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
+    """Clipped hedge segment (pittosporum / podocarpus / boxwood): 2.0 m long along the prop's x axis,
+    0.9 m wide, 1.3 m tall. An opaque leafy box plus fuzzy cards on its faces; tile segments end to end."""
+    cols = ["#2F4D22", "#3B5D28", "#476C30", "#2A451E"]
+    path = build_atlas(tex, [
+        (HEDGE_CELLS["dense"], lambda w, h: draw_dense(w, h, 131, cols, (5, 8))),
+        (HEDGE_CELLS["dense2"], lambda w, h: draw_dense(w, h, 132, cols[1:] + cols[:1], (5, 8))),
+        (HEDGE_CELLS["tuft"], lambda w, h: draw_broadleaf(w, h, 133, cols, (5, 8), 0.55, 1200, clumps=9, spread=0.7)),
+        (HEDGE_CELLS["tuft2"], lambda w, h: draw_broadleaf(w, h, 134, cols[1:], (5, 8), 0.55, 1100, clumps=9, spread=0.7)),
+    ], None)
+    rng = np.random.default_rng(1313)
+    pl = Plant(HEDGE_CELLS)
+    L, W, H = 2.0, 0.9, 1.3
+    hx, hy = L / 2, W / 2
+    corners = [(-hx, -hy), (hx, -hy), (hx, hy), (-hx, hy)]
+    u0, v0, u1, v1 = cell_uv(HEDGE_CELLS["dense"])
+    for i in range(4):  # sides
+        (ax, ay), (bx, by) = corners[i], corners[(i + 1) % 4]
+        V = np.array([(ax, ay, 0.0), (bx, by, 0.0), (bx, by, H), (ax, ay, H)])
+        seg = math.hypot(bx - ax, by - ay)
+        uu = u0 + (u1 - u0) * min(1.0, seg / 2.0)
+        pl._add(V, [[0, 1, 2, 3]], [[(u0, v0), (uu, v0), (uu, v1), (u0, v1)]], None, kind=0)
+    V = np.array([(-hx, -hy, H), (hx, -hy, H), (hx, hy, H), (-hx, hy, H)])
+    pl._add(V, [[0, 1, 2, 3]], [[(u0, v0), (u1, v0), (u1, v0 + (v1 - v0) * 0.45), (u0, v0 + (v1 - v0) * 0.45)]], None, kind=0)
+    cen = (0.0, 0.0, H * 0.45)
+    for _ in range(170):  # fuzz: cards just outside the faces, leaning outward
+        face = rng.integers(5)
+        if face == 4:
+            pt = np.array([rng.uniform(-hx, hx), rng.uniform(-hy, hy), H - 0.02])
+            nrm = np.array([0, 0, 1.0]) + rng.normal(size=3) * 0.2
+        else:
+            (ax, ay), (bx, by) = corners[face], corners[(face + 1) % 4]
+            t = rng.uniform(0, 1)
+            out = np.array([by - ay, -(bx - ax), 0.0])
+            out /= np.linalg.norm(out)
+            pt = np.array([ax + (bx - ax) * t, ay + (by - ay) * t, rng.uniform(0.15, H - 0.05)]) + out * 0.04
+            nrm = out + rng.normal(size=3) * 0.5
+        sz = rng.uniform(0.35, 0.55)
+        pl.card(pt, nrm, sz, sz * 1.14, "tuft" if rng.random() < 0.5 else "tuft2", roll=rng.uniform(-1, 1), canopy_center=cen, bend=0.5)
+    p, N = pl.build()
+    return p, N, path, pl.ao(inner=0.25, bottom=0.35)
+
+
+TUFT_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), "d": Cell("d", 1, 1)}
+
+
+def lawn_tuft(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
+    """Lawn grass tuft (3 crossed cards, ~0.22 m) for procedural near-camera scattering over lawns."""
+    path = build_atlas(tex, [
+        (TUFT_CELLS["a"], lambda w, h: draw_grass(w, h, 141, ["#4E7A2E", "#5E8A36", "#3F6A26"], n=220)),
+        (TUFT_CELLS["b"], lambda w, h: draw_grass(w, h, 142, ["#557F31", "#6B9440", "#46702A"], n=200)),
+        (TUFT_CELLS["c"], lambda w, h: draw_grass(w, h, 143, ["#5A8034", "#77984A", "#4A7029"], n=180)),
+        (TUFT_CELLS["d"], lambda w, h: draw_grass(w, h, 144, ["#62853A", "#85A050", "#557A30"], n=160)),
+    ], None)
+    rng = np.random.default_rng(1414)
+    pl = Plant(TUFT_CELLS)
+    for k in range(3):
+        az = math.pi * k / 3 + rng.normal(0, 0.1)
+        nrm = np.array([math.cos(az), math.sin(az), 0.1])
+        pl.card((0, 0, 0.0), nrm, 0.32, 0.22, "abcd"[k], canopy_center=(0, 0, -0.3), bend=0.7, anchor="bottom")
+    p, N = pl.build()
+    return p, N, path, np.clip(0.55 + 0.45 * p.V[:, 2] / 0.22, 0, 1)
+
+
+@dataclass
+class Built:
+    part: Part
+    normals: np.ndarray
+    tex: Path
+    ao: np.ndarray
+
+
+def build(tid: str, tex: Path) -> Built:
+    fn, _ = SPECIES[tid]
+    part, normals, path, ao = fn(tex)
+    return Built(part, normals, path, ao)
+
+SPECIES: dict[str, tuple[Callable[[Path], tuple[Part, np.ndarray, Path, np.ndarray]], dict]] = {
     "tree_oak": (coast_live_oak, {"kind": "tree", "height_m": 9.0, "radius_m": 6.0,
                                   "notes": "Coast live oak (Quercus agrifolia): canyons, slopes, open space edges, large yards"}),
     "tree_palm_fan": (mexican_fan_palm, {"kind": "tree", "height_m": 17.5, "radius_m": 2.4,
@@ -777,9 +1169,21 @@ SPECIES: dict[str, tuple[Callable[[Path], tuple[Part, np.ndarray, Path]], dict]]
     "tree_jacaranda": (jacaranda, {"kind": "tree", "height_m": 8.3, "radius_m": 5.0,
                                    "notes": "Jacaranda (green in autumn, sparse late bloom): residential streets and yards"}),
     "tree_street": (street_tree, {"kind": "tree", "height_m": 8.2, "radius_m": 3.6,
-                                  "notes": "Broadleaf parkway tree (Brisbane box / Chinese elm / pistache class)"}),
+                                  "notes": "Brisbane box (Lophostemon confertus) parkway tree; stands in for elm / pistache"}),
+    "tree_ficus": (ficus, {"kind": "tree", "height_m": 8.0, "radius_m": 4.0,
+                           "notes": "Indian laurel fig (Ficus microcarpa): commercial centers, parking lots, clipped domes"}),
+    "tree_pine_canary": (canary_pine, {"kind": "tree", "height_m": 20.0, "radius_m": 3.5,
+                                       "notes": "Canary Island pine (Pinus canariensis): parks, slopes, school edges, older streets"}),
     "shrub": (shrub, {"kind": "shrub", "height_m": 1.3, "radius_m": 1.2,
                       "notes": "Irrigated landscape shrub mound with bougainvillea-pink accents"}),
     "grass_ornamental": (ornamental_grass, {"kind": "shrub", "height_m": 0.9, "radius_m": 0.6,
                                             "notes": "Ornamental bunch grass (drought-tolerant front-yard planting)"}),
+    "shrub_bougainvillea": (bougainvillea, {"kind": "shrub", "height_m": 2.2, "radius_m": 1.6,
+                                            "notes": "Bougainvillea mound (magenta bracts): walls, entries, slopes"}),
+    "succulent_agave": (agave_cluster, {"kind": "shrub", "height_m": 1.1, "radius_m": 1.5,
+                                        "notes": "Agave americana rosettes + echeveria (xeriscape front yards, medians)"}),
+    "hedge": (hedge, {"kind": "shrub", "height_m": 1.3, "radius_m": 1.1,
+                      "notes": "Clipped hedge SEGMENT 2.0 m along local x (0.9 m wide): tile end to end along lot lines"}),
+    "grass_tuft": (lawn_tuft, {"kind": "groundcover", "height_m": 0.22, "radius_m": 0.17,
+                               "notes": "Lawn grass tuft for procedural near-camera scattering over lawn ground (not placed)"}),
 }

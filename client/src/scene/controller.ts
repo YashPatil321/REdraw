@@ -26,10 +26,11 @@ import { RoadDetails } from './roadDetails';
 import { loadStaticProps, loadVehicleProps, type StaticProps } from './props';
 import { Viewer } from './viewer';
 import { World } from './world';
+import { buildingUniforms } from './buildingMaterial';
+import { MaterialLibrary } from './materials';
 
 const SNAP_EDGE_M = 250;
 const SNAP_NODE_M = 250;
-const RENDER_MODE_KEY = 'redraw-render-mode';
 
 export class SceneController {
   readonly viewer: Viewer;
@@ -63,6 +64,11 @@ export class SceneController {
   private tileSource: TileSource | null = null;
   private roadDetails: RoadDetails | null = null;
   private staticProps: StaticProps | null = null;
+
+  /** PBR atlases (assets/materials), loaded with the world */
+  materials: MaterialLibrary | null = null;
+  private netResolve: () => void = () => undefined;
+  private netReady = new Promise<void>((r) => (this.netResolve = r));
 
   constructor(container: HTMLElement) {
     this.viewer = new Viewer(container);
@@ -131,7 +137,7 @@ export class SceneController {
     const qs = QUALITY[q];
     this.viewer.setQuality(q);
     this.applySkyQuality(q);
-    this.world.applyQuality(qs);
+    this.world.applyQuality({ ...qs, interiors: qs.interiors });
     this.staticProps?.setDrawDistance(qs.propDrawDistance);
     this.staticProps?.setShadows(qs.shadows);
     this.baseline?.setCastShadows(qs.carShadows && qs.shadows);
@@ -201,39 +207,24 @@ export class SceneController {
     this.applyVisibility(store.get());
   }
 
-  /** Photoreal source: `?tiles=<tileset.json>` (dev / fixtures) or a Google key. Default mode follows. */
+  /**
+   * One world: Google Photorealistic 3D Tiles are the surface whenever a key
+   * (or a dev `?tiles=<tileset.json>`) is available; otherwise our open-data
+   * meshes. No user-facing mode switch. (`?mode=open` is a developer override.)
+   */
   private initPhotorealSource(): void {
     const params = new URLSearchParams(location.search);
     const url = params.get('tiles');
     const key = browserGoogleKey();
     if (url) this.tileSource = { kind: 'url', url: new URL(url, location.href).toString() };
     else if (key.key) this.tileSource = { kind: 'google', key: key.key };
-    let pref: string | null = params.get('mode');
-    if (!pref) {
-      try {
-        pref = localStorage.getItem(RENDER_MODE_KEY);
-      } catch {
-        pref = null;
-      }
-    }
     const available = this.tileSource !== null;
-    const mode: RenderMode = available && pref !== 'open' ? 'photoreal' : 'open';
+    const mode: RenderMode = available && params.get('mode') !== 'open' ? 'photoreal' : 'open';
     store.set({
       photoreal: { available, source: this.tileSource?.kind ?? null, status: '', error: null },
       renderMode: mode,
     });
     if (mode === 'photoreal') this.applyRenderMode(store.get());
-  }
-
-  /** Top-bar toggle. */
-  setRenderMode(mode: RenderMode): void {
-    if (mode === 'photoreal' && !this.tileSource) return;
-    try {
-      localStorage.setItem(RENDER_MODE_KEY, mode);
-    } catch {
-      /* ignore */
-    }
-    store.set({ renderMode: mode });
   }
 
   private get photoreal(): boolean {
@@ -257,8 +248,9 @@ export class SceneController {
           onStatus: (msg) => store.set((s) => ({ photoreal: { ...s.photoreal, status: msg } })),
           onAttribution: (a) => store.set({ attribution: a }),
           onError: (msg) => {
+            // silently fall back to the open-data world (bad key, quota, network)
+            console.warn(`[photoreal] ${msg} Falling back to the open-data world.`);
             store.set((s) => ({ photoreal: { ...s.photoreal, error: msg, status: '' }, renderMode: 'open' }));
-            toast(`${msg} Showing open data instead.`, 'error', 12000);
           },
           onDrape: () => {
             if (this.net) adjTexture(this.net).needsUpdate = true;
@@ -322,6 +314,20 @@ export class SceneController {
       const manifest = await api.getManifest(meta);
       void this.loadCredits(manifest.terrain_meta);
       store.set({ worldStatus: 'Loading world…' });
+      const fetchAsset = this.materialFetcher(meta);
+      const qs = QUALITY[store.get().quality];
+      this.materials = await MaterialLibrary.load(fetchAsset, { half: store.get().quality === 'low', anisotropy: qs.anisotropy }).catch(() => null);
+      this.world.materials = this.materials;
+      this.world.terrainDetail = qs.terrainDetail;
+      this.world.streetReady = this.netReady;
+      this.world.streetDir = (x, z) => {
+        const hit = this.net?.nearestEdge(x, z, 90, (e) => !/^(motorway|trunk|service)/.test(this.net!.edges[e]?.highway ?? ''));
+        if (!hit) return null;
+        const dx = hit.x - x;
+        const dz = hit.z - z;
+        const l = Math.hypot(dx, dz);
+        return l > 0.5 ? { dx: dx / l, dz: dz / l } : null;
+      };
       await this.world.load(manifest, (rel) => api.getAsset(meta, rel), (msg) => store.set({ worldStatus: msg }));
       this.world.applyQuality(QUALITY[store.get().quality]);
       store.set({ worldStatus: '' });
@@ -340,6 +346,17 @@ export class SceneController {
     void this.loadProps();
     // re-place school pins on the terrain if their y is missing
     this.openingShot();
+  }
+
+  /** Asset fetcher for the material atlases (`?materials=dev` reads /dev-materials/ for local testing). */
+  private materialFetcher(meta: WorldMeta): (rel: string) => Promise<ArrayBuffer> {
+    const dev = new URLSearchParams(location.search).get('materials') === 'dev';
+    if (!dev) return (rel) => api.getAsset(meta, rel);
+    return async (rel) => {
+      const r = await fetch(`/dev-${rel}`);
+      if (!r.ok) throw new Error(`${r.status} ${rel}`);
+      return await r.arrayBuffer();
+    };
   }
 
   /** Attribution strings for the open-data base map, from the asset sources (never hardcoded). */
@@ -371,6 +388,7 @@ export class SceneController {
 
   setNetwork(net: RoadNetwork): void {
     this.net = net;
+    this.netResolve();
     this.overlayGeom?.dispose();
     this.overlayGeom = buildRoadOverlayGeometry(net);
     this.arterials = new ArterialLabels(net);
@@ -542,6 +560,9 @@ export class SceneController {
       this.viewer.camera.updateMatrixWorld();
       this.sky.update(this.clockT, this.viewer.renderer, this.viewer.camera);
       const dark = Math.max(this.sky.darkness, this.sky.dim);
+      buildingUniforms.uNight.value = this.sky.darkness;
+      // interiors: a fraction of the outdoor horizon radiance
+      buildingUniforms.uInterior.value.copy(this.sky.horizon).multiplyScalar(0.55).lerp(new THREE.Color(0.02, 0.018, 0.015), this.sky.darkness * 0.7);
       vehicleLightUniforms.uHead.value = 1.2 + 4.5 * dark;
       vehicleLightUniforms.uTail.value = 0.9 + 3.2 * dark;
     }

@@ -227,7 +227,7 @@ export class RdApp extends LitElement {
       <main>
         ${content}
         ${s.worldStatus ? html`<div class="status">${s.worldStatus}</div>` : nothing}
-        ${s.renderMode === 'photoreal' && s.photoreal.status ? html`<div class="photo-status" role="status">${s.photoreal.status}</div>` : nothing}
+        ${s.renderMode === 'photoreal' && s.photoreal.status && !s.worldStatus ? html`<div class="photo-status" role="status">${s.photoreal.status}</div>` : nothing}
         ${s.walking ? html`<div class="walkhud"><rd-camera-tools></rd-camera-tools></div>` : nothing}
         <div class="attr"><rd-attribution></rd-attribution></div>
         <div class="toasts"><rd-toasts></rd-toasts></div>

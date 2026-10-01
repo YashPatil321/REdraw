@@ -26,7 +26,7 @@ from pipeline.build_terrain import Terrain
 from pipeline.common import TileGrid, log
 from pipeline.config import assumption
 from pipeline.geo import scene_origin
-from pipeline.glb import MeshData, load_glb_meshes, write_glb
+from pipeline.glb import MeshData, id_attribute, load_glb_meshes, write_glb
 
 HERO_DIR = Path(__file__).resolve().parent / "hero_overrides"
 WALL_SINK_M = 0.5  # walls start this far below the lowest footprint corner so slopes never show gaps
@@ -715,60 +715,295 @@ def simplify_tolerance_for_budget(polys: list[Polygon], kinds: list[str], budget
     return SIMPLIFY_STEPS_M[-1]
 
 
+@dataclass
+class BShape:
+    """Styled geometry plan of one (non-hero) building, scene coordinates."""
+
+    id: int
+    type: str
+    tile: str
+    walls: Polygon  # outline the walls follow (orthogonalized for pitched roofs)
+    rects: list[np.ndarray]  # roof rectangles (pitched) or []
+    roof: str  # 'hipped' | 'gabled' | 'flat'
+    base_y: float  # finished floor
+    bottom_y: float  # wall bottom (below the lowest ground under the footprint)
+    wall_top: float  # eave line (pitched) or roof deck (flat)
+    parapet: float
+    levels: int
+    height_m: float  # base to highest point
+    wall_rgb: tuple[int, int, int]
+    roof_rgb: tuple[int, int, int]
+    wall_var: int
+    roof_var: int
+
+
+@dataclass
+class Frontage:
+    """Street side of a house (from build_streets): outward wall normal toward the street and,
+    when a driveway was inferred, the garage door center on the wall line."""
+
+    nx: float
+    nz: float
+    garage: tuple[float, float] | None = None
+    garage_width: float = 0.0
+
+
+MATERIAL_VARIANTS = {  # fallback = blender/rdlib/matgen.py MAT_IDS order (materials_manifest.json wins)
+    0: ["stucco_smooth", "stucco_sand", "stucco_lace", "stucco_catface", "stucco_weathered", "stucco_scored", "stone_veneer"],
+    1: ["s_tile_terracotta", "s_tile_blend", "s_tile_brown", "s_tile_aged", "barrel_mission", "flat_tile_brown", "flat_tile_grey", "flat_tile_charcoal", "flat_tile_sandstone", "solar_panel"],
+    2: ["flat_tpo", "flat_tpo_grime", "flat_gravel", "flat_modbit", "concrete_deck", "standing_seam"],
+    3: ["glass_curtain"],
+    4: ["stucco_smooth", "stone_veneer"],
+    5: ["garage_2car", "garage_3car"],
+}
+
+
+def materials_manifest(assets: Path | None = None) -> dict[str, Any] | None:
+    from pipeline.config import assets_dir
+
+    p = (assets or assets_dir()) / "materials" / "materials_manifest.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def variant_index(mat: int, name: str, manifest: dict[str, Any] | None = None) -> int:
+    """_VARIANT index of a named material variant (materials_manifest.json, else the fallback list)."""
+    names = None
+    if manifest is not None:
+        names = manifest.get("materials", {}).get(str(mat), {}).get("variants")
+    names = names or MATERIAL_VARIANTS[mat]
+    return names.index(name) if name in names else 0
+
+
+TRIM_RGB = (238, 234, 224)
+GLASS_RGB = (64, 74, 84)
+GARAGE_RGB = (232, 228, 218)
+FLAT_ROOF_RGB = {"commercial": (196, 196, 192), "school": (170, 168, 162), "apartments": (180, 178, 172), "other": (150, 148, 144), "house": (170, 168, 162)}
+PITCHED_TYPES = {"house", "apartments"}
+
+
+def _pick(rng: np.random.Generator, keys: list[Any], weights: list[float]) -> Any:
+    w = np.asarray(weights, dtype=np.float64)
+    return keys[int(rng.choice(len(keys), p=w / w.sum()))]
+
+
+def building_shapes(bdf: gpd.GeoDataFrame, terrain: Terrain, heroes: list[Hero] | None = None, manifest: dict[str, Any] | None = None) -> dict[int, BShape]:
+    """Per-building styling + roof plans (seeded per building id, assumptions building_style.*)."""
+    from pipeline.building_geom import roof_plan
+
+    seed = int(assumption("building_style.seed"))
+    pitch = float(assumption("building_style.roof_pitch_deg"))
+    t = math.tan(math.radians(pitch))
+    story = float(assumption("building_style.house_story_height_m"))
+    slab = float(assumption("building_style.slab_height_m"))
+    two = float(assumption("building_style.house_two_story_share"))
+    gable_share = float(assumption("building_style.gable_share"))
+    cstory = float(assumption("building_style.commercial_story_height_m"))
+    pal = assumption("building_style.wall_palette")
+    pal_rgb = [tuple(int(c) for c in p_["rgb"]) for p_ in pal]
+    pal_w = [float(p_["share"]) for p_ in pal]
+    roofs = dict(assumption("building_style.tile_roof_variants"))
+    roof_rgb = dict(assumption("building_style.tile_roof_rgb"))
+    par = {"commercial": float(assumption("building_style.parapet_height_m.commercial")), "school": float(assumption("building_style.parapet_height_m.school"))}
+    hero_ids = {h.building_id for h in heroes or []}
+    house_walls = ["stucco_sand", "stucco_lace", "stucco_smooth", "stucco_catface", "stucco_weathered"]
+    out: dict[int, BShape] = {}
+    for row in bdf.itertuples(index=False):
+        bid = int(row.id)
+        if bid in hero_ids:
+            continue
+        poly = utm_poly_to_scene(row.geometry)
+        if not poly.is_valid:
+            poly = poly.buffer(0)
+            if poly.geom_type != "Polygon":
+                continue
+        poly = orient(poly.simplify(0.3, preserve_topology=True), 1.0)
+        if poly.area < 4.0:
+            continue
+        rng = np.random.default_rng([seed, bid])
+        btype = str(row.type)
+        kind = roof_kind(btype, poly, getattr(row, "roof_shape", None))
+        rects: list[np.ndarray] = []
+        walls = poly
+        if btype in PITCHED_TYPES and kind != "flat" or (btype in PITCHED_TYPES and getattr(row, "roof_shape", None) is None):
+            plan = roof_plan(poly)
+            if plan is None and btype == "house" and rectangularity(poly) >= 0.7:
+                rr = orient(poly.minimum_rotated_rectangle, 1.0)
+                plan_rects = [np.asarray(rr.exterior.coords)[:4, :2]]
+                walls, rects = rr, plan_rects
+            elif plan is not None:
+                walls, rects = plan.walls, plan.rects
+            if rects:
+                tag = (_clean(getattr(row, "roof_shape", None)) or "").lower()
+                kind = ROOF_SHAPE_KIND.get(tag, "gabled" if rng.random() < gable_share else "hipped")
+                if kind == "flat":
+                    kind = "hipped"
+            else:
+                kind = "flat"
+        else:
+            kind = "flat"
+        cx, cz = float(row.centroid_x), float(row.centroid_z)
+        ring = np.asarray(walls.exterior.coords)[:, :2]
+        ground = terrain.sample(ring[:, 0], ring[:, 1])
+        base_y = float(terrain.sample(cx, cz)) + slab
+        bottom = float(min(ground.min(), base_y - slab)) - 0.3
+        rule = str(getattr(row, "height_rule", "default"))
+        h_tag = float(row.height_m)
+        lv_tag = getattr(row, "levels", None)
+        lv_tag = int(lv_tag) if lv_tag is not None and not (isinstance(lv_tag, float) and math.isnan(lv_tag)) else None
+        if kind != "flat":
+            w_max = max(min(np.hypot(*(r[1] - r[0])), np.hypot(*(r[2] - r[1]))) for r in rects)
+            rise = (w_max / 2.0) * t
+            if rule == "height":
+                levels = max(1, int(round((h_tag - rise) / story)))
+                wall_top = base_y + max(2.6, h_tag - rise)
+            else:
+                if lv_tag is not None:
+                    levels = lv_tag
+                elif btype == "house":
+                    levels = 2 if rng.random() < two else 1
+                else:
+                    levels = max(2, int(round(h_tag / float(assumption("buildings.level_height_m")))))
+                wall_top = base_y + levels * story
+            height = wall_top + rise - base_y
+            parapet = 0.0
+        else:
+            sh = cstory if btype in ("commercial", "school") else story
+            height = h_tag if (rule != "default" or btype != "other") else (3.0 if poly.area < 60 else h_tag)
+            levels = lv_tag or max(1, int(round(height / sh)))
+            wall_top = base_y + height
+            parapet = par.get(btype, 0.0) if poly.area >= 120 else 0.0
+            height += parapet
+        wall_rgb = row.wall_rgb if isinstance(getattr(row, "wall_rgb", None), tuple) else _pick(rng, pal_rgb, pal_w)
+        if btype == "house":
+            wall_var = variant_index(0, _pick(rng, house_walls, [0.45, 0.2, 0.15, 0.1, 0.1]), manifest)
+        elif btype == "apartments":
+            wall_var = variant_index(0, _pick(rng, ["stucco_sand", "stucco_lace", "stucco_smooth"], [0.5, 0.3, 0.2]), manifest)
+        else:
+            wall_var = variant_index(0, "stucco_scored" if btype in ("commercial", "school") else "stucco_smooth", manifest)
+        if kind != "flat":
+            rname = _pick(rng, list(roofs), list(roofs.values()))
+            roof_var = variant_index(1, rname, manifest)
+            rrgb = row.roof_rgb if isinstance(getattr(row, "roof_rgb", None), tuple) else tuple(int(c) for c in roof_rgb.get(rname, (150, 95, 70)))
+        else:
+            fname = {"commercial": _pick(rng, ["flat_tpo", "flat_tpo_grime", "flat_gravel"], [0.4, 0.4, 0.2]), "school": "flat_modbit", "apartments": "flat_tpo"}.get(btype, "concrete_deck")
+            roof_var = variant_index(2, fname, manifest)
+            rrgb = row.roof_rgb if isinstance(getattr(row, "roof_rgb", None), tuple) else FLAT_ROOF_RGB.get(btype, (160, 160, 156))
+        out[bid] = BShape(
+            id=bid, type=btype, tile=str(row.tile), walls=orient(walls, 1.0), rects=rects, roof=kind, base_y=base_y, bottom_y=bottom,
+            wall_top=wall_top, parapet=parapet, levels=int(levels), height_m=float(height), wall_rgb=tuple(int(c) for c in wall_rgb),
+            roof_rgb=tuple(int(c) for c in rrgb), wall_var=int(wall_var), roof_var=int(roof_var),
+        )
+    return out
+
+
+def _front_mask(ring: np.ndarray, fr: Frontage | None) -> np.ndarray | None:
+    """1 for wall segments of a CCW ring whose outward normal faces the street."""
+    if fr is None:
+        return None
+    from pipeline.building_geom import ring_coords
+
+    r = ring_coords(ring)
+    d = np.roll(r, -1, axis=0) - r
+    ln = np.maximum(np.hypot(d[:, 0], d[:, 1]), 1e-9)
+    n = np.column_stack([d[:, 1], -d[:, 0]]) / ln[:, None]
+    return ((n @ np.array([fr.nx, fr.nz])) > 0.7).astype(np.uint8)
+
+
+def building_geometry(acc: Any, sh: BShape, fr: Frontage | None = None, manifest: dict[str, Any] | None = None) -> None:
+    """Append one building (walls, roof, openings) to a MeshAcc."""
+    from pipeline.building_geom import (
+        MAT_GARAGE,
+        MAT_GLASS,
+        MAT_WALL,
+        add_quad,
+        add_walls,
+        parapet_roof,
+        pitched_roof,
+    )
+
+    acc.cur_bid = sh.id
+    pitch = float(assumption("building_style.roof_pitch_deg"))
+    over = float(assumption("building_style.eave_overhang_m"))
+    ring = np.asarray(sh.walls.exterior.coords)[:, :2]
+    add_walls(acc, ring, sh.bottom_y, sh.wall_top + (sh.parapet if sh.roof == "flat" else 0.0), sh.base_y, MAT_WALL, sh.wall_var, sh.wall_rgb, front_mask=_front_mask(ring, fr))
+    for hole in sh.walls.interiors:
+        add_walls(acc, np.asarray(hole.coords)[:, :2], sh.bottom_y, sh.wall_top + sh.parapet, sh.base_y, MAT_WALL, sh.wall_var, sh.wall_rgb)
+    if sh.roof == "flat":
+        parapet_roof(acc, sh.walls, sh.wall_top, sh.parapet, 0.3, sh.roof_var, sh.roof_rgb, sh.wall_var, sh.wall_rgb, TRIM_RGB, sh.base_y)
+    else:
+        for r in sh.rects:
+            pitched_roof(acc, r, sh.wall_top, pitch, over, sh.roof == "gabled", sh.roof_var, sh.roof_rgb, sh.wall_var, sh.wall_rgb, TRIM_RGB, sh.base_y)
+    if sh.type == "commercial" and sh.levels <= 3:
+        # storefront glazing band on long walls (ground floor)
+        r = ring[:-1] if np.allclose(ring[0], ring[-1]) else ring
+        for a, b in zip(r, np.roll(r, -1, axis=0), strict=True):
+            ln = float(np.hypot(*(b - a)))
+            if ln < 6.0:
+                continue
+            tdir = (b - a) / ln
+            n = np.array([tdir[1], -tdir[0]])
+            p0 = a + tdir * 0.8 + n * 0.03
+            p1 = b - tdir * 0.8 + n * 0.03
+            y0, y1 = sh.base_y + 0.4, sh.base_y + min(3.2, sh.wall_top - sh.base_y - 0.4)
+            if y1 - y0 < 1.0:
+                continue
+            corners = np.array([[p0[0], y0, p0[1]], [p1[0], y0, p1[1]], [p1[0], y1, p1[1]], [p0[0], y1, p0[1]]])
+            uv = np.array([[0.8, (y0 - sh.base_y)], [ln - 0.8, (y0 - sh.base_y)], [ln - 0.8, (y1 - sh.base_y)], [0.8, (y1 - sh.base_y)]]) / 3.0
+            add_quad(acc, corners, np.array([n[0], 0.0, n[1]]), uv, MAT_GLASS, 0, GLASS_RGB)
+    if fr is not None and fr.garage is not None and fr.garage_width > 2.0:
+        gx, gz = fr.garage
+        n = np.array([fr.nx, fr.nz])
+        tdir = np.array([n[1], -n[0]])  # along the wall, so (tdir, n) matches a CCW ring
+        w = fr.garage_width
+        h = float(assumption("streets.garage_door_height_m"))
+        c = np.array([gx, gz]) + n * 0.04
+        p0, p1 = c - tdir * (w / 2), c + tdir * (w / 2)
+        y0, y1 = sh.base_y - 0.05, sh.base_y + h
+        corners = np.array([[p0[0], y0, p0[1]], [p1[0], y0, p1[1]], [p1[0], y1, p1[1]], [p0[0], y1, p0[1]]])
+        # garage_2car door_rect_m [0.56, 0, 5.44, 2.13] inside its 2-cell span (meters / 3)
+        uv = np.array([[0.56, 0.0], [5.44, 0.0], [5.44, 2.13], [0.56, 2.13]]) / 3.0
+        add_quad(acc, corners, np.array([n[0], 0.0, n[1]]), uv, MAT_GARAGE, variant_index(5, "garage_2car", manifest), GARAGE_RGB, front=1)
+
+
 def build_building_tiles(
     bdf: gpd.GeoDataFrame,
     grid: TileGrid,
     out_dir: Path,
     heroes: list[Hero] | None = None,
-    budget: int = BUILDING_TRIANGLE_BUDGET,
+    terrain: Terrain | None = None,
+    shapes: dict[int, BShape] | None = None,
+    frontage: dict[int, Frontage] | None = None,
+    manifest: dict[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], int, list[dict[str, Any]]]:
-    """Merge buildings into one mesh per tile with `_BUILDING_ID` + `COLOR_0` (spec 5.2.4).
+    """One glb per tile: an HD primitive with per-house pitched roofs, parapets, garage doors and
+    facade UVs (`_BUILDING_ID`, `_MAT`, `_VARIANT`, `_FRONT`, COLOR_0), plus hero primitives.
 
-    Hero models become extra primitives in their tile (own materials/colors, `_BUILDING_ID`).
-    Returns (tile id -> {path, min_y, max_y, count}, triangles, hero list for the manifest).
-    """
-    roof_h_default = float(assumption("buildings.hip_roof_height_m"))
+    Returns (tile id -> {path, min_y, max_y, count}, triangles, hero list for the manifest)."""
+    from pipeline.building_geom import MeshAcc
+
     heroes = heroes or []
-    hero_ids = {h.building_id for h in heroes}
-    work = bdf[~bdf["id"].isin(hero_ids)]
-    polys = [utm_poly_to_scene(g) for g in work.geometry]
-    shapes = work["roof_shape"] if "roof_shape" in work.columns else pd.Series([None] * len(work), index=work.index)
-    kinds = [roof_kind(t, p, rs) for t, p, rs in zip(work["type"], polys, shapes, strict=True)]
-    tol = simplify_tolerance_for_budget(polys, kinds, budget)
-    if tol > 0:
-        log(f"buildings: simplifying flat-roof footprints by {tol:.2f} m to stay under {budget:,} triangles")
-    acc: dict[str, dict[str, list[np.ndarray]]] = {}
-    for row, poly, kind in zip(work.itertuples(index=False), polys, kinds, strict=True):
-        if poly.area < 1.0:
-            continue
-        if tol > 0 and kind == "flat":
-            sp = poly.simplify(tol, preserve_topology=True)
-            if isinstance(sp, Polygon) and sp.is_valid and sp.area > 0.5 * poly.area:
-                poly = sp
-        rh = getattr(row, "roof_height_m", None)
-        roof_h = float(rh) if rh is not None and np.isfinite(rh) and 0.3 < float(rh) < float(row.height_m) else roof_h_default
-        pos, nrm, tri, is_roof = building_mesh(poly, float(row.base_elev_m), float(row.height_m), kind == "hipped", roof_h, roof=kind)
-        if len(tri) == 0:
-            continue
-        wall = getattr(row, "wall_rgb", None)
-        roofc = getattr(row, "roof_rgb", None)
-        wall_c = np.array(wall if isinstance(wall, tuple) else WALL_COLORS[row.type])
-        roof_c = np.array(roofc if isinstance(roofc, tuple) else ROOF_COLORS[row.type])
-        col = np.where(is_roof[:, None], roof_c, wall_c)
-        a = acc.setdefault(row.tile, {"pos": [], "nrm": [], "tri": [], "col": [], "bid": [], "n": [0]})
-        a["tri"].append(tri + a["n"][0])
-        a["n"][0] += len(pos)
-        a["pos"].append(pos)
-        a["nrm"].append(nrm)
-        a["col"].append(col)
-        a["bid"].append(np.full(len(pos), float(row.id)))
+    if shapes is None:
+        if terrain is None:
+            # flat stand-in terrain at each building's base elevation
+            terrain = _BaseElevTerrain(bdf)  # type: ignore[assignment]
+        shapes = building_shapes(bdf, terrain, heroes, manifest)  # type: ignore[arg-type]
+    frontage = frontage or {}
+    acc: dict[str, MeshAcc] = {}
+    for sh in shapes.values():
+        a = acc.setdefault(sh.tile, MeshAcc())
+        building_geometry(a, sh, frontage.get(sh.id), manifest)
     hero_by_tile: dict[str, list[MeshData]] = {}
     hero_out = []
     for h in heroes:
         r, c = grid.tile_of(np.array([h.x]), np.array([h.z]))
         tid = grid.tile_id(int(r[0]), int(c[0]))
         for k, m in enumerate(h.meshes):
-            m2 = dataclasses.replace(m, name=f"hero_{h.key}_{k}", custom={"_BUILDING_ID": np.full(len(m.positions), float(h.building_id), dtype=np.float32)})
+            m2 = dataclasses.replace(m, name=f"hero_{h.key}_{k}", custom={**m.custom, "_BUILDING_ID": id_attribute(np.full(len(m.positions), h.building_id))})
             hero_by_tile.setdefault(tid, []).append(m2)
         hero_out.append({"id": h.key, "name": h.name, "building_id": h.building_id, "tile": tid, "school_id": h.school_id, "triangles": sum(m.triangle_count for m in h.meshes)})
     tiles: dict[str, dict[str, Any]] = {}
@@ -776,24 +1011,25 @@ def build_building_tiles(
     for r, c in grid.iter():
         tid = grid.tile_id(r, c)
         path = out_dir / f"buildings_{tid}.glb"
-        a = acc.get(tid)
         meshes: list[MeshData] = []
         count = 0
-        if a is not None:
-            col = np.concatenate(a["col"]).astype(np.uint8)
-            col = np.column_stack([col, np.full(len(col), 255, dtype=np.uint8)])
+        a = acc.get(tid)
+        if a is not None and a.n:
+            arr = a.arrays()
+            col = np.column_stack([arr["col"], np.full(len(arr["col"]), 255, dtype=np.uint8)])
             meshes.append(
                 MeshData(
                     name=f"buildings_{tid}",
-                    positions=np.concatenate(a["pos"]).astype(np.float32),
-                    normals=np.concatenate(a["nrm"]).astype(np.float32),
-                    indices=np.concatenate(a["tri"]).reshape(-1).astype(np.uint32),
+                    positions=arr["pos"],
+                    normals=arr["nrm"],
+                    uvs=arr["uv"],
+                    indices=arr["tri"],
                     colors=col,
-                    custom={"_BUILDING_ID": np.concatenate(a["bid"]).astype(np.float32)},
+                    custom={"_BUILDING_ID": id_attribute(arr["bid"]), "_MAT": arr["mat"], "_VARIANT": arr["var"], "_FRONT": arr["front"]},
                     roughness=0.9,
                 )
             )
-            count = len(a["bid"])
+            count = len(np.unique(arr["bid"]))
         meshes += hero_by_tile.get(tid, [])
         tris = write_glb(path, meshes)
         total += tris
@@ -803,9 +1039,29 @@ def build_building_tiles(
             "min_y": float(min(y.min() for y in ys)) if ys else None,
             "max_y": float(max(y.max() for y in ys)) if ys else None,
             "count": int(count + len(hero_by_tile.get(tid, []))),
+            "triangles": int(tris),
         }
-    log(f"buildings: {len(bdf):,} footprints, {total:,} triangles in {sum(1 for t in tiles.values() if t['count'])} tiles, {len(heroes)} heroes")
+    n_pitched = sum(1 for s_ in shapes.values() if s_.roof != "flat")
+    log(f"buildings: {len(shapes):,} styled ({n_pitched:,} pitched roofs, {sum(1 for f in frontage.values() if f.garage):,} garage doors), {total:,} triangles, {len(heroes)} heroes")
     return tiles, total, hero_out
+
+
+class _BaseElevTerrain:
+    """Terrain stand-in that returns each building's base elevation (no DEM available)."""
+
+    def __init__(self, bdf: gpd.GeoDataFrame):
+        from scipy.spatial import cKDTree
+
+        self._tree = cKDTree(np.column_stack([bdf["centroid_x"], bdf["centroid_z"]])) if len(bdf) else None
+        self._y = bdf["base_elev_m"].to_numpy(dtype=np.float64)
+
+    def sample(self, x: Any, z: Any) -> np.ndarray:
+        x = np.asarray(x, dtype=np.float64)
+        z = np.asarray(z, dtype=np.float64)
+        if self._tree is None:
+            return np.zeros_like(x)
+        _, k = self._tree.query(np.column_stack([x.ravel(), z.ravel()]))
+        return self._y[k].reshape(x.shape)
 
 
 # ---------------------------------------------------------------------------
@@ -882,3 +1138,96 @@ def load_osm_buildings(raw_geojson: Path, landuse: gpd.GeoDataFrame | None = Non
     elif "osmid" in gdf.columns:
         gdf["osm_sort_key"] = gdf["osmid"].astype(str).str.zfill(12)
     return gdf
+
+
+# ---------------------------------------------------------------------------
+# Lidar building attributes (data/raw/lidar/, written by pipeline/lidar_features.py)
+# ---------------------------------------------------------------------------
+
+LIDAR_DIR = "lidar"
+LIDAR_ROOF_FIELDS = ("eave_height_m", "ridge_height_m", "eave_m", "ridge_m", "height_m", "roof_type", "roof_shape", "roof_pitch_deg", "roof_azimuth_deg", "ground_elev_m", "n_points", "quality")
+
+
+def add_lidar_missing_buildings(gdf: gpd.GeoDataFrame, raw: Path) -> gpd.GeoDataFrame:
+    """Append lidar-detected footprints missing from OSM/Overture (data/raw/lidar/
+    missing_buildings.geojson) as new footprints (`building` = their `type`/`building`
+    property, else house; `source` = lidar). Their osm_sort_key sorts after every mapped
+    footprint so existing building ids stay stable."""
+    p = raw / LIDAR_DIR / "missing_buildings.geojson"
+    if not p.exists():
+        return gdf
+    extra = gpd.read_file(p)
+    if not len(extra):
+        return gdf
+    extra = extra.to_crs("EPSG:32611")
+    btag = extra["building"] if "building" in extra.columns else (extra["type"] if "type" in extra.columns else pd.Series(["house"] * len(extra)))
+    add = gpd.GeoDataFrame(
+        {
+            "building": [str(v) if v else "house" for v in btag],
+            "height": extra["height_m"].astype(str) if "height_m" in extra.columns else None,
+            "source": "lidar",
+            "osm_sort_key": [f"~lidar:{i:08d}" for i in range(len(extra))],
+        },
+        geometry=extra.geometry.to_numpy(),
+        crs="EPSG:32611",
+    )
+    add = tag_landuse(add, None)
+    add["estate_context"] = False
+    log(f"buildings: +{len(add):,} lidar-detected footprints missing from the map data ({p.name})")
+    return gpd.GeoDataFrame(pd.concat([gdf, add], ignore_index=True), geometry="geometry", crs="EPSG:32611")
+
+
+def lidar_roof_join(bdf: gpd.GeoDataFrame, raw: Path) -> gpd.GeoDataFrame:
+    """Copy lidar roof measurements (data/raw/lidar/buildings_roofs.parquet) onto buildings.
+
+    Joins on `building_id` (== buildings.geojson id) when present, else spatially (each lidar
+    record's point / polygon centroid inside a footprint). Fields from LIDAR_ROOF_FIELDS are
+    added as `lidar_<field>`; a measured ridge height (or height) becomes height_m with
+    height_rule 'lidar', and a lidar roof type replaces the roof:shape tag."""
+    p = raw / LIDAR_DIR / "buildings_roofs.parquet"
+    if not p.exists():
+        return bdf
+    try:
+        lr = gpd.read_parquet(p)
+        has_geom = True
+    except Exception:  # noqa: BLE001 - plain (non-geo) parquet
+        lr = pd.read_parquet(p)
+        has_geom = False
+    fields = [f for f in LIDAR_ROOF_FIELDS if f in lr.columns]
+    if not fields:
+        log(f"WARNING {p.name}: none of {LIDAR_ROOF_FIELDS} present; lidar roofs ignored")
+        return bdf
+    bdf = bdf.copy()
+    if "building_id" in lr.columns:
+        m = lr.set_index(lr["building_id"].astype(np.int64))[fields]
+        m = m[~m.index.duplicated()]
+        joined = m.reindex(bdf["id"].to_numpy())
+    elif has_geom:
+        pts = gpd.GeoDataFrame(lr[fields], geometry=lr.geometry.to_crs("EPSG:32611").representative_point(), crs="EPSG:32611")
+        j = gpd.sjoin(pts, bdf[["id", "geometry"]], how="inner", predicate="within")
+        j = j[~j["id"].duplicated()].set_index("id")
+        joined = j[fields].reindex(bdf["id"].to_numpy())
+    else:
+        log(f"WARNING {p.name}: no building_id and no geometry; lidar roofs ignored")
+        return bdf
+    joined.index = bdf.index
+    for f in fields:
+        bdf[f"lidar_{f}"] = joined[f].to_numpy()
+    top = None
+    for f in ("ridge_height_m", "ridge_m", "height_m"):
+        if f in fields:
+            top = pd.to_numeric(joined[f], errors="coerce")
+            break
+    n = 0
+    if top is not None:
+        ok = top.notna() & (top > 2.0) & (top < 80.0)
+        bdf.loc[ok, "height_m"] = top[ok].to_numpy()
+        bdf.loc[ok, "height_rule"] = "lidar"
+        n = int(ok.sum())
+    for f in ("roof_type", "roof_shape"):
+        if f in fields:
+            rt = joined[f]
+            bdf["roof_shape"] = np.where(rt.notna(), rt.astype(str).str.lower(), bdf["roof_shape"])
+            break
+    log(f"buildings: lidar roof measurements joined for {int(joined.notna().any(axis=1).sum()):,} footprints ({n:,} heights from lidar)")
+    return bdf

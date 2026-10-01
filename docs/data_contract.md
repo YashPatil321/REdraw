@@ -216,3 +216,20 @@ assets/
 - `terrain_meta.json` adds `sources` and `texture_px`.
 - `network_edges.osmid` may be `virtual_connector` (short links joining gated-community islands)
   or `virtual_exit_turnaround`.
+
+## HD world build (v1 additions, 2026-10-01) — tile grid
+
+This section is written first so the Blender buildings agent and the client can align;
+the full HD file list follows below once the build lands.
+
+**Tile grid (all tiled layers share it: terrain LODs, splat masks, buildings, roads, ground):**
+- Grid extent = region bbox extent (`region_meta.extent_scene`, rounded out to 50 m) buffered by
+  `region.yaml terrain_buffer_m` (500 m) = `region_meta.terrain_extent_scene`.
+  For the current bbox: `min_x -4500, max_x 4500, min_z -3150, max_z 3150` (scene meters).
+- `region.yaml tiles: [8, 8]` (rows, cols) -> each tile is 1125 m (x) by 787.5 m (z).
+- Tile id `r{row}_c{col}`; row 0 is the NORTH edge (min_z), col 0 the WEST edge (min_x).
+  Tile (r, c) covers `x in [min_x + c*w, min_x + (c+1)*w]`, `z in [min_z + r*d, min_z + (r+1)*d]`.
+- A feature belongs to the tile containing its centroid (buildings: footprint centroid =
+  `buildings.geojson centroid_x/centroid_z`, `tile` property). Python: `pipeline.common.tile_grid()`,
+  `TileGrid.tile_of(x, z)`.
+- `manifest.json tiles[]` lists every tile with `bounds` (incl. min_y/max_y over all layers).

@@ -112,14 +112,20 @@ def build_vehicles(entries: list[dict]) -> None:
         log(f"{vid}: {tris} tris, {hi[1] - lo[1]:.2f} x {hi[0] - lo[0]:.2f} x {hi[2] - lo[2]:.2f} m -> {out.name}")
 
 
-def build_trees(entries: list[dict]) -> None:
+LOD1_DISTANCE = {"tree": 140.0}  # suggested LOD0 -> LOD1 switch distance (m); shrubs have no LOD1
+
+
+def build_trees(entries: list[dict], samples: int = 32) -> None:
+    from rdlib import impostor
+
     tex_dir = BUILD / "textures"
-    for tid, (fn, info) in foliage.SPECIES.items():
+    for tid, (_fn, info) in foliage.SPECIES.items():
         bl.reset_scene()
-        part, normals, tex = fn(tex_dir / f"{tid}.png")
-        bl.TEXTURES["foliage_atlas"] = tex
-        obj = bl.part_to_object(part, tid)
-        bl.set_custom_normals(obj, normals)
+        built = foliage.build(tid, tex_dir / f"{tid}.png")
+        bl.TEXTURES["foliage_atlas"] = built.tex
+        obj = bl.part_to_object(built.part, tid)
+        bl.set_custom_normals(obj, built.normals)
+        bl.set_vertex_ao(obj, built.ao)
         out = PROPS_DIR / "vegetation" / f"{tid}.glb"
         bl.export_glb([obj], out)
         tris = bl.tri_count([obj])
@@ -127,7 +133,9 @@ def build_trees(entries: list[dict]) -> None:
         scale = [0.8, 1.2] if info["kind"] == "tree" else [0.7, 1.3]
         if tid.startswith("tree_palm"):
             scale = [0.75, 1.25]
-        entries.append({
+        if tid == "hedge":
+            scale = [0.95, 1.05]
+        entry = {
             "id": tid,
             "kind": info["kind"],
             "file": f"vegetation/{tid}.glb",
@@ -135,6 +143,7 @@ def build_trees(entries: list[dict]) -> None:
             "footprint_radius_m": round(_footprint_radius([obj]), 3),
             "length_m": round(float(max(hi[0] - lo[0], hi[1] - lo[1])), 3),
             "height_m": round(float(hi[2]), 3),
+            "crown_radius_m": round(_crown_radius(built), 3),
             "forward_axis": "-z",
             "up_axis": "+y",
             "origin": "ground, trunk base",
@@ -142,9 +151,42 @@ def build_trees(entries: list[dict]) -> None:
             "suggested_scale_range": scale,
             "materials": ["foliage"],
             "alpha_mode": "MASK",
+            "vertex_attributes": {"COLOR_0": "baked crown ambient occlusion (multiply into the base color)"},
             "notes": info["notes"],
-        })
-        log(f"{tid}: {tris} tris, h {hi[2]:.1f} m, r {_footprint_radius([obj]):.1f} m -> {out.name}")
+        }
+        msg = f"{tid}: {tris} tris, h {hi[2]:.1f} m, r {_footprint_radius([obj]):.1f} m"
+        if info["kind"] == "tree":
+            imp_png = tex_dir / f"{tid}_impostor.png"
+            imp = impostor.bake(obj, imp_png, res=512, samples=samples)
+            k = np.array(built.part.V)
+            crown_z = float(np.percentile(k[:, 2], 70))
+            part1, n1 = impostor.lod1_part(imp, crown_z)
+            bl.reset_scene()
+            bl.TEXTURES["foliage_atlas"] = imp_png
+            o1 = bl.part_to_object(part1, f"{tid}_lod1")
+            bl.set_custom_normals(o1, n1)
+            bl.set_vertex_ao(o1, np.ones(len(o1.data.vertices)))
+            out1 = PROPS_DIR / "vegetation" / f"{tid}_lod1.glb"
+            bl.export_glb([o1], out1)
+            t1 = bl.tri_count([o1])
+            entry["lods"] = [
+                {"level": 0, "file": entry["file"], "triangles": tris, "max_distance_m": LOD1_DISTANCE["tree"]},
+                {"level": 1, "file": f"vegetation/{tid}_lod1.glb", "triangles": t1, "min_distance_m": LOD1_DISTANCE["tree"],
+                 "kind": "impostor: 3 crossed vertical quads + 1 horizontal crown quad, Cycles-baked side/top views (albedo x AO)"},
+            ]
+            entry["lod1_file"] = f"vegetation/{tid}_lod1.glb"
+            msg += f", LOD1 {t1} tris"
+        if info["kind"] == "groundcover":
+            entry["scatter"] = "procedural: scatter near the camera over lawn ground (not in placements.bin)"
+        entries.append(entry)
+        log(msg + f" -> {out.name}")
+
+
+def _crown_radius(built) -> float:  # noqa: ANN001
+    """Horizontal radius containing 95 % of the foliage-card vertices (for scaling to measured crowns)."""
+    v = np.asarray(built.part.V)
+    r = np.hypot(v[:, 0], v[:, 1])
+    return float(np.percentile(r, 95))
 
 
 def build_street(entries: list[dict]) -> None:
@@ -281,34 +323,52 @@ def preview_vehicles(path: Path, samples: int) -> None:
     log(f"preview {path} ({path.stat().st_size // 1024} KB)")
 
 
-def preview_trees(path: Path, samples: int) -> None:
+def preview_trees(path: Path, samples: int, lod1: bool = False) -> None:
+    """Vegetation lineup on an atlas lawn (LOD0), or the LOD1 impostors with lod1=True."""
     bl.reset_scene()
-    order = ["grass_ornamental", "shrub", "tree_street", "tree_jacaranda", "tree_oak", "tree_palm_queen",
-             "tree_eucalyptus", "tree_palm_fan", "street_lamp"]
+    order = ["grass_tuft", "grass_ornamental", "succulent_agave", "hedge", "shrub", "shrub_bougainvillea", "tree_street",
+             "tree_ficus", "tree_jacaranda", "tree_oak", "tree_palm_queen", "tree_pine_canary", "tree_eucalyptus",
+             "tree_palm_fan", "street_lamp"]
+    if lod1:
+        order = [t for t in order if foliage.SPECIES.get(t, (None, {"kind": ""}))[1]["kind"] == "tree"]
     x = 0.0
     tex_dir = BUILD / "textures"
     for tid in order:
         if tid == "street_lamp":
             o = bl.part_to_object(props.street_lamp(), tid, smooth_angle=45)
             r = 1.2
+        elif lod1:
+            objs = bl.import_glb(PROPS_DIR / "vegetation" / f"{tid}_lod1.glb")
+            o = objs[0]
+            r = foliage.SPECIES[tid][1]["radius_m"] * 0.8
         else:
-            fn, info = foliage.SPECIES[tid]
-            part, normals, tex = fn(tex_dir / f"{tid}.png")
-            bl.TEXTURES["foliage_atlas"] = tex
+            _fn, info = foliage.SPECIES[tid]
+            built = foliage.build(tid, tex_dir / f"{tid}.png")
+            bl.TEXTURES["foliage_atlas"] = built.tex
             if "foliage" in bpy.data.materials:
-                bpy.data.materials["foliage"].name = "foliage_prev"
-            o = bl.part_to_object(part, tid)
-            bl.set_custom_normals(o, normals)
-            r = info["radius_m"] * (0.75 if tid != "tree_palm_fan" else 0.9)
+                bpy.data.materials["foliage"].name = f"foliage_prev_{tid}"
+            o = bl.part_to_object(built.part, tid)
+            bl.set_custom_normals(o, built.normals)
+            bl.set_vertex_ao(o, built.ao)
+            r = max(0.5, info["radius_m"] * (0.72 if tid != "tree_palm_fan" else 0.9))
         x += r
         o.location = (x, 0, 0)
         if tid == "street_lamp":
             o.rotation_euler = (0, 0, math.radians(-90))
-        x += r + 0.6
-    bl.setup_render(1280, 600, samples=samples)
-    bl.setup_world(sun_elev_deg=42, sun_azimuth_deg=200)
-    bl.ground_plane(400, "#8E9168", roughness=1.0)
-    bl.add_camera((x / 2, -58, 7.0), (x / 2, 0, 9.5), lens=30)
+        x += r + 0.5
+    bl.setup_render(1600, 640, samples=samples)
+    bl.setup_world(sun_elev_deg=40, sun_azimuth_deg=210, strength=5.0, sky_strength=0.1)
+    try:
+        from rdlib import atlas, previews
+        from rdlib.mesh import Part
+
+        man = atlas.load_manifest(MAT_DIR)
+        g = Part(np.array([(-200, -200, 0), (300, -200, 0), (300, 300, 0), (-200, 300, 0)], float), [[0, 1, 2, 3]],
+                 ["ground:grass_lawn"], [[(-100, -100), (150, -100), (150, 150), (-100, 150)]])
+        previews.add_part(g, "lawn", man, MAT_DIR)
+    except FileNotFoundError:
+        bl.ground_plane(400, "#8E9168", roughness=1.0)
+    bl.add_camera((x / 2, -66, 6.5), (x / 2, 0, 8.5), lens=30)
     bl.render(path)
     log(f"preview {path} ({path.stat().st_size // 1024} KB)")
 
@@ -319,14 +379,15 @@ def render_previews(which: set[str], samples: int) -> None:
     if "vehicles" in which:
         preview_vehicles(PREVIEW_DIR / "vehicles_lineup.png", samples)
     if "vegetation" in which:
-        preview_trees(PREVIEW_DIR / "vegetation_lineup.png", samples)
+        preview_trees(PREVIEW_DIR / "vegetation_lineup.jpg", samples)
+        preview_trees(BUILD / "vegetation_lod1.jpg", max(16, samples // 2), lod1=True)
     if which & {"sheets", "street_scene"}:
         man = atlas.load_manifest(MAT_DIR)
         if "sheets" in which:
             for p in previews.materials_sheets(man, MAT_DIR, PREVIEW_DIR, samples):
                 log(f"preview {p} ({p.stat().st_size // 1024} KB)")
         if "street_scene" in which:
-            p = PREVIEW_DIR / "street_scene.png"
+            p = PREVIEW_DIR / "street_scene.jpg"
             previews.street_scene(man, MAT_DIR, BUILD / "textures", p, max(samples, 64))
             log(f"preview {p} ({p.stat().st_size // 1024} KB)")
 
@@ -353,7 +414,7 @@ def main() -> None:
     if "vehicles" in stages:
         build_vehicles(entries)
     if "trees" in stages:
-        build_trees(entries)
+        build_trees(entries, samples=min(a.samples, 32))
     if "street" in stages:
         build_street(entries)
     if entries or "manifest" in stages:

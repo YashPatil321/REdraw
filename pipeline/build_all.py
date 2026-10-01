@@ -50,11 +50,10 @@ from pipeline.build_population import (
 from pipeline.build_roads import (
     RoadNetwork,
     build_network,
-    build_road_ribbons,
     local_node_mask,
     write_network,
 )
-from pipeline.build_terrain import Terrain, write_terrain_outputs
+from pipeline.build_terrain import Terrain, TerrainBuild, write_terrain_outputs
 from pipeline.common import (
     CONTRACT_VERSION,
     DataSourceUnavailable,
@@ -85,6 +84,8 @@ PROCESSED_OUTPUTS = [
     "terrain_meta.json",
 ]
 
+SYNTHETIC_TEXTURE_PX = 512
+SYNTHETIC_TERRAIN_BUDGET = 400_000  # the synthetic DEM is a smooth 10 m grid: no need for 2M
 POPULATION_SOURCES = ("acs", "footprints")
 POPULATION_SOURCE_LABEL = {"acs": "acs_lodes", "footprints": "footprint_estimate", "synthetic": "synthetic"}
 
@@ -92,7 +93,7 @@ POPULATION_SOURCE_LABEL = {"acs": "acs_lodes", "footprints": "footprint_estimate
 def clean_outputs(processed: Path, assets: Path) -> None:
     for name in PROCESSED_OUTPUTS:
         (processed / name).unlink(missing_ok=True)
-    for sub in ("terrain", "buildings", "roads"):
+    for sub in ("terrain", "buildings", "roads", "ground"):
         d = assets / sub
         if d.exists():
             shutil.rmtree(d)
@@ -120,9 +121,9 @@ def _gltf_transform_cmd() -> list[str] | None:
     return ["npx", "-y", "@gltf-transform/cli"]
 
 
-def draco_compress(assets: Path, files: list[Path]) -> bool:
-    """Compress terrain and road glbs in place with Draco. Building tiles stay uncompressed so
-    `_BUILDING_ID` stays exact (Draco would quantize the generic attribute)."""
+def draco_compress(assets: Path, files: list[Path], position_bits: int = 14) -> bool:
+    """Compress glbs in place with Draco. Integer attributes (`_BUILDING_ID` uint16, `_MAT`,
+    `_VARIANT`, `_FRONT` uint8) are stored losslessly by Draco; float attributes quantize."""
     cmd = _gltf_transform_cmd()
     if cmd is None:
         log("draco: gltf-transform unavailable (no Node/npm); writing uncompressed glb")
@@ -130,7 +131,7 @@ def draco_compress(assets: Path, files: list[Path]) -> bool:
 
     def one(p: Path) -> bool:
         tmp = p.with_suffix(".draco.glb")
-        r = subprocess.run([*cmd, "draco", str(p), str(tmp)], capture_output=True, text=True, timeout=600)
+        r = subprocess.run([*cmd, "draco", str(p), str(tmp), "--quantize-position", str(position_bits)], capture_output=True, text=True, timeout=600)
         if r.returncode != 0 or not tmp.exists():
             log(f"draco: failed on {p.name}: {r.stderr.strip()[:300]}")
             tmp.unlink(missing_ok=True)
@@ -138,6 +139,8 @@ def draco_compress(assets: Path, files: list[Path]) -> bool:
         tmp.replace(p)
         return True
 
+    if not files:
+        return True
     with ThreadPoolExecutor(max_workers=8) as ex:
         ok = list(ex.map(one, files))
     log(f"draco: compressed {sum(ok)}/{len(files)} files")
@@ -177,8 +180,7 @@ def finish(
     terrain: Terrain,
     grid: TileGrid,
     net: RoadNetwork,
-    terrain_tiles: list[dict[str, Any]],
-    terrain_tris: int,
+    tb: TerrainBuild,
     footprints: Any,
     processed: Path,
     assets: Path,
@@ -191,19 +193,90 @@ def finish(
     skip_draco: bool = False,
     population: str = "synthetic",
     extra_meta: dict[str, Any] | None = None,
+    raw: Path | None = None,
+    texture_px: int = 512,
 ) -> dict[str, Any]:
     """Shared tail. `population` is 'synthetic', 'acs' (dists + work given) or 'footprints'
-    (households estimated from real residential footprints inside the region bbox)."""
+    (households estimated from real residential footprints inside the region bbox).
+    `raw` (real mode) enables the Overture-based render layers (service roads, pools, bridges,
+    land use) and the lidar building attributes."""
+    from pipeline.build_buildings import building_shapes, lidar_roof_join, materials_manifest
+    from pipeline.build_landcover import load_landuse_scene, load_water_scene, write_splat_masks
+    from pipeline.build_streets import (
+        Draper,
+        Materials,
+        bridge_spans,
+        layout_streets,
+        overture_pools,
+        overture_service_roads,
+        visual_roads,
+        write_street_tiles,
+    )
+
     reg = region()
     schools_cfg = load_yaml("schools.yaml")["schools"]
-    write_network(net, processed)
-    road_tris = build_road_ribbons(net.edges, terrain, assets / "roads" / "roads.glb")
+    render = tb.render
+    timings: dict[str, float] = {}
+    t0 = time.time()
+    manifest_mat = materials_manifest(assets)
 
-    bdf = prepare_buildings(footprints, terrain, grid, school_areas, block_groups)
+    bdf = prepare_buildings(footprints, render, grid, school_areas, block_groups)
+    if raw is not None:
+        bdf = lidar_roof_join(bdf, raw)
     hero_list = load_heroes()
-    bdf = apply_heroes(bdf, hero_list, terrain, grid)
+    bdf = apply_heroes(bdf, hero_list, render, grid)
+    shapes = building_shapes(bdf, render, hero_list, manifest_mat)
+    hmap = {k: v.height_m for k, v in shapes.items()}
+    keep_rule = bdf["height_rule"].isin(["hero", "lidar"]) if "height_rule" in bdf.columns else np.zeros(len(bdf), bool)
+    new_h = bdf["id"].map(hmap)
+    bdf["height_m"] = np.where(new_h.notna() & ~keep_rule, new_h, bdf["height_m"])
+    timings["buildings_prepare"] = time.time() - t0
+
+    # streets / ground layers
+    t1 = time.time()
+    roads = visual_roads(net.G_visual if net.G_visual is not None else net.G, grid.extent)
+    pools: list[Any] = []
+    spans: list[Any] = []
+    if raw is not None:
+        roads += overture_service_roads(raw, grid.extent)
+        pools = overture_pools(raw, grid.extent)
+        spans = bridge_spans(raw, render, grid.extent)
+    sig = net.nodes.loc[net.nodes["signalized"], ["x", "z"]].to_numpy()
+    from shapely.geometry import Point
+
+    hero_disks = [Point(h.x, h.z).buffer(h.radius, 32) for h in hero_list]
+    layout = layout_streets(roads, grid.extent, sig, shapes, pools, hero_disks)
+    draper = Draper(render, spans)
+    if spans:
+        log(f"streets: {len(spans)} bridge decks (Overture is_bridge) interpolated over the bare-earth DEM")
+    # network edge geometry follows the rendered road surface (incl. bridge decks)
+    geoms = []
+    for g in net.edges["geometry"]:
+        xyz = np.asarray(g, dtype=np.float64).reshape(-1, 3)
+        xyz[:, 1] = draper.line(xyz[:, [0, 2]])
+        geoms.append(xyz.astype(np.float32).reshape(-1))
+    net.edges["geometry"] = geoms
+    net.nodes["y"] = render.sample(net.nodes["x"].to_numpy(), net.nodes["z"].to_numpy()).astype(np.float32)
+    write_network(net, processed)
+    mats = Materials(manifest_mat)
+    street_tiles, street_tris = write_street_tiles(layout, draper, grid, assets, mats)
+    timings["streets"] = time.time() - t1
+
+    t1 = time.time()
+    btiles, b_tris, heroes = build_building_tiles(bdf, grid, assets / "buildings", hero_list, render, shapes, layout.frontage, manifest_mat)
     write_buildings_geojson(bdf, processed / "buildings.geojson")
-    btiles, b_tris, heroes = build_building_tiles(bdf, grid, assets / "buildings", hero_list)
+    timings["buildings_tiles"] = time.time() - t1
+
+    # land-cover splat masks
+    t1 = time.time()
+    from shapely.ops import unary_union
+
+    paved = unary_union([layout.roads_poly, *layout.sidewalks, *[d for d, _ in layout.driveways], *[sh.walls for sh in shapes.values()]])
+    water = (load_water_scene(raw) if raw is not None else []) + list(pools)
+    landuse = load_landuse_scene(raw) if raw is not None else []
+    splat_px = min(1024, max(256, texture_px))
+    splats = write_splat_masks(grid, tb.albedo, assets / "terrain", splat_px, paved, water, landuse, lawn_extra=layout.medians)
+    timings["splat"] = time.time() - t1
 
     schools = resolve_schools(schools_cfg, net.nodes, net.edges, bdf, osm_schools)
     pop_bdf = bdf
@@ -219,7 +292,7 @@ def finish(
         log("POPULATION SOURCE: FOOTPRINT ESTIMATE (explicit fallback; Census ACS/LODES not used)")
         log(f"  {n_hh:,} households from {int((units > 0).sum()):,} residential footprints inside the region bbox: {by_type}")
         dists = [fallback_dist("", n_hh)]
-        work = synthetic_work_model(pop_bdf, net, source="assumptions (footprint estimate: commercial/school buildings by area + exit shares)")
+        work = synthetic_work_model(pop_bdf, net, source="assumptions (footprint estimate: commercial/school buildings by area + exit job-direction table)")
     if dists is None:
         dists = [fallback_dist("", int(assumption("population.target_households_fallback")))]
     if work is None:
@@ -232,31 +305,77 @@ def finish(
     write_json(processed / "schools_resolved.json", {"schools": schools})
 
     draco = False
+    t1 = time.time()
     if not skip_draco:
-        files = sorted((assets / "terrain").glob("terrain_*.glb")) + [assets / "roads" / "roads.glb"]
-        draco = draco_compress(assets, files)
+        terrain_files = sorted((assets / "terrain").glob("terrain_*.glb"))
+        detail_files = sorted((assets / "roads").glob("roads_*.glb")) + sorted((assets / "ground").glob("ground_*.glb")) + sorted((assets / "buildings").glob("buildings_*.glb"))
+        draco = draco_compress(assets, terrain_files, position_bits=14) and draco_compress(assets, detail_files, position_bits=16)
+    timings["draco"] = time.time() - t1
 
     tiles = []
-    for t in terrain_tiles:
+    for t in tb.infos:
         b = dict(t["bounds"])
         bt = btiles.get(t["id"], {})
-        if bt.get("max_y") is not None:
-            b["min_y"] = min(b["min_y"], bt["min_y"])
-            b["max_y"] = max(b["max_y"], bt["max_y"])
-        tiles.append({"id": t["id"], "row": t["row"], "col": t["col"], "bounds": b, "terrain": t["terrain"], "buildings": bt.get("path", f"buildings/buildings_{t['id']}.glb")})
+        st = street_tiles.get(t["id"], {})
+        for lay in (bt, st):
+            if lay.get("max_y") is not None:
+                b["min_y"] = min(b["min_y"], lay["min_y"])
+                b["max_y"] = max(b["max_y"], lay["max_y"])
+        tiles.append(
+            {
+                "id": t["id"],
+                "row": t["row"],
+                "col": t["col"],
+                "bounds": b,
+                "terrain": t["terrain"],
+                "terrain_lods": t["terrain_lods"],
+                "albedo": t["albedo"],
+                "splat": splats.get(t["id"], []),
+                "buildings": bt.get("path", f"buildings/buildings_{t['id']}.glb"),
+                "roads": st.get("roads"),
+                "ground": st.get("ground"),
+                "triangles": {"buildings": bt.get("triangles", 0), **st.get("triangles", {})},
+            }
+        )
+    sizes = asset_sizes(assets)
     manifest = {
         "contract_version": CONTRACT_VERSION,
+        "hd_version": 1,
         "synthetic": synthetic,
         "draco": draco,
-        "draco_layers": {"terrain": draco, "roads": draco, "buildings": False},
+        "draco_layers": {"terrain": draco, "roads": draco, "ground": draco, "buildings": draco},
+        "grid": {"rows": grid.rows, "cols": grid.cols, **grid.extent.as_dict(), "tile_width_m": grid.extent.width / grid.cols, "tile_depth_m": grid.extent.depth / grid.rows},
         "tiles": tiles,
-        "roads": ["roads/roads.glb"],
+        "roads": [t["roads"] for t in tiles if t.get("roads")],
         "terrain_meta": "terrain/terrain_meta.json",
+        "terrain_lod": {
+            "levels": [
+                {"lod": 0, "kind": "rtin", "spacing_m": tb.infos[0]["terrain_lods"][0]["spacing_m"] if tb.infos else None, "max_error_m": round(tb.lod0_max_error_m, 4)},
+                {"lod": 1, "kind": "grid", "spacing_m": 10.0},
+                {"lod": 2, "kind": "grid", "spacing_m": 25.0},
+            ],
+            "skirts_m": {"0": 3.0, "1": 6.0, "2": 12.0},
+            "suggested_switch_distance_m": {"0": 900.0, "1": 2600.0},
+        },
+        "splat": {
+            "channels": {"a": ["lawn", "chaparral", "dirt"], "b": ["paved", "water", "canopy"]},
+            "px": splat_px,
+            "encoding": "RGB PNG, 8-bit weights summing to 255 over the 6 channels; north up like the albedo",
+            "suggested_ground_cells": {"lawn": "grass_lawn", "chaparral": "chaparral", "dirt": "bare_dirt", "paved": "asphalt_worn", "water": "pool_water", "canopy": "mulch"},
+        },
+        "materials": "materials/materials_manifest.json" if manifest_mat is not None else None,
         "heroes": heroes,
-        "triangles": {"terrain": terrain_tris, "buildings": b_tris, "roads": road_tris},
+        "triangles": {"terrain": tb.triangles.get("lod0", 0), "terrain_lods": tb.triangles, "buildings": b_tris, "roads": street_tris["roads"], "ground": street_tris["ground"]},
+        "street_stats": layout.stats,
+        "sizes_mb": sizes,
         "generated_at": now_iso(),
     }
+    hd = assets / "buildings_hd" / "manifest_buildings.json"
+    if hd.exists():
+        manifest["buildings_hd"] = "buildings_hd/manifest_buildings.json"
     write_json(assets / "manifest.json", manifest)
+    log("timing: " + ", ".join(f"{k} {v:.1f}s" for k, v in timings.items()))
+    log(f"assets: {sizes}")
 
     o = scene_origin()
     rext = region_extent()
@@ -271,6 +390,9 @@ def finish(
         "workers": int(persons["is_worker"].sum()),
         "students": int((persons["school_id"] != "").sum()),
         "students_by_school": sbs,
+        "exits": len(net.exits),
+        "exits_dropped": [e["id"] for e in net.exits_dropped],
+        **{f"streets_{k}": v for k, v in layout.stats.items()},
     }
     meta = {
         "contract_version": CONTRACT_VERSION,
@@ -295,6 +417,16 @@ def finish(
         meta["warning"] = "SYNTHETIC DEV DATA: procedurally generated stand-in world. NOT real geography, buildings, roads or people."
     write_json(processed / "region_meta.json", meta)
     return meta
+
+
+def asset_sizes(assets: Path) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for sub in ("terrain", "buildings", "roads", "ground", "props", "materials", "buildings_hd"):
+        d = assets / sub
+        if d.exists():
+            out[sub] = round(sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) / 1e6, 2)
+    out["total"] = round(sum(out.values()), 2)
+    return out
 
 
 def print_counts(meta: dict[str, Any]) -> None:
@@ -340,8 +472,8 @@ def run_synthetic(skip_draco: bool = False) -> dict[str, Any]:
     world = make_world(region_extent(), grid.extent, load_yaml("schools.yaml")["schools"])
     log(f"synthetic world generated in {time.time() - t0:.1f}s")
     flatten_terrain_for_heroes(world.terrain, load_heroes())
-    tiles, tris, _ = write_terrain_outputs(world.terrain, grid, world.albedo, dirs["processed"], dirs["assets"], texture_px=1024)
-    net = build_network(world.graph, world.terrain, region())
+    tb, _ = write_terrain_outputs(world.terrain, grid, world.albedo, dirs["processed"], dirs["assets"], texture_px=SYNTHETIC_TEXTURE_PX, budget=SYNTHETIC_TERRAIN_BUDGET)
+    net = build_network(world.graph, tb.render, region())
     sources = [
         {"name": "Synthetic procedural world (pipeline/synthetic.py), fixed seeds", "license": "CC BY 4.0 (Redraw project)", "retrieved": today()},
         {"name": "Region config, schools.yaml, assumptions.yaml (unverified placeholders)", "license": "CC BY 4.0 (Redraw project)", "retrieved": today()},
@@ -351,8 +483,7 @@ def run_synthetic(skip_draco: bool = False) -> dict[str, Any]:
         terrain=world.terrain,
         grid=grid,
         net=net,
-        terrain_tiles=tiles,
-        terrain_tris=tris,
+        tb=tb,
         footprints=world.footprints,
         processed=dirs["processed"],
         assets=dirs["assets"],
@@ -360,6 +491,7 @@ def run_synthetic(skip_draco: bool = False) -> dict[str, Any]:
         work=None,
         sources=sources,
         skip_draco=skip_draco,
+        texture_px=SYNTHETIC_TEXTURE_PX,
     )
     log(f"synthetic build finished in {time.time() - t0:.1f}s")
     return meta
@@ -408,13 +540,14 @@ def run_real(skip_draco: bool = False, population_source: str = "acs") -> dict[s
     clean_outputs(dirs["processed"], dirs["assets"])
     # 2. build
     t = time.time()
-    terrain, tiles, tris, terrain_srcs = build_terrain.run_real(dirs["processed"], dirs["assets"], grid, dem_path, naip_path)
+    terrain, tb, terrain_srcs, _alb, tex_px = build_terrain.run_real(dirs["processed"], dirs["assets"], grid, dem_path, naip_path)
     log(f"timing: terrain {time.time() - t:.1f}s")
     t = time.time()
     G, sig = build_roads.load_osm_drive(osm["drive"])
-    net = build_network(G, terrain, region(), sig)
+    net = build_network(G, tb.render, region(), sig)
     log(f"timing: roads {time.time() - t:.1f}s")
     footprints = build_buildings.load_osm_buildings(osm["buildings"], build_buildings.load_landuse(raw))
+    footprints = build_buildings.add_lidar_missing_buildings(footprints, raw)
     osm_schools, school_areas = fetch_osm.load_schools(osm["schools"], load_yaml("schools.yaml")["schools"])
     bgs = dists = work = None
     if census is not None:
@@ -446,8 +579,7 @@ def run_real(skip_draco: bool = False, population_source: str = "acs") -> dict[s
         terrain=terrain,
         grid=grid,
         net=net,
-        terrain_tiles=tiles,
-        terrain_tris=tris,
+        tb=tb,
         footprints=footprints,
         processed=dirs["processed"],
         assets=dirs["assets"],
@@ -460,6 +592,8 @@ def run_real(skip_draco: bool = False, population_source: str = "acs") -> dict[s
         skip_draco=skip_draco,
         population=population_source,
         extra_meta=extra,
+        raw=raw,
+        texture_px=tex_px,
     )
     log(f"real build finished in {time.time() - t0:.1f}s")
     return meta

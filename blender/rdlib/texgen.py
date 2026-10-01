@@ -131,22 +131,25 @@ def worley(shape: tuple[int, int], cells: tuple[int, int], seed: int, jitter: fl
 # ---------------------------------------------------------------------------
 
 
-def gradient(h: np.ndarray, px_m: float) -> tuple[np.ndarray, np.ndarray]:
+def gradient(h: np.ndarray, px_m: float, py_m: float | None = None) -> tuple[np.ndarray, np.ndarray]:
     """(dh/dx, dh/dy_up) with wrap-around central differences (meters per meter)."""
+    py_m = py_m or px_m
     dx = (np.roll(h, -1, axis=1) - np.roll(h, 1, axis=1)) / (2 * px_m)
-    dy = (np.roll(h, 1, axis=0) - np.roll(h, -1, axis=0)) / (2 * px_m)  # row 0 is the top: up = -row
+    dy = (np.roll(h, 1, axis=0) - np.roll(h, -1, axis=0)) / (2 * py_m)  # row 0 is the top: up = -row
     return dx, dy
 
 
-def normal_map(h: np.ndarray, px_m: float, strength: float = 1.0) -> np.ndarray:
-    dx, dy = gradient(h, px_m)
+def normal_map(h: np.ndarray, px_m: float, strength: float = 1.0, py_m: float | None = None) -> np.ndarray:
+    dx, dy = gradient(h, px_m, py_m)
     n = np.stack([-dx * strength, -dy * strength, np.ones_like(h)], axis=-1)
     n /= np.linalg.norm(n, axis=-1, keepdims=True)
     return n * 0.5 + 0.5
 
 
-def horizon_ao(h: np.ndarray, px_m: float, radius_m: float, dirs: int = 8, steps: int = 10, power: float = 1.0) -> np.ndarray:
+def horizon_ao(h: np.ndarray, px_m: float, radius_m: float, dirs: int = 8, steps: int = 10, power: float = 1.0,
+               py_m: float | None = None) -> np.ndarray:
     """Horizon-based ambient occlusion of a periodic heightfield (1 = open sky)."""
+    py_m = py_m or px_m
     rad_px = max(1.0, radius_m / px_m)
     acc = np.zeros_like(h)
     for k in range(dirs):
@@ -158,7 +161,7 @@ def horizon_ao(h: np.ndarray, px_m: float, radius_m: float, dirs: int = 8, steps
             ox, oy = int(round(ux * r)), int(round(uy * r))
             if ox == 0 and oy == 0:
                 continue
-            dist = math.hypot(ox, oy) * px_m
+            dist = math.hypot(ox * px_m, oy * py_m)
             dh = np.roll(np.roll(h, -oy, axis=0), -ox, axis=1) - h
             best = np.maximum(best, np.arctan2(dh, dist))
         acc += np.sin(best)
@@ -294,10 +297,10 @@ class Canvas:
         for k in ("h", "rough", "metal", "ao", "mask", "emit"):
             setattr(self, k, np.broadcast_to(np.asarray(getattr(self, k), float), sh).copy())
         self.alb = np.broadcast_to(np.asarray(self.alb, float), (*sh, 3)).copy()
-        ao = horizon_ao(self.h, self.m, ao_radius_m, power=ao_power) * self.ao
+        ao = horizon_ao(self.h, self.m, ao_radius_m, power=ao_power, py_m=self.my) * self.ao
         return {
             "albedo": np.clip(self.alb, 0, 1),
-            "normal": normal_map(self.h, self.m, normal_strength),
+            "normal": normal_map(self.h, self.m, normal_strength, py_m=self.my),
             "ao": np.clip(ao, 0, 1),
             "rough": np.clip(self.rough, 0.02, 1),
             "metal": np.clip(self.metal, 0, 1),

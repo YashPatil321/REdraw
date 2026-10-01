@@ -60,7 +60,7 @@ export class PhotorealManager {
     this.active = on;
     if (on) {
       this.o.scene.add(this.tiles.group);
-      if (!this.tiles.loaded) this.o.onStatus('Loading photoreal 3D tiles…');
+      if (!this.tiles.loaded) this.o.onStatus('Loading 3D world…');
     } else {
       this.tiles.group.removeFromParent();
       this.drape?.reset();
@@ -121,9 +121,7 @@ export class PhotorealManager {
     }
     if (!this.tiles.loaded && now - this.lastStatusT > 1000) {
       this.lastStatusT = now;
-      const st = (this.tiles.tiles as unknown as { stats?: { downloading?: number; parsing?: number } }).stats;
-      const n = (st?.downloading ?? 0) + (st?.parsing ?? 0);
-      this.o.onStatus(`Loading photoreal 3D tiles…${n ? ` (${n} in flight)` : ''}`);
+      this.o.onStatus('Loading 3D world…');
     }
   }
 

@@ -91,7 +91,7 @@ def sheet(man: dict[str, Any], mat_dir: Path, path: Path, rows: list[list[tuple[
         maxw = max(maxw, x - gap)
     add_part(p, "sheet", man, mat_dir)
     H = len(rows) * (S + 0.9)
-    bl.setup_render(width_px, int(width_px * (H + 0.4) / (maxw + 0.8)), samples=samples)
+    bl.setup_render(width_px, int(width_px * (S + 0.25 + (len(rows) - 1) * (S + 0.9) + 0.75) / (maxw + 0.8)), samples=samples)
     bl.setup_world(sun_elev_deg=32, sun_azimuth_deg=215, strength=4.5, sky_strength=0.12)
     bpy.context.scene.view_settings.exposure = -0.25
     bl.ground_plane(200, "#E9E7E2", z=-60, roughness=1.0)
@@ -100,7 +100,8 @@ def sheet(man: dict[str, Any], mat_dir: Path, path: Path, rows: list[list[tuple[
     back.materials.append(bl.simple_material("backdrop", "#ECEAE5", 1.0))
     bo = bpy.data.objects.new("back", back)
     bpy.context.scene.collection.objects.link(bo)
-    cx, cz = maxw / 2, -(H - 0.9) / 2 + S / 2 - 0.25
+    top, bottom = S + 0.25, -(len(rows) - 1) * (S + 0.9) - 0.75
+    cx, cz = maxw / 2, (top + bottom) / 2
     bl.add_camera((cx, -60, cz), (cx, 0, cz), ortho_scale=maxw + 0.8)
     bl.render(path)
 
@@ -115,13 +116,13 @@ def materials_sheets(man: dict[str, Any], mat_dir: Path, out_dir: Path, samples:
     grow = [(f"open:garage_2car:0:{t}", "garage_2car", 2, 1), (f"open:garage_3car:0:{t}", "garage_3car", 3, 1),
             (f"open:storefront_sign:0:{t}", "storefront_sign", 1, 1), (f"open:school_window_band:0:#D8D2C4", "school_window_band", 1, 1),
             (f"open:school_door:0:#D8D2C4", "school_door", 1, 1)]
-    p1 = out_dir / "materials_facade.png"
+    p1 = out_dir / "materials_facade.jpg"
     # span panels: build each span cell as its own key so the preview uses the real per-cell lookup
     rows = [wrow, orow, grow]
     sheet_spans(man, mat_dir, p1, rows, samples)
     roofs = [(f"roof:{c['name']}", c["name"], 1, 2) for c in man["atlases"]["roofs"]["cells"]]
     ground = [(f"ground:{c['name']}", c["name"], 1, 2) for c in man["atlases"]["ground"]["cells"]]
-    p2 = out_dir / "materials_roofs_ground.png"
+    p2 = out_dir / "materials_roofs_ground.jpg"
     sheet(man, mat_dir, p2, [roofs[:8], roofs[8:], ground[:8], ground[8:]], samples)
     return [p1, p2]
 
@@ -150,7 +151,7 @@ def sheet_spans(man: dict[str, Any], mat_dir: Path, path: Path, rows: list, samp
         maxw = max(maxw, x - gap)
     add_part(p, "sheet", man, mat_dir)
     H = len(rows) * (S + 0.9)
-    bl.setup_render(1600, int(1600 * (H + 0.4) / (maxw + 0.8)), samples=samples)
+    bl.setup_render(1600, int(1600 * (S + 0.25 + (len(rows) - 1) * (S + 0.9) + 0.75) / (maxw + 0.8)), samples=samples)
     bl.setup_world(sun_elev_deg=30, sun_azimuth_deg=215, strength=4.5, sky_strength=0.12)
     bpy.context.scene.view_settings.exposure = -0.25
     back = bpy.data.meshes.new("back")
@@ -158,7 +159,8 @@ def sheet_spans(man: dict[str, Any], mat_dir: Path, path: Path, rows: list, samp
     back.materials.append(bl.simple_material("backdrop", "#ECEAE5", 1.0))
     bo = bpy.data.objects.new("back", back)
     bpy.context.scene.collection.objects.link(bo)
-    cx, cz = maxw / 2, -(H - 0.9) / 2 + S / 2 - 0.25
+    top, bottom = S + 0.25, -(len(rows) - 1) * (S + 0.9) - 0.75
+    cx, cz = maxw / 2, (top + bottom) / 2
     bl.add_camera((cx, -60, cz), (cx, 0, cz), ortho_scale=maxw + 0.8)
     bl.render(path)
 
@@ -180,16 +182,13 @@ class Instancer:
         if key in self.protos:
             return self.protos[key]
         if key in foliage.SPECIES:
-            fn, _ = foliage.SPECIES[key]
-            built = fn(self.tex_dir / f"{key}.png")
-            part, normals, tex = built[:3]
-            bl.TEXTURES["foliage_atlas"] = tex
+            built = foliage.build(key, self.tex_dir / f"{key}.png")
+            bl.TEXTURES["foliage_atlas"] = built.tex
             if "foliage" in bpy.data.materials:
                 bpy.data.materials["foliage"].name = f"foliage_{len(self.protos)}"
-            o = bl.part_to_object(part, f"proto_{key}")
-            bl.set_custom_normals(o, normals)
-            if len(built) > 3 and built[3] is not None:
-                bl.set_vertex_ao(o, built[3])
+            o = bl.part_to_object(built.part, f"proto_{key}")
+            bl.set_custom_normals(o, built.normals)
+            bl.set_vertex_ao(o, built.ao)
         elif key == "street_lamp":
             o = bl.part_to_object(props.street_lamp(), "proto_lamp", smooth_angle=45)
         else:

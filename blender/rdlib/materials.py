@@ -68,6 +68,8 @@ MATERIALS: dict[str, Mat] = {
     "concrete": Mat("#B9B4AA", 0.9, 0.0),
     # --- vegetation (one atlas material per tree: bark + leaf cards share it) ----------
     "foliage": Mat("#FFFFFF", 0.82, 0.0, double_sided=True, alpha_mask=True, alpha_cutoff=0.45, texture="foliage_atlas"),
+    # LOD1 impostor: back-to-back quads, single sided (keeps the bent normals on both sides)
+    "foliage_impostor": Mat("#FFFFFF", 0.85, 0.0, double_sided=False, alpha_mask=True, alpha_cutoff=0.45, texture="foliage_atlas"),
 }
 
 

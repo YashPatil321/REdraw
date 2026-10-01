@@ -50,6 +50,69 @@ does not have) and are re-encoded to stay under 400 KB.
 - No Draco (the pipeline's hero loader rejects it; props are small anyway).
 - Fixed seeds everywhere; rebuilding gives identical geometry.
 
+## Material atlases (`client/public/assets/materials/`)
+
+Tileable PBR atlases for buildings, roofs and ground, generated procedurally by
+`rdlib/matgen.py` + `rdlib/texgen.py` (periodic FFT noise, periodic Worley cells, analytic
+antialiased shapes, heights in meters -> normal maps and horizon AO with real strength) and
+checked in Cycles renders (`previews/materials_*.jpg`, `previews/street_scene.jpg`).
+`--only materials` rebuilds them in about 30 s.
+
+| file | content |
+| --- | --- |
+| `<atlas>_albedo.jpg` | sRGB base color |
+| `<atlas>_normal.jpg` | tangent-space normal, OpenGL / glTF convention (+Y up), linear |
+| `<atlas>_orm.jpg` | R ambient occlusion, G roughness, B metalness (glTF packing), linear |
+| `<atlas>_*_1k.jpg` | half-resolution copies (low preset / far LOD) |
+| `facade_openings_mask.png` | R: 1 wall (tint with the wall color), 0.5 paintable near-white (garage / service doors), 0 fixed; G: glass that may glow at night |
+| `ground_markings.png` | RGBA lane-marking decals, alpha = worn paint coverage |
+| `materials_manifest.json` | everything below, machine readable |
+
+Atlases (`atlases.<name>`): `facade_walls` 2048x1024 (6 neutral stucco finishes, ledgestone,
+curtain glazing), `facade_openings` 2048x2048 (vinyl slider / single-hung pair / picture /
+small obscure / arched windows, stained entry door with sidelite, patio slider, 2-car and 3-car
+raised-panel garage spans, storefront bay, storefront sign band, school ribbon window, school
+double door), `roofs` 2048x2048 (4 Spanish S-tile blends, mission barrel, 4 flat concrete tiles,
+TPO, TPO with HVAC grime, gravel ballast, modified bitumen, residential PV, standing seam,
+concrete deck), `ground` 2048x2048 (fresh / worn / parking asphalt, sidewalk, driveway, curb &
+gutter profile, pavers, plaza concrete, lawn, stressed lawn, chaparral, coastal sage, DG, bare dirt,
+mulch, pool water).
+
+**Cells.** Every atlas is a grid of 512 px cells; each cell = a 480 px tileable inner square plus a
+16 px wrapped gutter. Each `cells[i]` entry has `name`, `index`, `world_size_m` (meters covered by
+one inner square), `texels_per_m`, `span_cells`, `tintable`, `mean_albedo_linear`, and per span
+cell `px` / `inner_px` (top-left origin) and `uv_inner` = `[u0, v0, u1, v1]` with **v measured from
+the bottom** (three.js `TextureLoader` flipY = true, OpenGL, Blender). Shader lookup:
+`atlas_uv = mix(uv_inner.xy, uv_inner.zw, fract(mesh_uv))` (use `textureGrad` with the
+derivatives of `mesh_uv` to avoid a 1-pixel seam at the fract wrap). `facade_openings` cells
+also carry `opening_rects_m` (`glass` / `door` rects in meters from the cell's bottom-left).
+
+**Vertex attributes / material ids** (shared with the pipeline and the buildings agent):
+
+| `_MAT` | meaning | atlas | `_VARIANT` = index into `materials[_MAT].variants` |
+| --- | --- | --- | --- |
+| 0 | stucco wall | facade_walls | stucco_smooth, stucco_sand, stucco_lace, stucco_catface, stucco_weathered, stucco_scored, stone_veneer |
+| 1 | tile roof | roofs | s_tile_terracotta, s_tile_blend, s_tile_brown, s_tile_aged, barrel_mission, flat_tile_brown, flat_tile_grey, flat_tile_charcoal, flat_tile_sandstone, solar_panel |
+| 2 | flat roof | roofs | flat_tpo, flat_tpo_grime, flat_gravel, flat_modbit, concrete_deck, standing_seam |
+| 3 | glass | facade_walls | glass_curtain |
+| 4 | trim | facade_walls | stucco_smooth, stone_veneer |
+| 5 | garage door | facade_openings | garage_2car, garage_3car |
+| 6 | ground (hero campuses; extension) | ground | `_VARIANT` = ground cell index |
+| 7 | vertex color only (extension) | - | - |
+
+`COLOR_0` is the tint: for tintable cells `base = COLOR_0_linear * texel_linear / mean_albedo_linear`
+(on `facade_openings`, only where mask R > 0.75). Roof / ground cells carry real colors.
+
+**UV convention** (`TEXCOORD_0`, `rdlib/atlas.py:face_uv` implements it for Blender meshes):
+walls / glass / trim / garage: `u = meters along the wall / 3`, `v = meters above the wall base / 3`
+(one UV unit = one 3 m x 3 m floor-bay = one cell; `bay = floor(u)`, `floor = floor(v)`); pitched
+roofs: `u = meters along the eave / 4`, `v = meters up the slope / 4`; flat roofs: `u = x / 4`,
+`v = -z / 4`; ground: planar by the cell's `world_size_m`. Garage spans cover 2 / 3 consecutive
+bays: span cell k holds local `x / 3` in `[k, k + 1)`. `bay_grammar` in the manifest suggests
+which opening cells go on which (bay, floor) per building type (`rdlib/houses.py` is a working
+reference that builds tract houses this way for the street preview). Blender helpers for
+previews: `bl.atlas_material(name, manifest, atlas, cell, mat_dir, span_k, tint_hex | tint_attr)`.
+
 ## Vehicles
 
 Lofted bodies (cross-section rings mirrored left/right, wheel arches cut by raising

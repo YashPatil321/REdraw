@@ -519,13 +519,13 @@ def render_preview(site: dict[str, Any], objs: list, path: Path, samples: int = 
         if key in meshes:
             return meshes[key]
         if key in foliage.SPECIES:
-            fn, _ = foliage.SPECIES[key]
-            part, normals, tex = fn(tex_dir / f"{key}.png")
-            bl.TEXTURES["foliage_atlas"] = tex
+            built = foliage.build(key, tex_dir / f"{key}.png")
+            bl.TEXTURES["foliage_atlas"] = built.tex
             if "foliage" in bpy.data.materials:
                 bpy.data.materials["foliage"].name = f"foliage_{len(meshes)}"
-            o = bl.part_to_object(part, f"proto_{key}")
-            bl.set_custom_normals(o, normals)
+            o = bl.part_to_object(built.part, f"proto_{key}")
+            bl.set_custom_normals(o, built.normals)
+            bl.set_vertex_ao(o, built.ao)
         elif key == "street_lamp":
             o = bl.part_to_object(props.street_lamp(), "proto_lamp", smooth_angle=45)
         else:

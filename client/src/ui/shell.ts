@@ -3,7 +3,6 @@
 import { LitElement, css, html, nothing } from 'lit';
 import { navigate } from '../actions';
 import type { Quality } from '../scene/quality';
-import { NO_KEY_HELP } from '../photoreal/key';
 import { OFFLINE_VIEWER } from '../actions';
 import { store, type View } from '../state';
 import { StoreController, appCtx, humanize, fmtUsd, theme } from './base';
@@ -113,33 +112,7 @@ export class RdTopbar extends LitElement {
       }
     `,
   ];
-  private st = new StoreController(this, ['view', 'meta', 'showStats', 'plan', 'quality', 'renderMode', 'photoreal', 'walking']);
-
-  private renderModeToggle() {
-    const s = this.st.s;
-    const pr = s.photoreal;
-    const tip = !pr.available
-      ? NO_KEY_HELP
-      : pr.error
-        ? `Photoreal unavailable: ${pr.error}`
-        : pr.source === 'url'
-          ? 'Photoreal from a local 3D Tiles tileset (?tiles=…), for development.'
-          : 'Google Photorealistic 3D Tiles (Map Tiles API). Our traffic and plan overlays are drawn on top.';
-    const dotCls = !pr.available ? 'off' : pr.error ? 'err' : '';
-    return html`<div class="seg" role="group" aria-label="Base map">
-      <button
-        class=${s.renderMode === 'photoreal' ? 'on' : ''}
-        ?disabled=${!pr.available}
-        title=${tip}
-        @click=${() => appCtx.scene?.setRenderMode('photoreal')}
-      >
-        <span class="dot ${dotCls}"></span>Photoreal (Google)
-      </button>
-      <button class=${s.renderMode === 'open' ? 'on' : ''} title="Our open-data 3D model (OpenStreetMap, USGS 3DEP, NAIP)" @click=${() => appCtx.scene?.setRenderMode('open')}>
-        Open data
-      </button>
-    </div>`;
-  }
+  private st = new StoreController(this, ['view', 'meta', 'showStats', 'plan', 'quality', 'walking']);
 
   override render() {
     const s = this.st.s;
@@ -163,7 +136,6 @@ export class RdTopbar extends LitElement {
           >`
         : nothing}
       ${s.showStats ? html`<rd-stats></rd-stats>` : nothing}
-      ${this.renderModeToggle()}
       <button class=${s.walking ? 'active' : ''} @click=${() => (s.walking ? appCtx.scene?.exitWalk() : appCtx.scene?.walkAtTarget())} title="Street-level first-person view (WASD + mouse)">
         🚶 ${s.walking ? 'Exit walk' : 'Walk'}
       </button>
@@ -447,7 +419,7 @@ export class RdToasts extends LitElement {
 }
 customElements.define('rd-toasts', RdToasts);
 
-/** Required on-screen credits: Google logo + data providers in photoreal mode, open-data sources otherwise. */
+/** Required on-screen credits: Google logo + data providers when Google tiles are drawn, open-data sources otherwise. */
 export class RdAttribution extends LitElement {
   static override styles = [
     theme,

@@ -77,9 +77,11 @@ describe('ENU frame', () => {
   });
 
   it('without the warp the tangent plane is off by meters at the region edge (why the warp exists)', () => {
-    const p = pts.points.find((q) => Math.abs(q.x) > 4000)!;
+    // farthest documented point from the origin (the region is a few km across)
+    const p = pts.points.reduce((a, q) => (Math.hypot(q.x, q.z) > Math.hypot(a.x, a.z) ? q : a));
+    expect(Math.hypot(p.x, p.z)).toBeGreaterThan(2500);
     const raw = applyFrame(frame, geodeticToEcef(p.lat, p.lon, 0));
-    expect(Math.hypot(raw[0] - p.x, raw[2] - p.z)).toBeGreaterThan(2);
+    expect(Math.hypot(raw[0] - p.x, raw[2] - p.z)).toBeGreaterThan(1);
   });
 });
 

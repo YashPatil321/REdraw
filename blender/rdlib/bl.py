@@ -79,7 +79,16 @@ def pbr_material(key: str) -> bpy.types.Material:
         img.image = bpy.data.images.load(str(TEXTURES[spec.texture]), check_existing=True)
         img.image.colorspace_settings.name = "sRGB"
         img.image.alpha_mode = "STRAIGHT"
-        nt.links.new(img.outputs["Color"], b.inputs["Base Color"])
+        # x vertex color (baked crown AO in COLOR_0; white when absent)
+        vc = nt.nodes.new("ShaderNodeVertexColor")
+        vc.layer_name = "Col"
+        mul = nt.nodes.new("ShaderNodeMix")
+        mul.data_type = "RGBA"
+        mul.blend_type = "MULTIPLY"
+        mul.inputs["Factor"].default_value = 1.0
+        nt.links.new(img.outputs["Color"], mul.inputs["A"])
+        nt.links.new(vc.outputs["Color"], mul.inputs["B"])
+        nt.links.new(mul.outputs["Result"], b.inputs["Base Color"])
         if spec.alpha_mask:
             # glTF exporter: alpha through a "Round" math node -> alphaMode MASK.
             rnd = nt.nodes.new("ShaderNodeMath")
@@ -400,6 +409,19 @@ def set_custom_normals(obj: bpy.types.Object, normals: np.ndarray) -> None:
     me.normals_split_custom_set_from_vertices([tuple(v) for v in n])
 
 
+def set_vertex_ao(obj: bpy.types.Object, ao: np.ndarray) -> None:
+    """Per-vertex ambient occlusion as the active color attribute "Col" (exported as glTF COLOR_0, linear)."""
+    me = obj.data
+    a = np.clip(np.asarray(ao, dtype=np.float32), 0, 1)
+    if len(a) != len(me.vertices):
+        raise ValueError(f"{obj.name}: {len(a)} AO values for {len(me.vertices)} vertices")
+    ca = me.color_attributes.new("Col", "BYTE_COLOR", "POINT")
+    cols = np.ones((len(a), 4), dtype=np.float32)
+    cols[:, :3] = a[:, None]
+    ca.data.foreach_set("color", cols.ravel())
+    me.color_attributes.active_color = ca
+
+
 def tri_count(objs: list[bpy.types.Object]) -> int:
     n = 0
     for o in objs:
@@ -557,8 +579,22 @@ def import_glb(path: Path) -> list[bpy.types.Object]:
 
 
 def render(path: Path, max_kb: int = 380) -> None:
-    """Render to PNG; re-encode as a palettized PNG if it exceeds max_kb (previews are committed)."""
+    """Render to PNG; re-encode as a palettized PNG if it exceeds max_kb (previews are committed).
+    A .jpg path renders to PNG first and saves the largest JPEG quality that fits max_kb."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() in (".jpg", ".jpeg"):
+        from PIL import Image
+
+        tmp = path.with_suffix(".tmp.png")
+        bpy.context.scene.render.filepath = str(tmp)
+        bpy.ops.render.render(write_still=True)
+        im = Image.open(tmp).convert("RGB")
+        for q in (92, 88, 84, 80, 75, 70, 60):
+            im.save(path, quality=q, optimize=True, progressive=True)
+            if path.stat().st_size <= max_kb * 1024:
+                break
+        tmp.unlink()
+        return
     bpy.context.scene.render.filepath = str(path)
     bpy.ops.render.render(write_still=True)
     if path.stat().st_size > max_kb * 1024:
