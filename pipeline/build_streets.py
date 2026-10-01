@@ -574,6 +574,29 @@ def _buffer_roads(roads: list[Road], pad: float = 0.0) -> Any:
     return unary_union(geoms) if geoms else Polygon()
 
 
+def _junction_disks(roads: list[Road], jn: dict[Any, list[tuple[int, bool]]], curb_r: float) -> Any:
+    """Union of disks around junctions (where >= 3 carriageway ends meet), big enough to hold
+    the curb returns of the widest approach."""
+    disks = []
+    for _node, inc in jn.items():
+        i0, s0 = inc[0]
+        r0 = roads[i0]
+        p = r0.line.coords[0] if s0 else r0.line.coords[-1]
+        rad = max(roads[i].half_w for i, _ in inc) + 2.0 * curb_r + 2.0
+        disks.append(Point(p[0], p[1]).buffer(rad, quad_segs=8))
+    return unary_union(disks) if disks else Polygon()
+
+
+def _curb_returns(surface: Any, jdisks: Any, curb_r: float) -> Any:
+    """Round the inside corners of a road surface with the curb return radius, but only at
+    junctions: a plain closing would also pave the medians between divided carriageways."""
+    if surface.is_empty or jdisks.is_empty:
+        return surface
+    closed = surface.buffer(curb_r).buffer(-curb_r)
+    fill = closed.difference(surface).intersection(jdisks)
+    return unary_union([surface, fill])
+
+
 def junctions(roads: list[Road]) -> dict[Any, list[tuple[int, bool]]]:
     """Graph node -> [(road index, starts_here)] for nodes where >= 3 carriageway ends meet."""
     ends: dict[Any, list[tuple[int, bool]]] = {}
@@ -602,10 +625,11 @@ def layout_streets(
     road_main = [r for r in roads if r.kind == "road"]
     service = [r for r in roads if r.kind == "service" and not any(r.line.intersects(h) for h in hero_disks)]
     roads = road_main + service
-    main_poly = _buffer_roads(road_main).buffer(curb_r).buffer(-curb_r)  # curb returns at corners
+    jn = junctions(road_main)
+    jdisks = _junction_disks(road_main, jn, curb_r)
+    main_poly = _curb_returns(_buffer_roads(road_main), jdisks, curb_r)  # curb returns at corners only
     roads_poly = unary_union([main_poly, _buffer_roads(service)])
     # junction patches + crosswalks
-    jn = junctions(road_main)
     sig_tree = shapely.STRtree(shapely.points(signal_xz)) if len(signal_xz) else None
     patches: list[Polygon] = []
     crosswalks: list[tuple[np.ndarray, np.ndarray, float, float]] = []
@@ -765,7 +789,7 @@ def layout_streets(
     dw_union = unary_union([d for d, _ in driveways]) if driveways else Polygon()
     # sidewalks (curb-adjacent walk on residential / arterial streets)
     walk_roads = [r for r in road_main if r.sidewalk]
-    side_src = _buffer_roads(walk_roads).buffer(curb_r).buffer(-curb_r)
+    side_src = _curb_returns(_buffer_roads(walk_roads), jdisks, curb_r)
     side = side_src.buffer(walk_w, join_style="round", quad_segs=4).difference(roads_poly)
     cut = [medians_u, dw_union]
     if btree_ids:

@@ -178,11 +178,13 @@ def build_tile_arrays(tile: str, lod: int, params: dict[str, Any]) -> tuple[Any,
             s = r.soup
             if s.ntris == 0:
                 raise ValueError("empty")
-            info = {"eave_h": r.eave_h, "ridge_h": r.ridge_h, "roof_type": r.roof_type, "two_level": r.two_level}
+            info = {"eave_h": r.eave_h, "ridge_h": r.ridge_h, "roof_type": r.roof_type, "two_level": r.two_level,
+                    "garages": r.garages, "entries": r.entries}
         except Exception as e:  # noqa: BLE001 - a bad footprint must not kill the tile; logged + counted
             log(f"{tile} building {sp['id']}: {type(e).__name__}: {e} -> box fallback")
             s = model.box_fallback(sp, lod)
-            info = {"eave_h": sp.get("eave_h"), "ridge_h": sp.get("eave_h"), "roof_type": "flat", "two_level": False}
+            info = {"eave_h": sp.get("eave_h"), "ridge_h": sp.get("eave_h"), "roof_type": "flat", "two_level": False,
+                    "garages": [], "entries": []}
             fallback = True
         soup.extend(s)
         meta.append({"id": int(sp["id"]), "type": sp["type"], "source": sp.get("roof_source"), "origin": sp.get("origin", "osm"),
@@ -320,7 +322,7 @@ def write_manifests(index: dict[str, Any], params: dict[str, Any]) -> dict[str, 
         for b in st["buildings"]:
             rows.append({"id": b["id"], "tile": tid, "type": b["type"], "eave_h": b["eave_h"], "ridge_h": b["ridge_h"],
                          "roof_type": b["roof_type"], "source": b["source"], "levels": b["levels"], "two_level": b["two_level"],
-                         "origin": b["origin"]})
+                         "origin": b["origin"], "garages": b.get("garages") or [], "entries": b.get("entries") or []})
             by_type[b["type"]] = by_type.get(b["type"], 0) + 1
             by_src[str(b["source"])] = by_src.get(str(b["source"]), 0) + 1
             by_roof[str(b["roof_type"])] = by_roof.get(str(b["roof_type"]), 0) + 1
@@ -365,7 +367,9 @@ def write_manifests(index: dict[str, Any], params: dict[str, Any]) -> dict[str, 
     bj = {"format": "redraw-buildings-hd-table", "version": FORMAT_VERSION, "fields": {
         "eave_h": "m above the finished floor (main / highest roof level)", "ridge_h": "m above the finished floor",
         "roof_type": "flat | hip | gable | shed | complex", "source": "lidar | tag | heuristic",
-        "two_level": "one-storey wing + two-storey block", "origin": "osm | lidar_missing"}, "buildings": rows}
+        "two_level": "one-storey wing + two-storey block", "origin": "osm | lidar_missing",
+        "garages": "garage doors [[x, z, nx, nz, width_m, floor_y]]: door center (scene m), outward normal (toward the street / driveway)",
+        "entries": "front doors [[x, z, nx, nz, width_m, floor_y]]"}, "buildings": rows}
     (OUT_DIR / "buildings_hd.json").write_text(json.dumps(bj, separators=(",", ":")))
     return man
 

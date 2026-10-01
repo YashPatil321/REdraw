@@ -63,3 +63,11 @@ Every leaf with `verified: false`. Highest impact first:
 - [ ] Lidar -> footprint registration shift (~1 m W, ~1 m N, `data/raw/lidar/work/registration.json`) is a pixel-level (0.5 m) IoU fit on 5 residential samples; whether the offset is in the footprints (imagery tracing) or the lidar is not known.
 - [ ] Roof types (flat / gable / hip / complex / shed) come from RANSAC planes and an eave-outline test (`lidar.hip_min_eave_frac`), calibrated by eye on a few 4S Ranch blocks; no ground-truth roof-type sample was checked.
 - [ ] Tree `species_guess` thresholds (`lidar.palm_*`, `lidar.conifer_*`) are geometric guesses (crown size / shape / isolation) without spectral data; no field or street-tree-inventory check.
+
+## HD world build (pipeline/build_streets.py, build_landcover.py, build_terrain.py)
+- [ ] `deldios_north` exit: Del Dios Highway only clips the NW bbox corner and has no junction with the network inside the bbox (nor in the raw data extent), so the exit is routed `via` `sandieguito_west` (exits.json). Check that trips toward Del Dios / Rancho Santa Fe Lakes really leave via San Dieguito Road west.
+- [ ] Private (gated) streets are now rendered from Overture but stay out of the routable network; residents of Santaluz / The Crosby still snap to the nearest public node. Decide whether `access=private` residential streets should join the drive graph for their own residents.
+- [ ] Paseo / park path width (`hd_world.paseo_width_m` 2.4 m) and trail width (`hd_world.trail_width_m` 1.8 m) are guesses from imagery; trail tread width varies from single track to fire roads.
+- [ ] Land-cover splat thresholds: imagery color classes (`build_landcover.classify_imagery`), Overture land_cover weights (`LANDCOVER_PRIOR`), lidar nDSM shrub / canopy cutoffs (`hd_world.ndsm_*`) and the "bright grey water = covered reservoir" rule were tuned by eye on a few tiles of 10 m Sentinel-2 imagery. NAIP 0.6 m would make the color classes much sharper.
+- [ ] House driveways are inferred (garage on the wall nearest the street, straight to the curb), not mapped; alley-loaded and side-entry garages are only right when the nearest street is the alley.
+- [ ] Medians exist only where OSM/Overture maps the arterial as two one-way carriageways; raised medians on single-line two-way roads are not modeled.

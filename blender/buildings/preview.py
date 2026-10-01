@@ -408,9 +408,91 @@ def place_props(T: Terrain, center: tuple[float, float], radius: float, building
     return n
 
 
+_PROTO_CACHE: dict[str, bpy.types.Object] = {}
+
+
+def proto_of(file_rel: str) -> bpy.types.Object:
+    if file_rel not in _PROTO_CACHE or _PROTO_CACHE[file_rel].name not in bpy.data.objects:
+        _PROTO_CACHE[file_rel] = import_proto(PROPS_DIR / file_rel)
+    return _PROTO_CACHE[file_rel]
+
+
+def instance(file_rel: str, x: float, z: float, y: float, rot: float, s: float = 1.0, data: Any = None) -> None:
+    pr = proto_of(file_rel)
+    ob = bpy.data.objects.new(Path(file_rel).stem, data or pr.data)
+    ob.location = (x, -z, y)
+    ob.rotation_euler = (0.0, 0.0, rot)
+    ob.scale = (s, s, s)
+    bpy.context.scene.collection.objects.link(ob)
+
+
+def decorate_lots(T: Terrain, builders: list[model.Builder], asphalt: Any) -> int:
+    """Preview set dressing at each house front: planting beds of shrubs / grasses along the street
+    walls (not across the garage or entry) and a parked car on some driveways."""
+    rng = np.random.default_rng(11)
+    n = 0
+    cars = ["vehicles/car_suv.glb", "vehicles/car_sedan.glb", "vehicles/car_minivan.glb", "vehicles/car_pickup.glb", "vehicles/car_crossover_ev.glb"]
+    cars = [c for c in cars if (PROPS_DIR / c).exists()]
+    pm = {p["id"]: p for p in json.loads((PROPS_DIR / "props_manifest.json").read_text())}
+    painted: dict[tuple[str, int], Any] = {}
+    for b in builders:
+        if b.btype != "house" or b.front is None:
+            continue
+        spans = b.garages + b.entries
+        for a, bb in b.walls():
+            e = bb - a
+            L = float(np.hypot(*e))
+            t = e / L
+            nrm = np.array([t[1], -t[0]])
+            if nrm @ b.front < 0.5 or L < 2.0:
+                continue
+            k = 0.7
+            while k < L - 0.5:
+                p = a + t * k + nrm * 0.75
+                if not any(np.hypot(*(p - (g0 + g1) / 2)) < np.hypot(*(g1 - g0)) / 2 + 1.2 for g0, g1, _ in spans):
+                    x, z = float(p[0]), float(-p[1])
+                    kind = "vegetation/shrub.glb" if rng.random() < 0.75 else "vegetation/grass_ornamental.glb"
+                    instance(kind, x, z, float(T.sample(x, z)) - 0.05, float(rng.uniform(0, 6.28)), float(rng.uniform(0.6, 1.0)))
+                    n += 1
+                k += float(rng.uniform(1.1, 1.8))
+        for g0, g1, gn in b.garages[:1]:
+            if not cars or rng.random() > 0.45:
+                continue
+            m = (g0 + g1) / 2 + gn * 3.4 + (g1 - g0) / np.hypot(*(g1 - g0)) * rng.uniform(-1.1, 1.1)
+            x, z = float(m[0]), float(-m[1])
+            if asphalt is not None and asphalt.contains(Point(x, z)):
+                continue
+            cf = cars[int(rng.integers(len(cars)))]
+            cid = Path(cf).stem
+            cols = pm.get(cid, {}).get("paint_colors") or []
+            data = None
+            if cols:
+                w = np.array([c["share"] for c in cols])
+                ci = int(rng.choice(len(cols), p=w / w.sum()))
+                if (cf, ci) not in painted:
+                    from rdlib import materials as mlib
+
+                    me = proto_of(cf).data.copy()
+                    for i, mt in enumerate(me.materials):
+                        if mt and mt.name.startswith("paint") and "bus" not in mt.name:
+                            mm = mt.copy()
+                            bsdf = mm.node_tree.nodes.get("Principled BSDF")
+                            if bsdf:
+                                bsdf.inputs["Base Color"].default_value = (*mlib.hex_to_linear(cols[ci]["hex"]), 1.0)
+                            me.materials[i] = mm
+                    painted[(cf, ci)] = me
+                data = painted[(cf, ci)]
+            # car forward = -z (Blender +Y); nose toward the garage = -gn (plan)
+            rot = math.atan2(gn[0], -gn[1])
+            instance(cf, x, z, float(T.sample(x, z)) + 0.02, rot, 1.0, data)
+            n += 1
+    return n
+
+
 def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, dict[str, Any]]:
     data_name, kind = VIEWS[view]
     bl.reset_scene()
+    _PROTO_CACHE.clear()
     man = json.loads((MAT_DIR / "materials_manifest.json").read_text())
     T = Terrain(PREVIEW_DIR / f"{data_name}.npz")
     data = json.loads((PREVIEW_DIR / f"{data_name}.json").read_text())
@@ -439,9 +521,12 @@ def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, di
                 log(f"building {sp['id']}: {e}")
     log(f"{len(builders)} buildings, {soup.ntris:,} tris ({time.time() - t0:.0f}s)")
     soup_object("buildings", soup, man)
-    yards = shapely.union_all([p.buffer(16.0) for p in polys]) if polys else None
-    terrain_object(T, man, yards=yards)
     asphalt = roads_and_driveways(T, data, builders, man)
+    corridor = shapely.union_all([LineString(r["pts"]).buffer(ROAD_W.get(r["cls"], 9.0) / 2 + 5.0) for r in data["roads"]])
+    yards = shapely.union_all([p.buffer(16.0) for p in polys] + [corridor]) if polys else corridor
+    terrain_object(T, man, yards=yards)
+    ndeco = decorate_lots(T, builders, asphalt)
+    log(f"{ndeco} yard plants / driveway cars")
     bp = shapely.union_all(polys) if polys else None
     if bp is not None and asphalt is not None and not asphalt.is_empty:
         bp = shapely.union_all([bp, asphalt.buffer(-2.0)])
@@ -449,8 +534,13 @@ def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, di
     log(f"{nprops} props placed")
     sc = bl.setup_render(res[0], res[1], samples)
     sc.cycles.max_bounces = 4
-    sc.view_settings.exposure = -0.35
-    bl.setup_world(sun_elev_deg=36.0, sun_azimuth_deg=200.0, strength=5.2, sky_strength=0.12)
+    sc.view_settings.exposure = -0.55
+    bl.setup_world(sun_elev_deg=40.0, sun_azimuth_deg=165.0, strength=6.0, sky_strength=0.10)
+    sky = next((nd for nd in bpy.context.scene.world.node_tree.nodes if nd.bl_idname == "ShaderNodeTexSky"), None)
+    if sky is not None:  # clear, dry SoCal air
+        for attr, v in (("air_density", 1.0), ("aerosol_density", 0.6), ("ozone_density", 1.2)):
+            if hasattr(sky, attr):
+                setattr(sky, attr, v)
     # camera
     if kind == "street":
         cam, tgt = street_camera(data, T, builders)

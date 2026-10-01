@@ -1367,6 +1367,18 @@ class Result:
     roof_type: str
     two_level: bool
     rect: bool
+    garages: list[list[float]] = field(default_factory=list)
+    entries: list[list[float]] = field(default_factory=list)
+
+
+def _doors_scene(doors: list[tuple[np.ndarray, np.ndarray, np.ndarray]], floor: float) -> list[list[float]]:
+    """(start, end, normal) in plan coords -> [x, z, nx, nz, width, floor_y] in scene coords."""
+    out = []
+    for p0, p1, n in doors:
+        m = (p0 + p1) / 2
+        out.append([round(float(m[0]), 2), round(float(-m[1]), 2), round(float(n[0]), 3), round(float(-n[1]), 3),
+                    round(float(np.hypot(*(p1 - p0))), 2), round(floor, 2)])
+    return out
 
 
 def build_building(spec: dict[str, Any], lod: int, P: dict[str, Any] | None = None) -> Result:
@@ -1374,7 +1386,8 @@ def build_building(spec: dict[str, Any], lod: int, P: dict[str, Any] | None = No
     b = Builder(spec, lod, params)
     soup = b.build()
     rt = b.plan.roof_type if not b.plan.levels[-1].flat else "flat"
-    return Result(soup, round(b.plan.eave_h, 2), round(b.plan.ridge_h, 2), rt, b.plan.two_level, b.fp.rect)
+    return Result(soup, round(b.plan.eave_h, 2), round(b.plan.ridge_h, 2), rt, b.plan.two_level, b.fp.rect,
+                  _doors_scene(b.garages, b.floor), _doors_scene(b.entries, b.floor))
 
 
 def box_fallback(spec: dict[str, Any], lod: int) -> Soup:
