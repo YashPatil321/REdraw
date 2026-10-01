@@ -160,7 +160,8 @@ def build_trees(entries: list[dict], samples: int = 32) -> None:
             imp = impostor.bake(obj, imp_png, res=512, samples=samples)
             k = np.array(built.part.V)
             crown_z = float(np.percentile(k[:, 2], 70))
-            part1, n1 = impostor.lod1_part(imp, crown_z)
+            top_z = float(np.percentile(k[:, 2], 93))
+            part1, n1 = impostor.lod1_part(imp, crown_z, top_z)
             bl.reset_scene()
             bl.TEXTURES["foliage_atlas"] = imp_png
             o1 = bl.part_to_object(part1, f"{tid}_lod1")
@@ -172,7 +173,8 @@ def build_trees(entries: list[dict], samples: int = 32) -> None:
             entry["lods"] = [
                 {"level": 0, "file": entry["file"], "triangles": tris, "max_distance_m": LOD1_DISTANCE["tree"]},
                 {"level": 1, "file": f"vegetation/{tid}_lod1.glb", "triangles": t1, "min_distance_m": LOD1_DISTANCE["tree"],
-                 "kind": "impostor: 3 crossed vertical quads + 1 horizontal crown quad, Cycles-baked side/top views (albedo x AO)"},
+                 "kind": "impostor: 3 crossed vertical quads (back to back) + 1 upward crown quad, Cycles-baked side/top views "
+                         "(albedo x AO), ellipsoid-crown normals; single-sided (cull backfaces); cast shadows, do not receive"},
             ]
             entry["lod1_file"] = f"vegetation/{tid}_lod1.glb"
             msg += f", LOD1 {t1} tris"
@@ -341,6 +343,8 @@ def preview_trees(path: Path, samples: int, lod1: bool = False) -> None:
         elif lod1:
             objs = bl.import_glb(PROPS_DIR / "vegetation" / f"{tid}_lod1.glb")
             o = objs[0]
+            bl.cycles_backface_cull(o)  # the client culls the back-to-back impostor quads; Cycles does not
+            o.visible_shadow = False  # client: impostors cast but do not receive shadows (no crossed-quad self-shadowing)
             r = foliage.SPECIES[tid][1]["radius_m"] * 0.8
         else:
             _fn, info = foliage.SPECIES[tid]

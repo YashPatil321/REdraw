@@ -481,6 +481,34 @@ def set_vertex_ao(obj: bpy.types.Object, ao: np.ndarray) -> None:
     me.color_attributes.active_color = ca
 
 
+def cycles_backface_cull(obj: bpy.types.Object) -> None:
+    """Make single-sided materials of `obj` invisible from behind in Cycles (which ignores
+    use_backface_culling): alpha *= 1 - Backfacing. Preview only (LOD1 impostors are back-to-back
+    quads that a real-time client culls)."""
+    for slot in obj.material_slots:
+        m = slot.material
+        if m is None or not m.use_nodes or not m.use_backface_culling:  # glTF doubleSided -> no culling
+            continue
+        nt = m.node_tree
+        b = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if b is None:
+            continue
+        geo = nt.nodes.new("ShaderNodeNewGeometry")
+        inv = nt.nodes.new("ShaderNodeMath")
+        inv.operation = "SUBTRACT"
+        inv.inputs[0].default_value = 1.0
+        nt.links.new(geo.outputs["Backfacing"], inv.inputs[1])
+        mul = nt.nodes.new("ShaderNodeMath")
+        mul.operation = "MULTIPLY"
+        a = b.inputs["Alpha"]
+        if a.is_linked:
+            nt.links.new(a.links[0].from_socket, mul.inputs[0])
+        else:
+            mul.inputs[0].default_value = a.default_value
+        nt.links.new(inv.outputs[0], mul.inputs[1])
+        nt.links.new(mul.outputs[0], a)
+
+
 def tri_count(objs: list[bpy.types.Object]) -> int:
     n = 0
     for o in objs:

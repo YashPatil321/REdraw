@@ -361,7 +361,8 @@ props:
     eucalyptus_min_height_m: {value: 15.0, unit: m, range: [12.0, 20.0], source: "broadleaf trees taller than this in the 4S Ranch / Del Sur area are mostly eucalyptus (windbreaks, canyon rims); guess", verified: false}
     eucalyptus_tall_share: {value: 0.75, unit: share, range: [0.4, 0.95], source: "share of tall broadleaf lidar trees mapped to eucalyptus (the rest: sycamores, oaks, ficus); guess", verified: false}
     palm_fan_min_height_m: {value: 12.0, unit: m, range: [10.0, 15.0], source: "palms taller than this are mostly Mexican fan palms (queen palms top out at 12-15 m); guess", verified: false}
-    aspect_sigma: {value: 0.35, unit: ln ratio, range: [0.2, 0.6], source: "within a class, species are weighted by how well their crown/height ratio matches the measured tree (Gaussian in log ratio); model choice", verified: true}
+    aspect_sigma: {value: 0.6, unit: ln ratio, range: [0.2, 0.9], source: "within a class, species are weighted by how well their crown/height ratio matches the measured tree (Gaussian in log ratio; wide because watershed crowns are noisy); model choice", verified: true}
+    height_sigma: {value: 0.45, unit: ln ratio, range: [0.3, 0.8], source: "within a class, species are also weighted by how close their mature model height is to the measured height (Gaussian in log ratio), so an 8 m broadleaf is not drawn as a shrunken 22 m eucalyptus; model choice", verified: true}
     open_space_road_m: {value: 15.0, unit: m, range: [8.0, 30.0], source: "a lidar tree this far from road edges (and open_space_building_clearance_m from buildings) is open-space / canyon vegetation", verified: false}
     street_road_m: {value: 5.0, unit: m, range: [3.0, 8.0], source: "a lidar tree within this distance of a road edge is a parkway / median tree", verified: false}
     gap_cell_m: {value: 80.0, unit: m, range: [50.0, 150.0], source: "developed cells (>= 3 houses) without any lidar tree are treated as built or replanted after the lidar survey and get procedural trees", verified: false}
@@ -435,6 +436,13 @@ lidar:
   missing_building_min_area_m2: {value: 40.0, unit: m2, range: [25.0, 60.0], source: "task spec: smallest lidar-only building kept (a one-car garage is ~25 m2)", verified: true}
   tree_min_height_m: {value: 4.0, unit: m, range: [3.0, 5.0], source: "below this, canopy is chaparral/sage scrub shrubland on the open-space slopes rather than trees", verified: false}
   ground_change_m: {value: 1.5, unit: m, range: [1.0, 3.0], source: "|3DEP 2024 DEM - lidar 2014 ground| above this marks land regraded after 2014 (lidar objects there are stale)", verified: false}
+  palm_min_height_m: {value: 7.0, unit: m, range: [5.0, 10.0], source: "species_guess: palms are tall with a small crown (queen / Mexican fan palms in SoCal tracts are 8-25 m with 2-5 m wide heads); guess", verified: false}
+  palm_max_crown_radius_m: {value: 2.4, unit: m, range: [1.5, 3.0], source: "species_guess: widest crown radius still called a palm (lidar crown incl. smoothing); guess", verified: false}
+  palm_max_radius_height_ratio: {value: 0.2, unit: ratio, range: [0.15, 0.3], source: "species_guess: crown radius / height of palms (broadleaf street trees are ~0.3-0.5); guess", verified: false}
+  palm_max_canopy_cover: {value: 0.35, unit: share, range: [0.25, 0.5], source: "species_guess: palms stand fairly isolated (street / yard); share of canopy within 20 m above this = grove tree (eucalyptus / riparian) even with a narrow crown; guess", verified: false}
+  conifer_max_crown_fill: {value: 0.62, unit: ratio, range: [0.5, 0.7], source: "species_guess: mean crown CHM / top height below this = conical crown (cone 0.33, paraboloid 0.5, dome 0.67+); guess", verified: false}
+  conifer_min_height_m: {value: 6.0, unit: m, range: [4.0, 10.0], source: "species_guess: shortest tree called a conifer (Canary Island / Aleppo pines); guess", verified: false}
+  hip_min_eave_frac: {value: 0.75, unit: share, range: [0.65, 0.9], source: "roof typing: share of the footprint outline that must be eaves for a >= 3-facing roof to be a hip (a gable rectangle is L/(L+W) ~0.6-0.7); calibrated by eye on 4S Ranch tracts", verified: false}
 
 # HD world build (pipeline/build_buildings.py, build_terrain.py, build_landcover.py), appended by the
 # pipeline agent. Thresholds for using lidar measurements and land-cover cues in the render layers.
@@ -443,3 +451,5 @@ hd_world:
   lidar_height_max_m: {value: 60.0, unit: m, range: [30.0, 80.0], source: "lidar ridge heights above this are treated as errors (tallest building in the area is well under 30 m)", verified: false}
   ndsm_shrub_max_m: {value: 1.5, unit: m, range: [0.8, 2.5], source: "height above ground below which vegetation counts as lawn/groundcover rather than shrub (lidar nDSM, 2014)", verified: false}
   ndsm_canopy_min_m: {value: 3.0, unit: m, range: [2.0, 5.0], source: "height above ground above which vegetation counts as tree canopy (lidar nDSM, 2014)", verified: false}
+  paseo_width_m: {value: 2.4, unit: m, range: [1.5, 3.6], source: "concrete paseo / park path / bike path width in 4S Ranch and Del Sur (8 ft); guess from imagery", verified: false}
+  trail_width_m: {value: 1.8, unit: m, range: [0.8, 4.0], source: "dirt trail / fire road tread width in the open-space preserves (single track ~1 m, fire roads ~4 m); guess", verified: false}

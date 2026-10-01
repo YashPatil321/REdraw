@@ -282,7 +282,7 @@ export class SkySystem {
     const eh = Math.max(1e-4, skyE + sunE);
     // partial adaptation: dawn reads as dawn, but stays legible
     const ref = SUN_E0 * 0.75;
-    this.exposure = THREE.MathUtils.clamp(0.62 * Math.pow(ref / eh, 0.6), 0.3, 12) * (1 - 0.45 * this.dim) * (this.photoreal ? 1.4 : 1);
+    this.exposure = THREE.MathUtils.clamp(0.68 * Math.pow(ref / eh, 0.8), 0.3, 12) * (1 - 0.45 * this.dim) * (this.photoreal ? 1.4 : 1);
 
     this.darkness = 1 - THREE.MathUtils.smoothstep(el, -4, 8);
     const day = THREE.MathUtils.smoothstep(el, -6, 8);

@@ -214,6 +214,8 @@ def finish(
         Materials,
         bridge_spans,
         layout_streets,
+        overture_missing_roads,
+        overture_paths,
         overture_pools,
         overture_service_roads,
         visual_roads,
@@ -244,15 +246,21 @@ def finish(
     roads = visual_roads(net.G_visual if net.G_visual is not None else net.G, grid.extent)
     pools: list[Any] = []
     spans: list[Any] = []
+    paths: list[Any] = []
     if raw is not None:
+        extra = overture_missing_roads(raw, grid.extent, roads)
+        if extra:
+            log(f"streets: +{len(extra):,} real streets missing from the drive graph (private / gated) rendered from Overture")
+        roads += extra
         roads += overture_service_roads(raw, grid.extent)
+        paths = overture_paths(raw, grid.extent)
         pools = overture_pools(raw, grid.extent)
         spans = bridge_spans(raw, render, grid.extent)
     sig = net.nodes.loc[net.nodes["signalized"], ["x", "z"]].to_numpy()
     from shapely.geometry import Point
 
     hero_disks = [Point(h.x, h.z).buffer(h.radius, 32) for h in hero_list]
-    layout = layout_streets(roads, grid.extent, sig, shapes, pools, hero_disks)
+    layout = layout_streets(roads, grid.extent, sig, shapes, pools, hero_disks, paths)
     draper = Draper(render, spans)
     if spans:
         log(f"streets: {len(spans)} bridge decks (Overture is_bridge) interpolated over the bare-earth DEM")
@@ -278,7 +286,7 @@ def finish(
     t1 = time.time()
     from shapely.ops import unary_union
 
-    paved = unary_union([layout.roads_poly, *layout.sidewalks, *[d for d, _ in layout.driveways], *[sh.walls for sh in shapes.values()]])
+    paved = unary_union([layout.roads_poly, *layout.sidewalks, *[d for d, _ in layout.driveways], *[sh.walls for sh in shapes.values()], *[p for p, k in layout.paths if k == "paved"]])
     water = (load_water_scene(raw) if raw is not None else []) + list(pools)
     landuse = load_landuse_scene(raw) if raw is not None else []
     landcover: list[Any] = []
@@ -288,7 +296,7 @@ def finish(
         landcover = load_land_cover_scene(raw)
         lidar_rasters = {k: raw / "lidar" / f for k, f in (("chm", "chm_0p5m.tif"), ("ndsm", "ndsm_0p5m.tif")) if (raw / "lidar" / f).exists()}
     splat_px = SPLAT_PX_LIDAR if lidar_rasters else min(1024, max(256, texture_px))
-    splats = write_splat_masks(grid, tb.albedo, assets / "terrain", splat_px, paved, water, landuse, lawn_extra=layout.medians, landcover=landcover, lidar=lidar_rasters)
+    splats = write_splat_masks(grid, tb.albedo, assets / "terrain", splat_px, paved, water, landuse, lawn_extra=layout.medians, landcover=landcover, lidar=lidar_rasters, dirt_extra=[p for p, k in layout.paths if k == "trail"])
     splat_inputs = ["imagery", "vector overrides (roads, sidewalks, driveways, roofs, water, pools)"] + (["overture land_use"] if landuse else []) + (["overture land_cover"] if landcover else []) + ([f"lidar {k}" for k in lidar_rasters])
     timings["splat"] = time.time() - t1
 
@@ -364,9 +372,15 @@ def finish(
         "terrain_meta": "terrain/terrain_meta.json",
         "terrain_lod": {
             "levels": [
-                {"lod": 0, "kind": "rtin", "spacing_m": tb.infos[0]["terrain_lods"][0]["spacing_m"] if tb.infos else None, "max_error_m": round(tb.lod0_max_error_m, 4)},
-                {"lod": 1, "kind": "grid", "spacing_m": 10.0},
-                {"lod": 2, "kind": "grid", "spacing_m": 25.0},
+                {
+                    "lod": lod,
+                    "kind": "rtin",
+                    "finest_spacing_m": tb.infos[0]["terrain_lods"][lod]["spacing_m"] if tb.infos else None,
+                    "max_error_m": round(tb.lod_max_error_m.get(lod, tb.lod0_max_error_m), 4),
+                    "triangles": tb.triangles.get(f"lod{lod}", 0),
+                    "texture_px": tb.infos[0]["terrain_lods"][lod]["texture_px"] if tb.infos else None,
+                }
+                for lod in (0, 1, 2)
             ],
             "skirts_m": {"0": 3.0, "1": 6.0, "2": 12.0},
             "suggested_switch_distance_m": {"0": 900.0, "1": 2600.0},

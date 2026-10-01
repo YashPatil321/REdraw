@@ -748,7 +748,7 @@ def roof_solar(cv: Canvas) -> None:
     cx = (lx - 0.04) / ((pw - 0.08) / 6)
     cy = (ly - 0.04) / ((ph - 0.08) / 12)
     grid = (np.abs(cx - np.round(cx)) < 0.025) | (np.abs(cy - np.round(cy)) < 0.012)
-    busbar = np.abs(((cx % 1.0) - 0.5)) < 0.01
+    busbar = np.abs((cx % 1.0) - 0.5) < 0.01
     col = np.where(gap[..., None], hex_rgb("#1A1A1A"), np.where(frame_[..., None], hex_rgb("#B7BCC0"),
                    np.where(grid[..., None], hex_rgb("#2E3644"), hex_rgb("#121722"))))
     col = np.where((busbar & ~grid & ~frame_ & ~gap)[..., None], hex_rgb("#3A4250"), col)
@@ -798,7 +798,7 @@ def asphalt(cv: Canvas, seed: int, wear: float, oil: float = 0.0, cracks: float 
     rough = 0.9 - 0.05 * expo
     if oil > 0:  # oil / coolant drips concentrated along the wheel paths' center
         sp = smoothstep(1.2, 2.4, cv.noise(seed + 4, 0.5, beta=1.8, octaves_m=0.03)) * oil
-        band = smoothstep(0.9, 0.3, np.abs(((cv.X % 4.0) - 2.0))) * 0.7 + 0.3
+        band = smoothstep(0.9, 0.3, np.abs((cv.X % 4.0) - 2.0)) * 0.7 + 0.3
         stain = sp * band
         col = col * (1 - 0.45 * stain)[..., None]
         rough = rough - 0.35 * stain
@@ -871,7 +871,6 @@ def ground_curb(cv: Canvas) -> None:
     y = cv.Y
     pan = y < 0.45
     face = (y >= 0.45) & (y < 0.6)
-    top = y >= 0.6
     hh = np.where(pan, 0.02 * y / 0.45, np.where(face, 0.02 + 0.15 * (y - 0.45) / 0.15, 0.17 + 0.008 * np.sin(np.pi * (y - 0.6) / 0.15)))
     flow = smoothstep(0.12, 0.0, y) * (0.6 + 0.4 * cv.noise(102, 0.6))
     col = cv.alb * (1 - 0.25 * flow)[..., None] + hex_rgb("#6E6455") * (0.12 * flow)[..., None]

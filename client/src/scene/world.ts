@@ -81,6 +81,7 @@ function dracoLoader(): DRACOLoader {
 const TERRAIN_LOD0_M = 900;
 const TERRAIN_LOD1_M = 2600;
 const HD_LOD0_M = 450;
+const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug');
 
 export class World {
   readonly group = new THREE.Group();
@@ -356,6 +357,7 @@ export class World {
         tex.needsUpdate = true;
       }
       t.splat = [a!, b!];
+      this.onChange?.();
       for (const l of t.lods) if (l.lod <= 1) for (const m of l.meshes) this.setTerrainMaterial(m, t.splat);
     } catch (e) {
       console.warn(`splat ${t.id} unavailable`, e);
@@ -465,11 +467,13 @@ export class World {
             // front walls need the street direction: wait for the network (bounded)
             await Promise.race([this.streetReady, new Promise((r) => setTimeout(r, 20000))]);
             const lib = this.materials!;
+            const t0 = performance.now();
             prepareBuildingGeometry(m.geometry, {
               streetDir: this.streetDir ?? undefined,
               variants: { wall: lib.variants(0).length, tileRoof: lib.variants(1).length, flatRoof: lib.variants(2).length },
             });
             m.material = atlas;
+            if (DEBUG) console.info(`[rd] prep ${s.path}: ${m.geometry.getAttribute('position').count} verts in ${(performance.now() - t0).toFixed(0)} ms`);
           } else {
             addBuildingExtents(m.geometry);
             m.material = legacyBuildingMaterial(old, this.standardBuildings, hasColor);
@@ -833,6 +837,42 @@ export class World {
     const h11 = d[(iz + 1) * g.nx + ix + 1]!;
     const v = (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
     return Number.isNaN(v) ? null : v;
+  }
+
+  private splatPx = new Map<Tile, { w: number; h: number; data: Uint8ClampedArray } | null>();
+
+  /** Lawn weight (0..1) from the landcover splat at (x, z), or null where no splat is loaded. */
+  lawnAt(x: number, z: number): number | null {
+    const t = this.tileAt(x, z);
+    if (!t?.splat) return null;
+    let px = this.splatPx.get(t);
+    if (px === undefined) {
+      px = null;
+      try {
+        const img = t.splat[0].image as CanvasImageSource & { width: number; height: number };
+        const cv = document.createElement('canvas');
+        cv.width = img.width;
+        cv.height = img.height;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          px = { w: img.width, h: img.height, data: ctx.getImageData(0, 0, img.width, img.height).data };
+        }
+      } catch {
+        px = null;
+      }
+      this.splatPx.set(t, px);
+    }
+    if (!px) return null;
+    const fx = THREE.MathUtils.clamp(((x - t.box.min.x) / (t.box.max.x - t.box.min.x)) * px.w - 0.5, 0, px.w - 1.001);
+    const fz = THREE.MathUtils.clamp(((z - t.box.min.z) / (t.box.max.z - t.box.min.z)) * px.h - 0.5, 0, px.h - 1.001);
+    const ix = Math.floor(fx);
+    const iz = Math.floor(fz);
+    const tx = fx - ix;
+    const tz = fz - iz;
+    const g = (i: number, j: number): number => px!.data[(j * px!.w + i) * 4]!;
+    const v = (g(ix, iz) * (1 - tx) + g(ix + 1, iz) * tx) * (1 - tz) + (g(ix, iz + 1) * (1 - tx) + g(ix + 1, iz + 1) * tx) * tz;
+    return v / 255;
   }
 
   // ---- building index (centroids from `_building_id` vertices of the base layer)

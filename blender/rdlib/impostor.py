@@ -119,14 +119,19 @@ def _bleed(im):  # noqa: ANN001, ANN202
     return Image.fromarray(np.concatenate([rgb, a[..., 3:4]], axis=-1).astype(np.uint8), "RGBA")
 
 
-def lod1_part(info: dict, crown_z: float, cols: int = 2, rows: int = 3) -> tuple[Part, np.ndarray]:
+def lod1_part(info: dict, crown_z: float, top_z: float | None = None, cols: int = 2, rows: int = 3) -> tuple[Part, np.ndarray]:
     """Crossed quads (3 vertical + 1 horizontal) with sphere normals; material key 'foliage_impostor'.
 
     Every quad is doubled back to back (single-sided material) so each side carries its own normal
     field: the normal of an ellipsoidal crown seen from that side (lateral offset -> sideways,
     height -> up / down, the rest toward the viewer). Quads are split into cols x rows cells so the
-    field interpolates smoothly (88 triangles). The impostor then shades like the LOD0 card cloud from
-    any view and sun direction instead of turning half black on the side facing away from the sun."""
+    field interpolates smoothly. The impostor then shades like the LOD0 card cloud from any view and
+    sun direction. The horizontal top-view quad sits high in the crown (top_z), is 80 % of the crown
+    width (hidden inside the side silhouettes when seen edge-on) and faces up only, so from street
+    level (backfaces culled) it never shows as a dark plate. 80 triangles.
+
+    Real-time use: let impostors cast shadows but not receive them (crossed opaque silhouettes would
+    shadow each other into dark quadrants)."""
     W, H, zb = info["W"], info["H"], info["zb"]
     su0, sv0, su1, sv1 = info["side_uv"]
     tu0, tv0, tu1, tv1 = info["top_uv"]
@@ -173,14 +178,15 @@ def lod1_part(info: dict, crown_z: float, cols: int = 2, rows: int = 3) -> tuple
 
             # unflipped cells wind along ax then up: geometric normal ax x up = -face, so the +face copy flips
             grid(np.array([0.0, 0.0, zb]) - ax * W / 2, ax * W, up * H, (su0, sv0, su1, sv1), nf, cols, rows, side > 0)
-    h = W / 2
-    for side in (1.0, -1.0):
-        def nt(a: float, b: float, side: float = side) -> np.ndarray:
-            r = np.array([2 * a - 1, 2 * b - 1, 0.0]) * 0.45
-            n = r + side * up
-            return n / np.linalg.norm(n)
+    h = 0.4 * W
+    zt = crown_z if top_z is None else top_z
+    du, dv = (tu1 - tu0) * 0.1, (tv1 - tv0) * 0.1  # inner 80 % of the top view
 
-        grid(np.array([-h, -h, crown_z]), np.array([W, 0.0, 0.0]), np.array([0.0, W, 0.0]), (tu0, tv0, tu1, tv1), nt, 2, 2,
-             side < 0)
+    def nt(a: float, b: float) -> np.ndarray:
+        n = np.array([2 * a - 1, 2 * b - 1, 0.0]) * 0.45 + up
+        return n / np.linalg.norm(n)
+
+    grid(np.array([-h, -h, zt]), np.array([2 * h, 0.0, 0.0]), np.array([0.0, 2 * h, 0.0]),
+         (tu0 + du, tv0 + dv, tu1 - du, tv1 - dv), nt, 2, 2, False)
     p = Part(np.array(V, float), F, ["foliage_impostor"] * len(F), U)
     return p, np.array(N)

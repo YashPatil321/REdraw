@@ -59,8 +59,8 @@ DEFAULT_PARAMS: dict[str, Any] = {
     "solar_share": 0.18,
     "stone_wainscot_share": 0.3,
     "hvac_m2_per_unit": 220.0,
-    "wall_palette": [([236, 226, 204], 0.25), ([221, 203, 168], 0.22), ([241, 238, 229], 0.12), ([228, 214, 186], 0.18),
-                     ([208, 200, 186], 0.10), ([214, 190, 152], 0.08), ([196, 178, 150], 0.05)],
+    "wall_palette": [([226, 212, 184], 0.2), ([212, 190, 154], 0.2), ([236, 230, 216], 0.1), ([222, 204, 172], 0.15),
+                     ([196, 188, 172], 0.1), ([204, 178, 140], 0.1), ([186, 166, 136], 0.07), ([214, 196, 170], 0.08)],
     "trim_palette": [([242, 240, 233], 0.55), ([232, 222, 200], 0.2), ([92, 78, 66], 0.15), ([60, 58, 56], 0.1)],
     "tile_variants": {"s_tile_terracotta": 0.12, "s_tile_blend": 0.22, "s_tile_brown": 0.16, "s_tile_aged": 0.08,
                       "barrel_mission": 0.04, "flat_tile_brown": 0.14, "flat_tile_grey": 0.12, "flat_tile_charcoal": 0.08,
@@ -549,7 +549,8 @@ class Builder:
         self.plan = plan_roof({**spec, "floor_y": self.spec_floor}, self.fp, lod, P, self.rng)
         self.style = make_style(spec, P, self.plan.levels[-1].flat, self.rng)
         self.front = self._front_dir()
-        self.openings: dict[int, list[tuple[float, float, str]]] = {}  # wall index -> reserved (s0, s1, kind)
+        self.garages: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []  # (door start, door end, outward normal) in plan
+        self.entries: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
 
     # ---- helpers ----
     def to3(self, loc: np.ndarray, z: np.ndarray | float) -> np.ndarray:
@@ -922,6 +923,7 @@ class Builder:
         n = np.array([t[1], -t[0]])
         d = float(self.P["garage_recess_m"])
         p0, p1 = a + t * s0, a + t * s1
+        self.garages.append((p0, p1, n))
         q0, q1 = p0 - n * d, p1 - n * d
         # door panel at the back of the recess, UVs onto the cell's door rect
         door = quad_tris(np.r_[q0, z0], np.r_[q1, z0], np.r_[q1, z1], np.r_[q0, z1])
@@ -937,8 +939,9 @@ class Builder:
         loc_s = ((door[..., 0] - q0[0]) * t[0] + (door[..., 1] - q0[1]) * t[1]) * scale
         uv = np.stack([uo + loc_s / 3.0, (door[..., 2] - z0) * (2.13 / max(z1 - z0, 1e-3)) / 3.0], axis=-1)
         self.soup.add(door, uv, MAT_GARAGE, var, st.wall_rgb, self.bid)
-        # reveals + head (stucco)
+        # reveals + head (stucco) + threshold
         rev = [quad_tris(np.r_[p0, z0], np.r_[q0, z0], np.r_[q0, z1], np.r_[p0, z1]),
+               quad_tris(np.r_[q0, z0], np.r_[p0, z0], np.r_[p1, z0], np.r_[q1, z0]),
                quad_tris(np.r_[q1, z0], np.r_[p1, z0], np.r_[p1, z1], np.r_[q1, z1]),
                quad_tris(np.r_[p0, z1], np.r_[q0, z1], np.r_[q1, z1], np.r_[p1, z1])]
         Pr = np.concatenate(rev)
@@ -956,12 +959,14 @@ class Builder:
         n = np.array([t[1], -t[0]])
         d = 0.12
         p0, p1 = a + t * s0, a + t * s1
+        self.entries.append((p0, p1, n))
         q0, q1 = p0 - n * d, p1 - n * d
         door = quad_tris(np.r_[q0, z0], np.r_[q1, z0], np.r_[q1, z1], np.r_[q0, z1])
         self.soup.add(door, facade_uv(door, a, t, self.floor), MAT_TRIM, 0, st.door_rgb, self.bid)
         rev = [quad_tris(np.r_[p0, z0], np.r_[q0, z0], np.r_[q0, z1], np.r_[p0, z1]),
                quad_tris(np.r_[q1, z0], np.r_[p1, z0], np.r_[p1, z1], np.r_[q1, z1]),
-               quad_tris(np.r_[p0, z1], np.r_[q0, z1], np.r_[q1, z1], np.r_[p1, z1])]
+               quad_tris(np.r_[p0, z1], np.r_[q0, z1], np.r_[q1, z1], np.r_[p1, z1]),
+               quad_tris(np.r_[q0, z0], np.r_[p0, z0], np.r_[p1, z0], np.r_[q1, z0])]
         Pr = np.concatenate(rev)
         self.soup.add(Pr, facade_uv(Pr, a, t, self.floor), MAT_TRIM, 0, st.trim_rgb, self.bid)
         # porch: concrete stoop + (when the wall is tall enough) a small hip roof on two posts
@@ -1014,7 +1019,9 @@ class Builder:
         ofs_f, ofs_g = 0.03, 0.045
         fr = quad_tris(np.r_[p0 - t * frame + n * ofs_f, z0 - frame], np.r_[p1 + t * frame + n * ofs_f, z0 - frame],
                        np.r_[p1 + t * frame + n * ofs_f, z1 + frame], np.r_[p0 - t * frame + n * ofs_f, z1 + frame])
-        gl = quad_tris(np.r_[p0 + n * ofs_g, z0], np.r_[p1 + n * ofs_g, z0], np.r_[p1 + n * ofs_g, z1], np.r_[p0 + n * ofs_g, z1])
+        vf = 0.05  # vinyl frame visible inside the surround
+        gl = quad_tris(np.r_[p0 + t * vf + n * ofs_g, z0 + vf], np.r_[p1 - t * vf + n * ofs_g, z0 + vf],
+                       np.r_[p1 - t * vf + n * ofs_g, z1 - vf], np.r_[p0 + t * vf + n * ofs_g, z1 - vf])
         self.soup.add(fr, facade_uv(fr, a, t, self.floor), MAT_TRIM, 0, st.trim_rgb, self.bid)
         self.soup.add(gl, facade_uv(gl, a, t, self.floor), MAT_GLASS, 0, GLASS_RGB, self.bid)
         parts = []
@@ -1060,7 +1067,7 @@ class Builder:
         for k in range(nfl + 1):
             zf = self.floor + k * story
             if btype == "house":
-                kinds = [("slider", 1.8, 1.2, 0.95), ("pair", 1.6, 1.5, 0.75), ("small", 0.75, 0.9, 1.3), ("tall", 0.9, 1.6, 0.6)]
+                kinds = [("slider", 1.8, 1.35, 0.85), ("pair", 1.7, 1.5, 0.75), ("small", 0.8, 1.0, 1.25), ("tall", 1.0, 1.7, 0.55)]
                 if k == 0 and facing > 0.5:
                     kinds = [("picture", 2.4, 1.6, 0.6), ("slider", 1.8, 1.4, 0.8), ("tall", 1.0, 2.0, 0.3)]
                 elif k == 0 and facing < -0.5:
@@ -1073,7 +1080,7 @@ class Builder:
             if k >= 1 and k >= nfl:
                 break
             # choose window count and positions
-            spacing = 3.8 if facing > 0.5 else (4.6 if facing < -0.5 else 5.6)
+            spacing = 3.8 if facing > 0.5 else (4.6 if facing < -0.5 else 8.0)
             if btype == "apartments":
                 spacing = 3.2
             avail = L - 1.2

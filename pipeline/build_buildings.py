@@ -515,7 +515,8 @@ def write_buildings_geojson(bdf: gpd.GeoDataFrame, path: Path) -> None:
             out[prop] = out[col] if col in out.columns else None
     if has_lidar:
         out["height_source"] = out["height_rule"] if "height_rule" in out.columns else None
-    drop = [c for c in out.columns if c in INTERNAL_COLUMNS or c.startswith("lidar_")]
+    props = set(LIDAR_GEOJSON_FIELDS.values())
+    drop = [c for c in out.columns if c in INTERNAL_COLUMNS or (c.startswith("lidar_") and c not in props)]
     out = out.drop(columns=drop).to_crs("EPSG:4326")
     feats = []
     for row in out.itertuples(index=False):

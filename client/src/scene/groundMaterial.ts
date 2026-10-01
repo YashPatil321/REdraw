@@ -61,7 +61,8 @@ const GROUND_FRAG_MAIN = /* glsl */ `
   diffuseColor.rgb = c;
   rdNT = f < 0.999 ? mix(atlasSample(tGN, r, uv, gx, gy).xyz * 2.0 - 1.0, vec3(0.0, 0.0, 1.0), f) : vec3(0.0, 0.0, 1.0);
   vec3 orm = f < 0.999 ? atlasSample(tGO, r, uv, gx, gy).rgb : vec3(1.0, 0.85, 0.0);
-  rdRough = mix(orm.g, 0.85, f);
+  // dry pavement: never mirror-like (the sky would read as a wet road at grazing angles)
+  rdRough = mix(max(orm.g, 0.62), 0.85, f);
   rdAO = mix(orm.r, 1.0, f);
 }
 `;

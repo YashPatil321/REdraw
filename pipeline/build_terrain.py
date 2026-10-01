@@ -9,7 +9,7 @@ from __future__ import annotations
 import io
 import math
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -213,7 +213,11 @@ def add_skirts(pos: np.ndarray, nrm: np.ndarray, uv: np.ndarray, tri: np.ndarray
 
 
 RTIN_GRID = 513  # samples per tile side for LOD0 (2^9 + 1): ~2.2 m x 1.5 m on 1.1 km x 0.8 km tiles
-LOD_STEPS_M = {1: 10.0, 2: 25.0}  # regular-grid spacing of the coarser levels
+# coarser levels: adaptive RTIN too, on coarser sample grids (finest edge ~8.8 m / ~17.6 m on
+# 1125 m tiles; flat ground coarsens to tens of meters), each with its own share of the LOD0 budget
+LOD_GRID = {0: RTIN_GRID, 1: 129, 2: 65}
+LOD_BUDGET_SHARE = {0: 1.0, 1: 0.2, 2: 0.06}
+LOD_STEPS_M = {1: 10.0, 2: 25.0}  # nominal spacing (regular-grid fallback, manifest label)
 SKIRT_DEPTH_M = {0: 3.0, 1: 6.0, 2: 12.0}
 LOD_TEXTURE_DIV = {0: 1, 1: 2, 2: 4}  # embedded albedo size per LOD (px / div)
 
@@ -228,14 +232,14 @@ class TerrainBuild:
     render: Terrain
     lod0_max_error_m: float
     albedo: dict[str, np.ndarray]  # tile id -> (px, px, 3) uint8, north up
+    lod_max_error_m: dict[int, float] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
         return int(self.triangles.get("lod0", 0))
 
 
-def _rtin_tile(terrain: Terrain, b: Extent) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    n = RTIN_GRID
+def _rtin_tile(terrain: Terrain, b: Extent, n: int = RTIN_GRID) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     xs = np.linspace(b.min_x, b.max_x, n)
     zs = np.linspace(b.min_z, b.max_z, n)
     gx, gz = np.meshgrid(xs, zs)
@@ -282,6 +286,12 @@ def build_terrain_tiles(
     tiles = grid.iter()
     rt = [_rtin_tile(terrain, grid.bounds(r, c)) for r, c in tiles]
     thr = _lod0_threshold([e for _, e, _ in rt], int(budget * 0.97))  # ~3% for skirts
+    # coarser LODs: RTIN on coarser grids with their own (smaller) budgets
+    rt_lod: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
+    thr_lod: dict[int, float] = {0: thr}
+    for lod in (1, 2):
+        rt_lod[lod] = [_rtin_tile(terrain, grid.bounds(r, c), LOD_GRID[lod]) for r, c in tiles]
+        thr_lod[lod] = max(thr, _lod0_threshold([e for _, e, _ in rt_lod[lod]], int(budget * LOD_BUDGET_SHARE[lod] * 0.95)))
     render = Terrain(terrain.elev.copy(), terrain.extent, terrain.spacing)
     rows, cols = terrain.elev.shape
     tx = terrain.extent.min_x + np.arange(cols) * terrain.spacing
@@ -316,9 +326,17 @@ def build_terrain_tiles(
         uv = np.column_stack([(x - b.min_x) / b.width, (z - b.min_z) / b.depth])
         lods = []
         meshes = {0: add_skirts(pos, nrm, uv, t, SKIRT_DEPTH_M[0])}
-        for lod, step in LOD_STEPS_M.items():
-            p2, n2, u2, i2 = terrain_tile_mesh(terrain, b, step)
-            meshes[lod] = add_skirts(p2, n2, u2, i2.reshape(-1, 3), SKIRT_DEPTH_M[lod])
+        k = tiles.index((r, c))
+        for lod in (1, 2):
+            hh, ee, gg = rt_lod[lod][k]
+            v2, t2 = rtin_mesh(ee, thr_lod[lod])
+            x2 = gg[v2[:, 1], v2[:, 0], 0]
+            z2 = gg[v2[:, 1], v2[:, 0], 1]
+            p2 = np.column_stack([x2, hh[v2[:, 1], v2[:, 0]], z2])
+            t2 = _up_winding(p2, t2)
+            n2 = terrain.normals(x2, z2, h=max(terrain.spacing, b.width / (LOD_GRID[lod] - 1)))
+            u2 = np.column_stack([(x2 - b.min_x) / b.width, (z2 - b.min_z) / b.depth])
+            meshes[lod] = add_skirts(p2, n2, u2, t2, SKIRT_DEPTH_M[lod])
         ymin, ymax = float(pos[:, 1].min()), float(pos[:, 1].max())
         for lod, (p_, n_, u_, i_) in meshes.items():
             px = max(16, texture_px // LOD_TEXTURE_DIV[lod])
@@ -334,8 +352,8 @@ def build_terrain_tiles(
                     "lod": lod,
                     "path": f"terrain/{name}",
                     "triangles": n_tri,
-                    "spacing_m": round(min(b.width, b.depth) / (RTIN_GRID - 1), 3) if lod == 0 else LOD_STEPS_M[lod],
-                    **({"max_error_m": round(thr, 4)} if lod == 0 else {}),
+                    "spacing_m": round(min(b.width, b.depth) / (LOD_GRID[lod] - 1), 3),
+                    "max_error_m": round(thr_lod[lod], 4),
                     "texture_px": px,
                 }
             )
@@ -350,8 +368,9 @@ def build_terrain_tiles(
                 "albedo": f"terrain/albedo_{tid}.jpg",
             }
         )
-    log(f"terrain: {len(infos)} tiles; LOD0 RTIN max error {thr:.3f} m, {tris['lod0']:,} tris; LOD1 {tris['lod1']:,}; LOD2 {tris['lod2']:,}")
-    return TerrainBuild(infos=infos, triangles=tris, render=render, lod0_max_error_m=thr, albedo=albedo_imgs)
+    log(f"terrain: {len(infos)} tiles; RTIN max error LOD0 {thr:.3f} m / LOD1 {thr_lod[1]:.2f} m / LOD2 {thr_lod[2]:.2f} m; "
+        f"tris LOD0 {tris['lod0']:,}, LOD1 {tris['lod1']:,}, LOD2 {tris['lod2']:,}")
+    return TerrainBuild(infos=infos, triangles=tris, render=render, lod0_max_error_m=thr, albedo=albedo_imgs, lod_max_error_m=thr_lod)
 
 
 def jpeg_bytes(img: np.ndarray, quality: int = 85) -> bytes:

@@ -132,6 +132,7 @@ def write_splat_masks(
     lawn_extra: list[Any] | None = None,
     landcover: list[tuple[Any, str]] | None = None,
     lidar: dict[str, Path] | None = None,
+    dirt_extra: list[Any] | None = None,
 ) -> dict[str, list[str]]:
     """Write splat_{tid}_a.png / _b.png for every tile. `paved` is a (multi)polygon (scene),
     `water` a list of polygons, `landuse` (polygon, class) pairs, `landcover` Overture
@@ -151,6 +152,7 @@ def write_splat_masks(
     lu_tree = shapely.STRtree(lu_geoms) if lu_geoms else None
     w_tree = shapely.STRtree(water) if water else None
     lx_tree = shapely.STRtree(lawn_extra) if lawn_extra else None
+    dx_tree = shapely.STRtree(dirt_extra) if dirt_extra else None
     shares = np.zeros(6)
     for r, c in grid.iter():
         tid = grid.tile_id(r, c)
@@ -211,6 +213,9 @@ def write_splat_masks(
             m = _raster([lawn_extra[int(i)] for i in lx_tree.query(bx, predicate="intersects")], b, size)  # type: ignore[index]
             wts[..., 0] = np.maximum(wts[..., 0], m * 0.7)
             wts[..., 1] = np.maximum(wts[..., 1], m * 0.3)
+        if dx_tree is not None:  # dirt trails
+            m = _raster([dirt_extra[int(i)] for i in dx_tree.query(bx, predicate="intersects")], b, size)  # type: ignore[index]
+            wts[..., 2] = np.maximum(wts[..., 2], 1.5 * m)
         # paved (roads, walks, driveways, roofs) and water are authoritative
         pv = shapely.clip_by_rect(paved, b.min_x - 5, b.min_z - 5, b.max_x + 5, b.max_z + 5) if paved is not None else None
         m = _raster([pv] if pv is not None and not pv.is_empty else [], b, size)
@@ -220,8 +225,16 @@ def write_splat_masks(
         if w_tree is not None:
             m = _raster([water[int(i)] for i in w_tree.query(bx, predicate="intersects")], b, size)
             m = ndimage.gaussian_filter(m, 0.6)
+            # very bright, grey "water" in the imagery is a covered reservoir (white floating
+            # cover) or a dry basin: paint it as a paved/membrane surface, not open water
+            f = img.astype(np.float32)
+            v = f.mean(axis=-1)
+            sat = (f.max(axis=-1) - f.min(axis=-1)) / (f.max(axis=-1) + 1e-3)
+            covered = m * _smooth(v, 150, 190) * (1 - _smooth(sat, 0.15, 0.3))
+            open_w = m - covered
             wts = wts * (1 - m[..., None])
-            wts[..., 4] += m
+            wts[..., 4] += open_w
+            wts[..., 3] += covered
         wts = ndimage.gaussian_filter(wts, (0.7, 0.7, 0))
         wts = np.maximum(wts, 0)
         tot = wts.sum(axis=-1, keepdims=True)

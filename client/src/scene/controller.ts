@@ -23,7 +23,8 @@ import { ArterialLabels, BASELINE_COLOR, EdgeHighlight, LocationPin, PLAN_COLOR,
 import { QUALITY, initialQuality, lowerQuality, saveQuality, type Quality } from './quality';
 import { SkySystem } from './sky';
 import { RoadDetails } from './roadDetails';
-import { loadStaticProps, loadVehicleProps, windUniforms, type StaticProps } from './props';
+import { loadGrassTuft, loadStaticProps, loadVehicleProps, windUniforms, type StaticProps } from './props';
+import { GrassField } from './grass';
 import { Viewer } from './viewer';
 import { World } from './world';
 import { buildingUniforms } from './buildingMaterial';
@@ -64,6 +65,7 @@ export class SceneController {
   private tileSource: TileSource | null = null;
   private roadDetails: RoadDetails | null = null;
   private staticProps: StaticProps | null = null;
+  private grass: GrassField | null = null;
 
   private manifest: Manifest | null = null;
   /** PBR atlases (assets/materials), loaded with the world */
@@ -141,6 +143,7 @@ export class SceneController {
     this.world.applyQuality({ ...qs, interiors: qs.interiors });
     this.staticProps?.setDrawDistance(qs.propDrawDistance);
     this.staticProps?.setShadows(qs.shadows);
+    this.grass?.setDensity(this.photoreal ? 0 : qs.grass);
     this.baseline?.setCastShadows(qs.carShadows && qs.shadows);
     this.plan?.setCastShadows(qs.carShadows && qs.shadows);
     this.lastQualityChange = performance.now();
@@ -276,10 +279,12 @@ export class SceneController {
     }
     this.photo?.setActive(want);
     const pr = want && !!this.photo;
+    const qs0 = QUALITY[s.quality];
     // our meshes stay loaded (and raycastable for building picking) but are not drawn
     this.world.group.visible = !pr;
     if (this.roadDetails) this.roadDetails.group.visible = !pr;
     if (this.staticProps) this.staticProps.group.visible = !pr;
+    this.grass?.setDensity(pr ? 0 : qs0.grass);
     this.viewer.directRender = pr;
     const qs = QUALITY[s.quality];
     this.viewer.renderer.shadowMap.enabled = qs.shadows && !pr;
@@ -462,6 +467,26 @@ export class SceneController {
       }
     } catch (e) {
       console.warn('static props unavailable', e);
+    }    try {
+      const tuft = await loadGrassTuft(fetchAsset);
+      if (tuft) {
+        this.grass = new GrassField(tuft.geometry, tuft.material, {
+          lawnAt: (x, z) => this.world.lawnAt(x, z),
+          heightAt: (x, z) => this.world.fastHeightAt(x, z),
+          blocked: (x, z) => {
+            const hit = this.net?.nearestEdge(x, z, 16);
+            if (!hit) return false;
+            const lanes = Math.max(1, this.net!.edges[hit.edge]?.lanes ?? 1);
+            return hit.dist < lanes * 3.4 + 3.0;
+          },
+        });
+        this.grass.setDensity(QUALITY[store.get().quality].grass);
+        this.grass.mesh.visible = !this.photoreal && QUALITY[store.get().quality].grass > 0;
+        this.world.onChange = () => this.grass?.invalidate();
+        this.viewer.scene.add(this.grass.mesh);
+      }
+    } catch (e) {
+      console.warn('grass unavailable', e);
     }
   }
 
@@ -604,6 +629,10 @@ export class SceneController {
     }
     this.autoQuality(now);
     if (this.roadDetails?.group.visible) this.roadDetails.update(this.viewer.camera.position);
+    if (this.grass) {
+      const cp = this.viewer.camera.position;
+      this.grass.update(cp, this.world.fastHeightAt(cp.x, cp.z) ?? cp.y - 100);
+    }
     if (this.staticProps?.group.visible) this.staticProps.update(this.viewer.camera.position, this.world.fastHeightAt(this.viewer.camera.position.x, this.viewer.camera.position.z) ?? 0);
     const scale = this.viewer.walking ? 1 : THREE.MathUtils.clamp(dist / 650, 1, 9);
     const colorMode = this.viewer.walking || dist < 320 ? 'paint' : 'speed';
@@ -858,6 +887,7 @@ export class SceneController {
     this.overlayGeom?.dispose();
     this.roadDetails?.dispose();
     this.staticProps?.dispose();
+    this.grass?.dispose();
     this.sky?.dispose();
     this.world.dispose();
     this.viewer.dispose();

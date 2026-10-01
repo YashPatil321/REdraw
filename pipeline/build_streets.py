@@ -58,6 +58,7 @@ LIFT_PATCH = 0.08
 LIFT_MARK = 0.10
 LIFT_XWALK = 0.11
 LIFT_DRIVEWAY = 0.12
+LIFT_PATH = 0.05
 
 ARTERIAL = {"primary", "secondary", "tertiary", "primary_link", "secondary_link", "tertiary_link", "trunk"}
 RESIDENTIAL = {"residential", "living_street", "unclassified"}
@@ -209,6 +210,84 @@ def overture_service_roads(raw: Path, extent: Extent) -> list[Road]:
         w = widths.get(str(sub), default_w)
         out.append(Road(line=line, cls="service", lanes_fwd=1, lanes_bwd=1, name="", half_w=w / 2.0, e_r=0.0, e_l=0.0, kind="service"))
     return out
+
+
+RENDER_ROAD_CLASSES = {"motorway", "trunk", "primary", "secondary", "tertiary", "residential", "living_street", "unclassified", "unknown"}
+PATH_KINDS = {"footway": "paved", "pedestrian": "paved", "cycleway": "paved", "path": "trail", "track": "trail", "bridleway": "trail"}
+
+
+def _overture_lines(raw: Path, extent: Extent, classes: set[str]) -> list[tuple[LineString, str, str]]:
+    """(scene line, class, subclass) of Overture road segments of `classes` touching `extent`."""
+    p = raw / "overture" / "segment.parquet"
+    if not p.exists():
+        return []
+    import pyarrow.parquet as pq
+
+    from pipeline.geo import lonlat_to_utm
+
+    t = pq.read_table(p, columns=["geometry", "subtype", "class", "subclass"]).to_pandas()
+    t = t[(t["subtype"] == "road") & t["class"].isin(classes)]
+    clip = box(extent.min_x, extent.min_z, extent.max_x, extent.max_z)
+    out = []
+    for g, cls, sub in zip(shapely.from_wkb(t["geometry"].to_numpy()), t["class"], t["subclass"], strict=True):
+        if g is None or g.geom_type != "LineString":
+            continue
+        utm = np.array([lonlat_to_utm(float(x), float(y)) for x, y in np.asarray(g.coords)])
+        line = utm_line_to_scene(utm)
+        if line.intersects(clip):
+            out.append((line, str(cls), str(sub) if sub is not None else ""))
+    return out
+
+
+def overture_missing_roads(raw: Path, extent: Extent, existing: list[Road]) -> list[Road]:
+    """Real streets the drive graph leaves out (OSM access=private: gated communities, private
+    estates) from the Overture transportation cache, so the rendered world has every street.
+    A segment is added when less than half of it lies within 4 m of an existing render road.
+    Rendered as two-way, class-default lanes; never part of the routable network."""
+    lines = _overture_lines(raw, extent, RENDER_ROAD_CLASSES)
+    if not lines:
+        return []
+    from scipy.spatial import cKDTree
+
+    cover = unary_union([r.line for r in existing]).buffer(4.0) if existing else Polygon()
+    shapely.prepare(cover)
+    # graph-node ends of existing roads, so a private street that meets a public one at a real
+    # junction shares its node key (junction patch instead of overlapping ribbons)
+    ends_xy, ends_id = [], []
+    for r in existing:
+        if r.u is None:
+            continue
+        c = np.asarray(r.line.coords)
+        ends_xy += [c[0], c[-1]]
+        ends_id += [r.u, r.v]
+    tree = cKDTree(np.asarray(ends_xy)) if ends_xy else None
+
+    def key(pt: np.ndarray) -> Any:
+        if tree is not None:
+            d, i = tree.query(pt)
+            if d < 1.5:
+                return ends_id[int(i)]
+        return ("ov", round(float(pt[0]), 1), round(float(pt[1]), 1))
+
+    out = []
+    for line, cls, _sub in lines:
+        if line.length < 5.0:
+            continue
+        inside = line.intersection(cover).length if not cover.is_empty else 0.0
+        if inside > 0.5 * line.length:
+            continue
+        hw = "residential" if cls == "unknown" else cls
+        lanes = lanes_per_direction(hw, None, False)
+        c = np.asarray(line.coords)
+        out.append(make_road(line, hw, lanes, lanes, "", key(c[0]), key(c[-1])))
+    return out
+
+
+def overture_paths(raw: Path, extent: Extent) -> list[tuple[LineString, str]]:
+    """Footpaths, paseos, bike paths and dirt trails (Overture footway / pedestrian / cycleway /
+    path / track / bridleway) as (scene line, 'paved' | 'trail'). Sidewalk-type footways that
+    run along streets are removed later in layout_streets (the generated sidewalks cover them)."""
+    return [(line, PATH_KINDS[cls]) for line, cls, sub in _overture_lines(raw, extent, set(PATH_KINDS)) if sub not in ("sidewalk", "crosswalk")]
 
 
 def overture_pools(raw: Path, extent: Extent) -> list[Polygon]:
@@ -487,6 +566,7 @@ class StreetLayout:
     pools: list[Polygon]
     frontage: dict[int, Any]
     stats: dict[str, Any]
+    paths: list[tuple[Polygon, str]] = field(default_factory=list)  # (path polygon, 'paved' | 'trail')
 
 
 def _buffer_roads(roads: list[Road], pad: float = 0.0) -> Any:
@@ -512,6 +592,7 @@ def layout_streets(
     shapes: dict[int, Any],
     pools: list[Polygon],
     hero_disks: list[Polygon],
+    paths: list[tuple[LineString, str]] | None = None,
 ) -> StreetLayout:
     from pipeline.build_buildings import Frontage
 
@@ -701,8 +782,27 @@ def layout_streets(
         if any(pl.intersects(h) for h in hero_disks):
             continue
         pool_out.append(pl)
+    # footpaths / paseos / trails away from the streets (sidewalk-like footways are dropped)
+    path_out: list[tuple[Polygon, str]] = []
+    if paths:
+        near = unary_union([roads_poly.buffer(walk_w + 1.5), *sidewalks, dw_union, *(bpolys.values() if bpolys else [])])
+        shapely.prepare(near)
+        widths = {"paved": float(assumption("hd_world.paseo_width_m")), "trail": float(assumption("hd_world.trail_width_m"))}
+        for kind in ("paved", "trail"):
+            ls = [ln for ln, k in paths if k == kind]
+            if not ls:
+                continue
+            g = unary_union(ls).difference(near)
+            parts = [q for q in getattr(g, "geoms", [g]) if q.geom_type == "LineString" and q.length >= 4.0]
+            if not parts:
+                continue
+            poly = unary_union([q.buffer(widths[kind] / 2.0, cap_style="flat", quad_segs=3) for q in parts]).difference(near)
+            poly = poly.intersection(clipbox)
+            path_out += [(q, kind) for q in polys_of(poly) if q.area > 2.0]
     stats = {
         "render_roads": len(road_main),
+        "paths": len(path_out),
+        "path_area_m2": round(float(sum(q.area for q, _ in path_out)), 1),
         "service_roads": len(service),
         "junction_patches": len(patches),
         "crosswalks": len(crosswalks),
@@ -714,7 +814,7 @@ def layout_streets(
         "pools": len(pool_out),
     }
     return StreetLayout(roads=roads, roads_poly=roads_poly, junction_patches=patches, crosswalks=crosswalks, stop_bars=stop_bars,
-                        medians=medians, sidewalks=sidewalks, driveways=driveways, pools=pool_out, frontage=frontage, stats=stats)
+                        medians=medians, sidewalks=sidewalks, driveways=driveways, pools=pool_out, frontage=frontage, stats=stats, paths=path_out)
 
 
 # ---------------------------------------------------------------------------
@@ -890,6 +990,10 @@ def write_street_tiles(layout: StreetLayout, draper: Draper, grid: TileGrid, ass
     pools_t: dict[str, list[Polygon]] = {t: [] for t in tile_boxes}
     for p in layout.pools:
         pools_t[tile_of_pt(p.centroid.x, p.centroid.y)].append(p)
+    paths_t: dict[str, list[tuple[Polygon, str]]] = {t: [] for t in tile_boxes}
+    for kind in ("paved", "trail"):
+        for t, ps in by_tile_polys([p for p, k in layout.paths if k == kind]).items():
+            paths_t[t] += [(p, kind) for p in ps]
     dws_t: dict[str, list[tuple[Polygon, np.ndarray]]] = {t: [] for t in tile_boxes}
     for d, n in layout.driveways:
         dws_t[tile_of_pt(d.centroid.x, d.centroid.y)].append((d, n))
@@ -915,9 +1019,10 @@ def write_street_tiles(layout: StreetLayout, draper: Draper, grid: TileGrid, ass
             a = across / max(np.linalg.norm(across), 1e-9)
             for k in range(n_bars):
                 off = (k - (n_bars - 1) / 2.0) * 1.2
-                _bar_quad(marks, c + a * off, np.array([-a[1], a[0]]), depth, 0.6, draper, LIFT_XWALK, xmark, MARK_RGB["white"], u_along_bar=True)
+                # quad = the marking column's full world width; the painted bar is inside it
+                _bar_quad(marks, c + a * off, np.array([-a[1], a[0]]), depth, xmark[1], draper, LIFT_XWALK, xmark, MARK_RGB["white"], u_along_bar=True)
         for c, across, length in sb_t[t]:
-            _bar_quad(marks, c, across, length, 0.3, draper, LIFT_XWALK, smark, MARK_RGB["white"], u_along_bar=False)
+            _bar_quad(marks, c, across, length, smark[1], draper, LIFT_XWALK, smark, MARK_RGB["white"], u_along_bar=False)
         side = Prim("sidewalks")
         si, ssize = mats.cell("concrete_sidewalk")
         bb = tile_boxes[t]
@@ -948,6 +1053,11 @@ def write_street_tiles(layout: StreetLayout, draper: Draper, grid: TileGrid, ass
                 tdir = np.array([n[1], -n[0]])
                 uv = np.column_stack([(v @ tdir) / dsize[0], (v @ n) / dsize[1]])  # u across, v along
                 dwy.add(pos, uv, tr, MAT_GROUND, di, (198, 192, 182))
+        pth = Prim("paths")
+        for p, kind in paths_t[t]:
+            cell = "concrete_sidewalk" if kind == "paved" else "decomposed_granite"
+            pi2, psz = mats.cell(cell)
+            drape_polygon(pth, orient(p, 1.0), draper, LIFT_PATH, pi2, (196, 190, 180) if kind == "paved" else (176, 150, 116), psz, seg=4.0, cell=16.0)
         pools = Prim("pools")
         wi, wsize = mats.cell("pool_water")
         ci, csize = mats.cell("concrete_plaza")
@@ -962,7 +1072,7 @@ def write_street_tiles(layout: StreetLayout, draper: Draper, grid: TileGrid, ass
         rp = assets / "roads" / f"roads_{t}.glb"
         gp = assets / "ground" / f"ground_{t}.glb"
         rmeshes = [m for m in (asphalt.mesh(), marks.mesh()) if m is not None]
-        gmeshes = [m for m in (side.mesh(), med.mesh(), dwy.mesh(), pools.mesh()) if m is not None]
+        gmeshes = [m for m in (side.mesh(), med.mesh(), dwy.mesh(), pth.mesh(), pools.mesh()) if m is not None]
         nr = write_glb(rp, rmeshes)
         ng = write_glb(gp, gmeshes)
         tris["roads"] += nr

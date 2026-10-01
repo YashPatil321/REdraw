@@ -863,7 +863,7 @@ def snap_exits(
         mask = edges.apply(lambda r, p=prefix, rf=refs: edge_matches({"name": r["name"], "ref": r["ref"]}, p, rf), axis=1)
         cand = set(edges.loc[mask, "u"]).union(edges.loc[mask, "v"]) - used
         if not cand:
-            log(f"WARNING exit {ex['id']}: no edge of road '{prefix}' {refs} is in the strongly connected network; exit DROPPED (see exits.json 'dropped')")
+            log(f"WARNING exit {ex['id']}: no edge of road '{prefix}' {refs} is in the strongly connected network inside the bbox")
             dropped.append(
                 {
                     "id": ex["id"],

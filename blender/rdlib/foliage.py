@@ -757,7 +757,7 @@ def street_tree(tex: Path) -> tuple[Part, np.ndarray, Path]:
     cen = (0.0, 0.0, 5.0)
     clumps = [((0, 0, 5.6), (2.7, 2.7, 2.4)), ((1.2, 0.7, 4.8), (1.9, 1.8, 1.7)), ((-1.2, 0.6, 5.0), (1.9, 1.8, 1.7)),
               ((0.1, -1.3, 4.8), (1.8, 1.8, 1.6)), ((0.2, 0.3, 6.8), (1.7, 1.7, 1.4))]
-    pl.canopy(rng, clumps, 950, ["a", "b", "c", "d"], (1.15, 1.8), cen, shell=0.6)
+    pl.canopy(rng, clumps, 1020, ["a", "b", "c", "d"], (1.1, 1.75), cen, shell=0.6)
     p, N = pl.build()
     return p, N, path, pl.ao()
 
@@ -957,7 +957,7 @@ def canary_pine(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
             base = np.array([tz[0], tz[1], z])
             Lb = L * rng.uniform(0.7, 1.15)
             end = base + d0 * Lb + np.array([0, 0, rng.uniform(0.2, 0.9)])
-            pts = _limb(pl, base, end, 0.09 * (1 - t) + 0.04, 0.025, n=4, segs=2, bend=0.25, v_scale=0.05)
+            _limb(pl, base, end, 0.09 * (1 - t) + 0.04, 0.025, n=4, segs=2, bend=0.25, v_scale=0.05)
             for s_ in np.linspace(0.3, 1.0, max(2, int(Lb / 0.42))):
                 q = base + (end - base) * s_
                 tip_cards.append((q, d0))

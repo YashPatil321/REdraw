@@ -539,11 +539,65 @@ def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
     return index
 
 
+# ---------------------------------------------------------------------------
+# preview inputs (terrain, imagery, roads around a view center) for blender/buildings/preview.py
+# ---------------------------------------------------------------------------
+
+PREVIEW_DIR = REPO / "blender" / "build" / "buildings_hd" / "preview"
+# view centers (scene x, z): a 4S Ranch tract block and a Del Sur tract block
+PREVIEW_VIEWS = {"4s_ranch": (1375.0, -775.0), "del_sur": (-1625.0, 225.0)}
+
+
+def preview_data(name: str, cx: float, cz: float, radius: float = 320.0, step: float = 1.0) -> Path:
+    """DEM heights + NAIP colors on a `step` m grid and road centerlines around (cx, cz) -> npz + json."""
+    import rasterio
+    from rasterio.warp import Resampling, reproject
+    from affine import Affine
+
+    o = scene_origin()
+    n = int(round(2 * radius / step)) + 1
+    xs = cx - radius + step * np.arange(n)
+    zs = cz - radius + step * np.arange(n)
+    X, Z = np.meshgrid(xs, zs)  # row = z (south), col = x (east)
+    dem = DemSampler(raw_dir() / "dem_3dep_10m.tif")
+    H = dem.sample(X.ravel(), Z.ravel()).reshape(n, n).astype(np.float32)
+    # NAIP resampled to the same grid (row 0 = north = min z)
+    dst = np.zeros((3, n, n), np.uint8)
+    naip_p = raw_dir() / "naip_mosaic.tif"
+    if naip_p.exists():
+        tr = Affine(step, 0, o.easting + xs[0] - step / 2, 0, -step, o.northing - zs[0] + step / 2)
+        with rasterio.open(naip_p) as ds:
+            for b in range(3):
+                reproject(rasterio.band(ds, b + 1), dst[b], dst_transform=tr, dst_crs="EPSG:32611", resampling=Resampling.cubic)
+    streets, drives = load_streets()
+    area = shapely.box(cx - radius - 50, cz - radius - 50, cx + radius + 50, cz + radius + 50)
+    roads = []
+    for df, kind in ((streets, None), (drives, "driveway")):
+        sub = df[df.intersects(area)]
+        for g, cls, sb in zip(sub.geometry, sub["cls"], sub["sub"], strict=True):
+            g = g.intersection(area)
+            for ln in getattr(g, "geoms", [g]):
+                if ln.geom_type != "LineString" or ln.length < 1:
+                    continue
+                roads.append({"cls": kind or str(cls), "sub": str(sb), "pts": np.round(np.asarray(ln.coords), 2).tolist()})
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(PREVIEW_DIR / f"{name}.npz", height=H, naip=dst.transpose(1, 2, 0), x0=xs[0], z0=zs[0], step=step)
+    (PREVIEW_DIR / f"{name}.json").write_text(json.dumps({"name": name, "center": [cx, cz], "radius": radius, "roads": roads}))
+    log(f"preview data {name}: {n}x{n} grid, {len(roads)} road lines")
+    return PREVIEW_DIR / f"{name}.npz"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", type=Path, default=SPEC_DIR)
+    ap.add_argument("--preview-data", action="store_true", help="also write terrain / imagery / roads for the preview views")
+    ap.add_argument("--preview-only", action="store_true", help="only the preview inputs")
     a = ap.parse_args(argv)
-    build_specs(a.out)
+    if not a.preview_only:
+        build_specs(a.out)
+    if a.preview_data or a.preview_only:
+        for nm, (x, z) in PREVIEW_VIEWS.items():
+            preview_data(nm, x, z)
     return 0
 
 

@@ -158,9 +158,6 @@ def house(x: float, y: float, st: HouseStyle) -> tuple[Part, dict]:
     p += wall_bays(gring[1], gring[2], 0.0, 1, [[None, "window_small"]], tint, st.wall_variant, trim)
     p += wall_bays(gring[3], gring[0], 0.0, 1, [[None, None]], tint, st.wall_variant, trim)
     p += hip(gx0 + gw / 2, gy0 + gd / 2, gw, gd, 3.0, 20.0, f"roof:{st.roof}", wall_trim, overhang=0.45)
-    # stone veneer wainscot on the garage front piers (0.9 m)
-    for xs in (gx0 - 0.02, gx0 + gw - 0.0):
-        pass
     a, b = gring[0] + [0, -0.03], gring[1] + [0, -0.03]
     e = (b - a) / np.linalg.norm(b - a)
     for s0, s1 in ((0.0, 0.42), (gw - 0.42, gw)):

@@ -219,8 +219,9 @@ assets/
 
 ## HD world build (v1 additions, 2026-10-01) — tile grid
 
-This section is written first so the Blender buildings agent and the client can align;
-the full HD file list follows below once the build lands.
+Everything below is written by `pipeline/build_all.py` (real and `--synthetic`). Old 4x4
+paths in the sections above are superseded by these per-tile layers; `manifest.json` is the
+index the client reads (through the API) and the only place file names come from.
 
 **Tile grid (all tiled layers share it: terrain LODs, splat masks, buildings, roads, ground):**
 - Grid extent = region bbox extent (`region_meta.extent_scene`, rounded out to 50 m) buffered by
@@ -233,3 +234,126 @@ the full HD file list follows below once the build lands.
   `buildings.geojson centroid_x/centroid_z`, `tile` property). Python: `pipeline.common.tile_grid()`,
   `TileGrid.tile_of(x, z)`.
 - `manifest.json tiles[]` lists every tile with `bounds` (incl. min_y/max_y over all layers).
+
+### HD files (`client/public/assets/`)
+
+```
+manifest.json                       index (below)
+terrain/terrain_r{r}_c{c}.glb       LOD0 terrain tile (adaptive RTIN from the 2 m lidar DEM)
+terrain/terrain_r{r}_c{c}_lod1.glb  LOD1 (RTIN on a 129^2 sample grid, finest ~8.8 m)
+terrain/terrain_r{r}_c{c}_lod2.glb  LOD2 (RTIN on a 65^2 sample grid, finest ~17.6 m)
+terrain/albedo_r{r}_c{c}.jpg        full-size imagery for the tile (also embedded in each LOD)
+terrain/splat_r{r}_c{c}_a.png       land-cover weights R lawn, G chaparral, B dirt
+terrain/splat_r{r}_c{c}_b.png       land-cover weights R paved, G water, B canopy
+terrain/heightmap.png, terrain/terrain_meta.json   (spec 13A.2, unchanged)
+roads/roads_r{r}_c{c}.glb           road surfaces + paint, clipped at the tile edges
+ground/ground_r{r}_c{c}.glb         sidewalks + curbs, medians, driveways, paths, pools
+buildings/buildings_r{r}_c{c}.glb   procedural building tile (fallback when buildings_hd is absent)
+buildings_hd/manifest_buildings.json  Blender-built buildings (separate agent), referenced when present
+```
+
+**Terrain LODs.** Every LOD is one primitive with POSITION, NORMAL, TEXCOORD_0 (u = (x - min_x) /
+width, v = (z - min_z) / depth, i.e. north-up like the albedo and splat images) and an embedded
+JPEG base color (LOD0 at the full `texture_px`, LOD1 half, LOD2 quarter). The mesh is a
+right-triangulated irregular network (`pipeline/rtin.py`, Martini algorithm): one global max
+vertical error per LOD chosen so LOD0 over all 64 tiles stays <= 2,000,000 triangles, LOD1 <= 20 %
+and LOD2 <= 6 % of that. Each tile hangs a vertical skirt below its boundary edges (LOD0 3 m,
+LOD1 6 m, LOD2 12 m) so mixed LODs and T-junctions never show cracks. Every draped layer (roads,
+ground, building bases, `network_edges.geometry`) follows the LOD0 surface (`TerrainBuild.render`).
+`manifest.terrain_lod.levels[]` gives `finest_spacing_m`, `max_error_m`, `triangles`,
+`texture_px` per LOD; `tiles[].terrain_lods[]` the same per tile plus `path`.
+`suggested_switch_distance_m` (camera distance to the tile bounds) is a hint only.
+
+**Imagery.** The albedo is the best imagery reachable from the build machine at its native
+resolution per tile (`texture_px` = next power of two >= tile size / pixel size, max 4096). In the
+current real build that is Copernicus Sentinel-2 (10 m, resampled to 2.5 m in the mosaic) because
+NAIP is not reachable (see `region_meta.sources_not_available`), so tiles are 512 px; the splat
+masks and ground materials carry the close-range detail.
+
+**Splat masks.** Two RGB PNGs per tile, `manifest.splat.px` square (512, or 1024 when the lidar
+rasters exist), north up, same footprint as the albedo; the six 8-bit weights sum to 255 per
+pixel. Inputs in priority order (`manifest.splat.inputs` lists what the build had): a soft color
+classification of the imagery; Overture `land_cover` (ESA WorldCover classes, weak 10 m prior;
+cached in `data/raw/overture/land_cover.parquet`); lidar 2014 canopy height / nDSM
+(`data/raw/lidar/chm_0p5m.tif`, `ndsm_0p5m.tif`: tall -> canopy, knee-to-head high -> chaparral,
+flat -> lawn/dirt; thresholds `assumptions.yaml hd_world.ndsm_*`); Overture `land_use`
+(golf/park/pitch -> lawn, construction/bunker -> dirt, nature reserve -> no lawn); dirt trails;
+then authoritative overrides: roads, sidewalks, driveways, paseos and roofs -> paved, water and
+pools -> water (bright grey "water" in the imagery = covered reservoir -> paved).
+`manifest.splat.suggested_ground_cells` maps channels to `materials_manifest.json` ground cells.
+
+**Roads tile** (`roads_r{r}_c{c}.glb`), two primitives, all with POSITION, NORMAL, TEXCOORD_0,
+COLOR_0 (color-only fallback) and the material convention attributes `_MAT` / `_VARIANT`
+(uint8, see `materials_manifest.json conventions`):
+- `asphalt` (`_MAT` 6 = ground atlas, `_VARIANT` = ground cell): carriageway ribbons (cell
+  `asphalt_worn`; service roads / parking aisles / Overture driveways `asphalt_parking`) and
+  junction patches. Ribbon UVs: u = meters across from the right edge / cell world size, v =
+  meters along / cell world size; patches use planar UVs u = x / size, v = -z / size.
+- `markings` (`_MAT` 8 = pipeline extension, `_VARIANT` = `ground_markings.png` column): lane
+  lines, center lines, edge lines (u 0..1 across the column's `world_width_m`, v = meters along /
+  `period_m`), continental crosswalks on every approach of a signalized junction and stop bars
+  (quads exactly one column wide).
+- Lifts above the LOD0 surface (m): service 0.04, road 0.06, junction patch 0.08, paint 0.10,
+  crosswalk/stop bar 0.11, driveway 0.12, sidewalk top 0.06 + curb height (0.15) ; the client adds
+  polygonOffset on top. Bridge decks (Overture `is_bridge`) are interpolated between the
+  abutments instead of following the bare-earth DEM.
+- Render roads = the unclipped drive graph PLUS real streets the routable graph leaves out
+  (OSM access=private: gated communities and private estates, from Overture segments; never
+  routable) PLUS Overture service roads.
+
+**Ground tile** (`ground_r{r}_c{c}.glb`), primitives (same attributes, `_MAT` 6):
+- `sidewalks`: concrete walk along every residential / unclassified / tertiary-and-up street
+  (`streets.sidewalk_width_m`), raised by the curb height, with curb faces + gutter pans along
+  the road side (cell `curb_gutter`, normals horizontal) and a short skirt elsewhere.
+- `medians`: raised planted medians between paired one-way arterial carriageways (cell
+  `coastal_sage`) with curbs.
+- `driveways`: one per house whose garage wall faces a street within
+  `streets.house_driveway_max_m` (garage side chosen from the wall nearest the street; cell
+  `concrete_driveway`, u across / v along the driveway). Garage doors on the building tiles sit at
+  the same spot.
+- `paths`: Overture footway / pedestrian / cycleway segments away from the streets (paseos, park
+  paths; cell `concrete_sidewalk`, `hd_world.paseo_width_m`) and path / track / bridleway (dirt
+  trails, cell `decomposed_granite`, `hd_world.trail_width_m`). Sidewalk-type footways along
+  streets are dropped (the generated sidewalks replace them).
+- `pools`: only real mapped swimming pools (Overture water class `swimming_pool`): flat water
+  surface (cell `pool_water`) at the highest ground of the outline + 0.05 m, and a coping ring.
+
+**Building tile** (`buildings_r{r}_c{c}.glb`): one HD primitive (per-house hipped / gabled roofs on
+orthogonalized footprints, parapets, garage doors on the street side) with `_BUILDING_ID` (uint16),
+`_MAT`, `_VARIANT`, `_FRONT` (1 on street-facing walls) and COLOR_0, plus hero primitives
+(`pipeline/hero_overrides/`, `_MAT`/`_VARIANT` copied from the hero glb). Kept as the fallback /
+far LOD; when `manifest.buildings_hd` is set the client should prefer the Blender buildings and
+use these tiles only for buildings the HD set does not cover.
+
+### `manifest.json` (HD keys)
+`hd_version` (1), `grid` {rows, cols, min_x, max_x, min_z, max_z, tile_width_m, tile_depth_m},
+`tiles[]` {id, row, col, bounds (incl. min_y/max_y over all layers), terrain (LOD0 path),
+terrain_lods[], albedo, splat [a, b], buildings, roads, ground, triangles {buildings, roads,
+ground}}, `terrain_lod`, `splat`, `materials` (materials manifest path or null), `heroes[]`,
+`triangles` {terrain (LOD0), terrain_lods {lod0, lod1, lod2}, buildings, roads, ground},
+`street_stats` (counts of crosswalks, driveways, sidewalk area, paths, ...), `sizes_mb`,
+`draco` / `draco_layers`, optional `buildings_hd` ("buildings_hd/manifest_buildings.json", only
+when that file exists at build time).
+
+### `buildings.geojson` additions (HD build)
+- `source` (footprint dataset: OpenStreetMap, Microsoft ML Buildings, Esri Community Maps, lidar,
+  ...) and `source_id` (that dataset's id: Overture GERS id for map footprints, `lidar_NNNNN` for
+  lidar-only buildings). `buildings_roofs.parquet building_id` joins on `source_id`.
+- When `data/raw/lidar/buildings_roofs.parquet` exists: `eave_height_m`, `ridge_height_m`
+  (m above the lidar bare earth), `roof_type` (flat | gable | hip | complex | shed | unknown),
+  `roof_pitch_deg`, `ridge_azimuth_deg`, `lidar_quality` (good | fair | poor | none),
+  `lidar_status` (present | absent | absent_regraded_after_2014), `height_source`
+  (lidar | height | levels | default | hero). For quality good/fair roofs present in the 2014
+  flight, `height_m` is the lidar ridge height and the roof shape follows `roof_type`.
+- Lidar-only buildings (`data/raw/lidar/missing_buildings.geojson`) are appended as
+  `type: house`, `source: lidar`, after every mapped footprint, so mapped building ids do not
+  change when they appear.
+
+### `exits.json` additions
+- `via` + `snap_method: "via_exit"` + `note`: an exit whose own road only clips a bbox corner
+  and has no junction with the network inside the bbox (currently `deldios_north`, Del Dios
+  Highway at the NW corner) keeps its id, label and bearing (so external jobs in that direction
+  still exist) but uses the node of the nearest real exit (`via`, currently
+  `sandieguito_west`); trips continue outside the bbox. Two exits may therefore share a
+  `node_id`; `network_nodes.boundary_exit` names only the exit that owns the node.
+

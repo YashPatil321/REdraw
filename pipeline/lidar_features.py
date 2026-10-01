@@ -165,19 +165,25 @@ def interpolate_ground(grid: Grid, x: np.ndarray, y: np.ndarray, z: np.ndarray, 
     if ok.sum() < 3:
         return np.full(grid.shape, np.nan, dtype=np.float32)
     xs, ys = coarse.centers()
-    rr, cc = np.nonzero(ok)
-    pts = np.column_stack([xs[cc], ys[rr]])
-    vals = zc[ok].astype(np.float64)
-    gx, gy = np.meshgrid(*coarse.centers())
-    lin = LinearNDInterpolator(pts, vals)
     full = zc.astype(np.float64)
     miss = ~ok
-    full[miss] = lin(gx[miss], gy[miss])
-    still = ~np.isfinite(full)
-    if still.any():
-        full[still] = NearestNDInterpolator(pts, vals)(gx[still], gy[still])
-    fx, fy = np.meshgrid(*grid.centers())
-    return sample_bilinear(coarse, full, fx.ravel(), fy.ravel()).reshape(grid.shape).astype(np.float32)
+    if miss.any():
+        # triangulate only the valid cells that border a gap (same result inside the gaps as a
+        # full Delaunay, a fraction of the memory)
+        edge = ok & ndi.binary_dilation(miss, structure=np.ones((3, 3)), iterations=2)
+        rr, cc = np.nonzero(edge)
+        pts = np.column_stack([xs[cc], ys[rr]])
+        vals = zc[edge].astype(np.float64)
+        mr, mc = np.nonzero(miss)
+        q = np.column_stack([xs[mc], ys[mr]])
+        est = LinearNDInterpolator(pts, vals)(q) if len(pts) >= 3 else np.full(len(q), np.nan)
+        bad = ~np.isfinite(est)
+        if bad.any():
+            est[bad] = NearestNDInterpolator(pts, vals)(q[bad])
+        full[mr, mc] = est
+    fr, fc = np.meshgrid((np.arange(grid.nrows) + 0.5) * grid.res / cell - 0.5,
+                         (np.arange(grid.ncols) + 0.5) * grid.res / cell - 0.5, indexing="ij")
+    return ndi.map_coordinates(full, [fr, fc], order=1, mode="nearest").astype(np.float32)
 
 
 def plane_residual_std(dsm: np.ndarray, size: int = 3) -> np.ndarray:
@@ -305,12 +311,12 @@ def ransac_planes(
     while len(remaining) >= max(min_inliers, 3) and len(planes) < max_planes and fails < 3:
         q = p[remaining]
         qn = normals[remaining] if normals is not None else None
-        score_idx = rng.choice(len(q), size=3000, replace=False) if len(q) > 3000 else np.arange(len(q))
+        score_idx = rng.choice(len(q), size=1500, replace=False) if len(q) > 1500 else np.arange(len(q))
         s = q[score_idx]
         if qn is not None:
             # 1-point hypotheses: seed point + its local PCA normal (finds small facets that
             # random global triples almost never land on)
-            seeds = rng.choice(len(q), size=min(n_hyp, len(q)), replace=False)
+            seeds = rng.choice(len(q), size=min(n_hyp // 3, len(q)), replace=False)
             a, n = q[seeds], qn[seeds].copy()
         else:
             tri = rng.integers(0, len(q), size=(n_hyp, 3))
@@ -628,6 +634,31 @@ def crown_window_radius_m(h: np.ndarray | float) -> np.ndarray:
     return np.clip(0.5 * (3.09632 + 0.00895 * np.asarray(h, dtype=np.float64) ** 2), 1.0, 5.0)
 
 
+def tree_tops(s: np.ndarray, cand: np.ndarray, res: float) -> tuple[np.ndarray, np.ndarray]:
+    """Variable-window local maxima: 3x3 peaks of the smoothed CHM `s` (plateaus merged to
+    their centroid) that have no higher peak within crown_window_radius_m(height)."""
+    from scipy.spatial import cKDTree
+
+    peak = cand & (s >= ndi.maximum_filter(s, size=3, mode="nearest") - 1e-4)
+    lab, n = ndi.label(peak, structure=np.ones((3, 3)))
+    if n == 0:
+        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+    cen = np.array(ndi.center_of_mass(peak, lab, np.arange(1, n + 1)))
+    r = np.clip(np.round(cen[:, 0]).astype(int), 0, s.shape[0] - 1)
+    c = np.clip(np.round(cen[:, 1]).astype(int), 0, s.shape[1] - 1)
+    h = np.asarray(ndi.maximum(s, lab, np.arange(1, n + 1)), dtype=np.float64)
+    win = crown_window_radius_m(h) / res
+    tree = cKDTree(np.column_stack([r, c]).astype(np.float64))
+    keep = np.ones(n, dtype=bool)
+    order = np.argsort(-h, kind="stable")  # tallest first; ties: earlier label wins
+    rank = np.empty(n, dtype=np.int64)
+    rank[order] = np.arange(n)
+    for i, nb in enumerate(tree.query_ball_point(np.column_stack([r, c]).astype(np.float64), win)):
+        if any(rank[j] < rank[i] for j in nb if j != i):
+            keep[i] = False
+    return r[keep], c[keep]
+
+
 @dataclass
 class TreeSet:
     rows: np.ndarray
@@ -644,28 +675,16 @@ def detect_trees(chm: np.ndarray, res: float, min_h: float, veg_mask: np.ndarray
     chm = np.nan_to_num(chm.astype(np.float32), nan=0.0)
     s = ndi.gaussian_filter(chm, sigma=0.6 / res)
     canopy = (chm >= VEG_MIN_H_M) if veg_mask is None else (veg_mask & (chm >= VEG_MIN_H_M))
-    radii = np.array([1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0])
-    want = crown_window_radius_m(s)
-    ridx = np.clip(np.searchsorted(radii, want), 0, len(radii) - 1)
-    top = np.zeros(chm.shape, dtype=bool)
-    cand = canopy & (s >= min_h)
-    for i, r in enumerate(radii):
-        sel = cand & (ridx == i)
-        if not sel.any():
-            continue
-        mf = ndi.maximum_filter(s, footprint=disk(r / res), mode="nearest")
-        top |= sel & (s >= mf - 1e-4)
-    lab, n = ndi.label(top, structure=np.ones((3, 3)))
+    tr, tc = tree_tops(s, canopy & (s >= min_h), res)
+    n = len(tr)
     if n == 0:
         z = np.zeros(0)
         return TreeSet(z.astype(int), z.astype(int), z, z, z, np.zeros(chm.shape, dtype=np.int32))
-    cen = np.array(ndi.center_of_mass(top, lab, np.arange(1, n + 1)))
-    tr = np.clip(np.round(cen[:, 0]).astype(int), 0, chm.shape[0] - 1)
-    tc = np.clip(np.round(cen[:, 1]).astype(int), 0, chm.shape[1] - 1)
     markers = np.zeros(chm.shape, dtype=np.int32)
     markers[tr, tc] = np.arange(1, n + 1)
     markers[~canopy & (markers == 0)] = -1  # background marker floods non-canopy
     inv = (np.clip(s.max() - s, 0, None) / max(float(s.max()), 1e-6) * 65000).astype(np.uint16)
+    inv[~canopy] = 65535  # background floods last (smoothing bleeds s outside the canopy)
     ws = ndi.watershed_ift(inv, markers).astype(np.int32)
     ws[~canopy] = 0
     ws[ws < 0] = 0
@@ -675,23 +694,42 @@ def detect_trees(chm: np.ndarray, res: float, min_h: float, veg_mask: np.ndarray
     idx = np.arange(1, n + 1)
     area = ndi.sum_labels(np.ones_like(chm), ws, idx) * res * res
     mean_h = ndi.mean(chm, ws, idx)
-    h = np.maximum(chm[tr, tc], s[tr, tc])
+    h = np.maximum(chm[tr, tc], np.nan_to_num(np.asarray(ndi.maximum(chm, ws, idx), dtype=np.float64)))
     radius = np.sqrt(np.maximum(area, res * res) / math.pi)
     ratio = np.where(h > 0, np.nan_to_num(mean_h) / np.maximum(h, 1e-6), np.nan)
     return TreeSet(tr, tc, h.astype(np.float64), radius, ratio, ws)
 
 
-def species_guess(height: np.ndarray, radius: np.ndarray, mean_ratio: np.ndarray) -> np.ndarray:
+def species_guess(
+    height: np.ndarray, radius: np.ndarray, mean_ratio: np.ndarray, *, palm_min_h: float = 7.0,
+    palm_max_r: float = 2.4, palm_max_rh: float = 0.2, conifer_max_fill: float = 0.62, conifer_min_h: float = 6.0,
+    canopy_cover: np.ndarray | None = None, palm_max_cover: float = 0.35,
+) -> np.ndarray:
     """CRUDE GUESS from crown geometry only (no spectral data): 'palm' = tall with a small
-    crown (fan / queen palms), 'conifer' = conical crown (mean/top < 0.62, narrow),
-    'broadleaf' = everything else (oaks, sycamores, eucalyptus, pepper trees)."""
+    crown (fan / queen palms), 'conifer' = conical crown (mean/top < conifer_max_fill, narrow),
+    'broadleaf' = everything else (oaks, sycamores, eucalyptus, pepper trees). With
+    `canopy_cover` (share of canopy within 20 m), palms must also stand fairly isolated
+    (cover < palm_max_cover): tall narrow crowns inside continuous groves are eucalyptus /
+    riparian trees split by the watershed. Defaults mirror lidar.* in assumptions.yaml."""
     h, r, q = (np.asarray(a, dtype=np.float64) for a in (height, radius, mean_ratio))
     out = np.full(h.shape, "broadleaf", dtype=object)
-    conifer = (q < 0.62) & (r / np.maximum(h, 1e-6) < 0.35) & (h >= 6.0)
-    palm = (h >= 7.0) & (r <= 2.4) & (r / np.maximum(h, 1e-6) <= 0.2)
+    conifer = (q < conifer_max_fill) & (r / np.maximum(h, 1e-6) < 0.35) & (h >= conifer_min_h)
+    palm = (h >= palm_min_h) & (r <= palm_max_r) & (r / np.maximum(h, 1e-6) <= palm_max_rh)
+    if canopy_cover is not None:
+        palm &= np.nan_to_num(np.asarray(canopy_cover, dtype=np.float64), nan=0.0) < palm_max_cover
     out[conifer] = "conifer"
     out[palm] = "palm"
     return out
+
+
+def canopy_cover_at(chm: np.ndarray, core: np.ndarray, res: float, e: np.ndarray, n: np.ndarray, window_m: float = 20.0) -> np.ndarray:
+    """Share of canopy cells (CHM >= VEG_MIN_H_M) in a window_m square around each point, from
+    one tile's CHM window (core = [minx, miny, maxx, maxy])."""
+    k = max(int(round(window_m / res)) | 1, 3)
+    cov = ndi.uniform_filter((np.nan_to_num(chm) >= VEG_MIN_H_M).astype(np.float32), size=k, mode="nearest")
+    r = np.clip(((core[3] - np.asarray(n)) / res).astype(int), 0, chm.shape[0] - 1)
+    c = np.clip(((np.asarray(e) - core[0]) / res).astype(int), 0, chm.shape[1] - 1)
+    return cov[r, c].astype(np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +748,15 @@ def utm_to_lonlat_arrays(e: np.ndarray, n: np.ndarray) -> tuple[np.ndarray, np.n
     t = Transformer.from_crs(PROJECTION, "EPSG:4326", always_xy=True)
     lon, lat = t.transform(np.asarray(e, dtype=np.float64), np.asarray(n, dtype=np.float64))
     return np.asarray(lon), np.asarray(lat)
+
+
+def in_bbox(lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+    """Mask of points inside the region bbox (region.yaml, WGS84)."""
+    from pipeline.config import region
+
+    b = region()["bbox"]
+    lon, lat = np.asarray(lon), np.asarray(lat)
+    return (lon >= b["west"]) & (lon <= b["east"]) & (lat >= b["south"]) & (lat <= b["north"])
 
 
 # ---------------------------------------------------------------------------
@@ -748,8 +795,9 @@ def load_points(box: Box) -> dict[str, np.ndarray]:
     return {k: np.concatenate(v) for k, v in parts.items()}
 
 
-def load_footprints() -> Any:
-    """osm_buildings.geojson footprints whose centroid is inside the region bbox, EPSG:32611."""
+def load_footprints(clip: bool = True) -> Any:
+    """osm_buildings.geojson footprints (EPSG:32611); with `clip`, only those whose
+    representative point is inside the region bbox."""
     import geopandas as gpd
 
     from pipeline.config import region
@@ -759,7 +807,8 @@ def load_footprints() -> Any:
     g["geometry"] = g.geometry.make_valid()
     b = region()["bbox"]
     c = g.geometry.representative_point()
-    g = g[(c.x >= b["west"]) & (c.x <= b["east"]) & (c.y >= b["south"]) & (c.y <= b["north"])].copy()
+    if clip:
+        g = g[(c.x >= b["west"]) & (c.x <= b["east"]) & (c.y >= b["south"]) & (c.y <= b["north"])].copy()
     g = g.to_crs(PROJECTION)
     # keep polygonal parts only
     g["geometry"] = g.geometry.apply(_polygonal)
@@ -870,7 +919,8 @@ def building_roof(
     roof = h >= min_h
     cx, cy = poly.centroid.x, poly.centroid.y
     pts = np.column_stack([px[inside][roof] - cx, py[inside][roof] - cy, h[roof]])
-    model = analyze_roof(pts, _local_xy(shrunk, cx, cy), threshold=cfg["thr"], flat_max_slope=cfg["flat"], rng=rng)
+    model = analyze_roof(pts, _local_xy(shrunk, cx, cy), threshold=cfg["thr"], flat_max_slope=cfg["flat"],
+                         hip_min_eave_frac=cfg.get("hip", 0.75), rng=rng)
     rec = _roof_record(model)
     rec["n_points_footprint"] = n_in
     rec["roof_cover_frac"] = float(roof.mean()) if n_in else float("nan")
@@ -992,7 +1042,7 @@ def process_tile(job: TileJob) -> dict[str, Any]:
             m = (P["x"] >= bx0) & (P["x"] <= bx1) & (P["y"] >= by0) & (P["y"] <= by1)
             idx = np.nonzero(m)[0]
             rec = building_roof(poly, P["x"][idx], P["y"][idx], ph[idx], 0.25, min_h, cfg, rng)
-            win = _poly_window_values(grid, poly, [dtm, ndsm, pen] + ([dem] if dem is not None else []))
+            win = _poly_window_values(grid, poly, [dtm, ndsm, pen] + ([dem] if dem is not None else []), p90=1)
             rec.update({
                 "wkt": poly.wkt, "area_m2": float(poly.area), "ground_elev_lidar_m": float(win[0]),
                 "ndsm_p90_m": float(win[1]), "penetration": float(win[2]),
@@ -1062,7 +1112,8 @@ def process_roofs(job: TileJob) -> dict[str, Any]:
     res = float(assumption("lidar.raster_res_m"))
     shrink = float(assumption("lidar.footprint_shrink_m"))
     min_h = float(assumption("lidar.roof_min_height_m"))
-    cfg = {"thr": float(assumption("lidar.ransac_threshold_m")), "flat": float(assumption("lidar.flat_roof_max_slope_deg"))}
+    cfg = {"thr": float(assumption("lidar.ransac_threshold_m")), "flat": float(assumption("lidar.flat_roof_max_slope_deg")),
+           "hip": float(assumption("lidar.hip_min_eave_frac"))}
     rng = np.random.default_rng(SEED + job.ckm * 1000 + job.rkm)
     recs = []
     if job.footprints:
@@ -1094,7 +1145,7 @@ def process_roofs(job: TileJob) -> dict[str, Any]:
                 sel.append(order[a:bb])
             idx = np.concatenate(sel) if sel else np.zeros(0, dtype=np.int64)
             rec = building_roof(poly, P["x"][idx], P["y"][idx], ph[idx], shrink, min_h, cfg, rng)
-            win = _poly_window_values(grid, poly, [dtm, change, ndsm])
+            win = _poly_window_values(grid, poly, [dtm, change, ndsm], p90=2)
             rec["ground_elev_lidar_m"] = float(win[0])
             rec["ground_change_m"] = float(win[1]) if np.isfinite(win[1]) else 0.0
             rec["ndsm_p90_m"] = float(win[2])
@@ -1107,8 +1158,9 @@ def process_roofs(job: TileJob) -> dict[str, Any]:
     return {"tile": (job.ckm, job.rkm), "cached": False, "buildings": len(recs), "seconds": time.time() - t0}
 
 
-def _poly_window_values(grid: Grid, poly: Any, arrays: list[np.ndarray]) -> list[float]:
-    """Median of each array over the cells covered by `poly` (centroid cell if none)."""
+def _poly_window_values(grid: Grid, poly: Any, arrays: list[np.ndarray], p90: int | None = None) -> list[float]:
+    """Median of each array over the cells covered by `poly` (centroid cell if none); the
+    array at index `p90` gets its 90th percentile instead."""
     from rasterio.features import geometry_mask
 
     minx, miny, maxx, maxy = poly.bounds
@@ -1132,10 +1184,10 @@ def _poly_window_values(grid: Grid, poly: Any, arrays: list[np.ndarray]) -> list
         v = a[r0:r1, c0:c1][m]
         v = v[np.isfinite(v)]
         out.append(float(np.median(v)) if len(v) else float("nan"))
-    if len(arrays) >= 3:
-        v = arrays[2][r0:r1, c0:c1][m]
+    if p90 is not None:
+        v = arrays[p90][r0:r1, c0:c1][m]
         v = v[np.isfinite(v)]
-        out[2] = float(np.percentile(v, 90)) if len(v) else float("nan")
+        out[p90] = float(np.percentile(v, 90)) if len(v) else float("nan")
     return out
 
 
@@ -1252,13 +1304,16 @@ def mosaic(tiles: list[Path], ext: Box, res: float, outputs: dict[str, str]) -> 
             d.close()
 
 
-def build_jobs(fp: Any, roads: list[Any], shift: tuple[float, float], force: bool) -> list[TileJob]:
+def build_jobs(fp: Any, roads: list[Any], shift: tuple[float, float], force: bool, fp_all: Any = None) -> list[TileJob]:
+    """One job per 1 km tile: roofs for `fp` (bbox footprints) whose centroid is in the tile;
+    masks from `fp_all` (every footprint, also outside the bbox) near the tile."""
     from shapely.geometry import box as sbox
 
     ext = raster_extent()
     cent = fp.geometry.representative_point()
     cx, cy = cent.x.to_numpy(), cent.y.to_numpy()
-    sindex = fp.sindex
+    fp_all = fp if fp_all is None else fp_all
+    sindex = fp_all.sindex
     road_geoms = [ls for _, ls in roads]
     from shapely import STRtree
 
@@ -1277,7 +1332,7 @@ def build_jobs(fp: Any, roads: list[Any], shift: tuple[float, float], force: boo
             for i in rtree.query(sbox(w.minx, w.miny, w.maxx, w.maxy)):
                 rl.append(roads[int(i)])
         jobs.append(TileJob(ckm, rkm, core, [(int(i), fp.geometry.iloc[int(i)]) for i in sel],
-                            list(fp.geometry.iloc[near]), rl, shift, force))
+                            list(fp_all.geometry.iloc[near]), rl, shift, force))
     return jobs
 
 
@@ -1300,10 +1355,18 @@ def run_parallel(fn: Any, jobs: list[TileJob], workers: int, what: str) -> list[
             stats.append(r)
             _log_tile(i, len(jobs), what, r)
         return stats
-    with _pool(workers) as ex:
-        for i, r in enumerate(ex.map(fn, jobs), 1):
-            stats.append(r)
-            _log_tile(i, len(jobs), what, r)
+    from concurrent.futures.process import BrokenProcessPool
+
+    try:
+        with _pool(workers) as ex:
+            for i, r in enumerate(ex.map(fn, jobs), 1):
+                stats.append(r)
+                _log_tile(i, len(jobs), what, r)
+    except BrokenProcessPool:
+        # a worker died (usually the OOM killer on a shared machine): finished tiles are cached,
+        # so resume with one worker fewer
+        log(f"WARNING {what}: a worker died; resuming with {max(workers - 1, 1)} workers")
+        return run_parallel(fn, jobs, max(workers - 1, 1), what)
     return stats
 
 
@@ -1329,9 +1392,13 @@ def write_missing(jobs: list[TileJob]) -> Any:
         mg["centroid_x"], mg["centroid_z"] = utm_to_scene_arrays(c.x.to_numpy(), c.y.to_numpy())
         lon, lat = utm_to_lonlat_arrays(c.x.to_numpy(), c.y.to_numpy())
         mg["centroid_lat"], mg["centroid_lon"] = lat, lon
+        mg = mg[in_bbox(lon, lat)].reset_index(drop=True)
         mg.insert(0, "lidar_id", [f"lidar_{i:05d}" for i in range(len(mg))])
         mg["height_m"] = mg["ridge_height_m"].round(2)
         mg["quality"] = np.where(mg["n_roof_points"] >= 40, "good", np.where(mg["n_roof_points"] >= 12, "fair", "poor"))
+        mg["lidar_status"] = "present"
+        mg = gpd.GeoDataFrame(add_spec_aliases(mg), geometry="geometry", crs=PROJECTION)
+        mg["planes"] = [json.dumps(v) for v in mg["planes"]]  # GeoJSON properties: JSON string
         mg = mg.to_crs("EPSG:4326")
     else:
         mg = gpd.GeoDataFrame({"lidar_id": []}, geometry=[], crs="EPSG:4326")
@@ -1346,8 +1413,15 @@ def write_missing(jobs: list[TileJob]) -> Any:
 def write_trees(jobs: list[TileJob]) -> Any:
     import pandas as pd
 
-    trees = pd.concat([pd.read_parquet(work_dir() / f"trees_{j.ckm}_{j.rkm}.parquet") for j in jobs], ignore_index=True)
-    trees = assemble_trees(trees)
+    parts = []
+    for j in jobs:
+        t = pd.read_parquet(work_dir() / f"trees_{j.ckm}_{j.rkm}.parquet")
+        if len(t):
+            z = np.load(work_dir() / f"tile_{j.ckm}_{j.rkm}.npz")
+            t["canopy_cover_20m"] = canopy_cover_at(z["chm"], z["core"], float(assumption("lidar.raster_res_m")),
+                                                    t["easting"].to_numpy(), t["northing"].to_numpy())
+        parts.append(t)
+    trees = assemble_trees(pd.concat(parts, ignore_index=True))
     _write_parquet_atomic(trees, lidar_dir() / "trees.parquet")
     return trees
 
@@ -1397,7 +1471,7 @@ def main(argv: list[str] | None = None) -> int:
     t = time.time()
     roads = load_road_lines()
     timings["load_roads_s"] = time.time() - t
-    jobs = build_jobs(fp, roads, shift, args.force)
+    jobs = build_jobs(fp, roads, shift, args.force, fp_all=load_footprints(clip=False))
 
     # 1. per-tile rasters, trees, lidar-only buildings
     t = time.time()
@@ -1449,11 +1523,16 @@ def assemble_buildings(fp: Any, roofs: Any) -> Any:
     cx, cy = c.x.to_numpy(), c.y.to_numpy()
     sx, sz = utm_to_scene_arrays(cx, cy)
     lon, lat = utm_to_lonlat_arrays(cx, cy)
+    rp = sub.geometry.representative_point()
+    rlon, rlat = utm_to_lonlat_arrays(rp.x.to_numpy(), rp.y.to_numpy())
+    # NB: scene centroid columns are scene_x / scene_z (not centroid_x / centroid_z): consumers
+    # treat building_id + centroid_x as integer ids of a processed build.
     df = pd.DataFrame({
         "building_id": sub["id"].astype(str),
         "osm_way_id": sub.get("osm_way_id", pd.Series([None] * len(sub))).astype("string"),
         "footprint_source": sub.get("source", pd.Series([None] * len(sub))).astype("string"),
-        "centroid_lat": lat, "centroid_lon": lon, "centroid_x": sx, "centroid_z": sz,
+        "centroid_lat": lat, "centroid_lon": lon, "scene_x": sx, "scene_z": sz,
+        "lat": rlat, "lon": rlon,
         "easting": cx, "northing": cy,
         "footprint_area_m2": sub.geometry.area.to_numpy(),
         "overture_height_m": [parse_height_m(v) for v in sub["height"]],
@@ -1479,6 +1558,26 @@ def assemble_buildings(fp: Any, roofs: Any) -> Any:
     df.loc[~pres, "roof_type"] = "unknown"
     df.loc[~pres, "planes_json"] = "[]"
     df.loc[~pres, "n_planes"] = 0
+    return add_spec_aliases(df)
+
+
+def add_spec_aliases(df: Any) -> Any:
+    """Short field names of the task spec next to the descriptive ones (same values):
+    ground_elev, eave_h, ridge_h, pitch_deg, and `planes` as a list of
+    {normal, offset, area_m2, slope_deg, aspect_deg} (from planes_json)."""
+    df = df.copy()
+    df["ground_elev"] = df["ground_elev_m"]
+    df["eave_h"] = df["eave_height_m"]
+    df["ridge_h"] = df["ridge_height_m"]
+    df["pitch_deg"] = df["roof_pitch_deg"]
+    df["planes"] = [
+        [{"normal": [float(v) for v in q["normal"]], "offset": float(q["d"]), "area_m2": float(q["area_m2"] or 0.0),
+          "slope_deg": float(q["slope_deg"]), "aspect_deg": float(q["aspect_deg"])} for q in json.loads(js)]
+        for js in df["planes_json"]
+    ]
+    for c in df.columns:
+        if df[c].dtype == np.float64 and c not in ("easting", "northing", "lat", "lon", "centroid_lat", "centroid_lon"):
+            df[c] = df[c].round(3)
     return df
 
 
@@ -1487,20 +1586,31 @@ def assemble_trees(t: Any) -> Any:
 
     if not len(t):
         return t
-    x, z = utm_to_scene_arrays(t["easting"].to_numpy(), t["northing"].to_numpy())
     lon, lat = utm_to_lonlat_arrays(t["easting"].to_numpy(), t["northing"].to_numpy())
+    inside = in_bbox(lon, lat)
+    t, lon, lat = t[inside].reset_index(drop=True), lon[inside], lat[inside]
+    x, z = utm_to_scene_arrays(t["easting"].to_numpy(), t["northing"].to_numpy())
     out = pd.DataFrame({
         "tree_id": np.arange(len(t), dtype=np.int64),
         "x": x, "z": z, "lat": lat, "lon": lon,
         "ground_y": t["ground_y"].to_numpy(), "height_m": t["height_m"].to_numpy(),
         "crown_radius_m": t["crown_radius_m"].to_numpy(),
-        "species_guess": species_guess(t["height_m"].to_numpy(), t["crown_radius_m"].to_numpy(),
-                                       t["crown_mean_ratio"].to_numpy()).astype(str),
+        "species_guess": species_guess(
+            t["height_m"].to_numpy(), t["crown_radius_m"].to_numpy(), t["crown_mean_ratio"].to_numpy(),
+            palm_min_h=float(assumption("lidar.palm_min_height_m")),
+            palm_max_r=float(assumption("lidar.palm_max_crown_radius_m")),
+            palm_max_rh=float(assumption("lidar.palm_max_radius_height_ratio")),
+            conifer_max_fill=float(assumption("lidar.conifer_max_crown_fill")),
+            conifer_min_h=float(assumption("lidar.conifer_min_height_m")),
+            canopy_cover=t["canopy_cover_20m"].to_numpy() if "canopy_cover_20m" in t else None,
+            palm_max_cover=float(assumption("lidar.palm_max_canopy_cover")),
+        ).astype(str),
+        "canopy_cover_20m": t["canopy_cover_20m"].to_numpy() if "canopy_cover_20m" in t else np.nan,
         "crown_mean_ratio": t["crown_mean_ratio"].to_numpy(),
         "ground_lidar_m": t["ground_lidar_m"].to_numpy(),
         "easting": t["easting"].to_numpy(), "northing": t["northing"].to_numpy(),
     })
-    for c in ("x", "z", "ground_y", "height_m", "crown_radius_m", "crown_mean_ratio", "ground_lidar_m"):
+    for c in ("x", "z", "ground_y", "height_m", "crown_radius_m", "crown_mean_ratio", "ground_lidar_m", "canopy_cover_20m"):
         out[c] = out[c].round(2)
     return out
 
@@ -1519,10 +1629,19 @@ def validation(b: Any, mg: Any, trees: Any, reg: dict[str, Any], shift: tuple[fl
                 "within_1m": float(np.mean(np.abs(d) <= 1.0)), "within_2m": float(np.mean(np.abs(d) <= 2.0)),
                 "p05": float(np.percentile(d, 5)), "p95": float(np.percentile(d, 95))}
 
+    m = m[m["quality"].isin(["good", "fair"])]
     ridge_vs = {"all": st((m["overture_height_m"] - m["ridge_height_m"]).to_numpy())}
     for src, grp in m.groupby("footprint_source"):
         ridge_vs[str(src)] = st((grp["overture_height_m"] - grp["ridge_height_m"]).to_numpy())
-    corr = float(np.corrcoef(m["overture_height_m"], m["ridge_height_m"])[0, 1]) if len(m) > 2 else float("nan")
+    for rt, grp in m.groupby("roof_type"):
+        ridge_vs[f"roof_{rt}"] = st((grp["overture_height_m"] - grp["ridge_height_m"]).to_numpy())
+    other_vs = {f: st((m["overture_height_m"] - m[f]).to_numpy()) for f in ("height_p50_m", "eave_height_m", "height_max_m")}
+
+    def corr_of(f: str) -> float:
+        ok = m["overture_height_m"].notna() & m[f].notna()
+        return float(np.corrcoef(m.loc[ok, "overture_height_m"], m.loc[ok, f])[0, 1]) if ok.sum() > 2 else float("nan")
+
+    corr = corr_of("ridge_height_m")
     summary = {
         "footprints": int(len(b)),
         "roof_models_by_type": {str(k): int(v) for k, v in pres["roof_type"].value_counts().items()},
@@ -1533,6 +1652,14 @@ def validation(b: Any, mg: Any, trees: Any, reg: dict[str, Any], shift: tuple[fl
         "trees_by_species_guess": {str(k): int(v) for k, v in trees["species_guess"].value_counts().items()} if len(trees) else {},
         "overture_minus_lidar_ridge_m": ridge_vs,
         "overture_vs_ridge_corr": corr,
+        "overture_minus_lidar_other_m": other_vs,
+        "overture_vs_other_corr": {f: corr_of(f) for f in ("height_p50_m", "eave_height_m")},
+        "ridge_height_m_percentiles": {str(q): float(np.nanpercentile(pres["ridge_height_m"], q)) for q in (5, 25, 50, 75, 95)} if len(pres) else {},
+        "pitch_deg_percentiles_sloped": {str(q): float(np.nanpercentile(pres.loc[pres["roof_type"] != "flat", "roof_pitch_deg"], q)) for q in (5, 25, 50, 75, 95)} if len(pres) else {},
+        "tree_height_m_percentiles": {str(q): float(np.percentile(trees["height_m"], q)) for q in (5, 25, 50, 75, 95)} if len(trees) else {},
+        "tree_crown_radius_m_percentiles": {str(q): float(np.percentile(trees["crown_radius_m"], q)) for q in (5, 25, 50, 75, 95)} if len(trees) else {},
+        "missing_buildings_by_roof_type": {str(k): int(v) for k, v in mg["roof_type"].value_counts().items()} if len(mg) and "roof_type" in mg else {},
+        "missing_buildings_area_m2_total": float(mg["area_m2"].sum()) if len(mg) and "area_m2" in mg else 0.0,
         "registration_shift_applied_m": list(shift),
     }
     return {"generated_at": now_iso(), "summary": summary, "registration": reg, "timings_s": timings,

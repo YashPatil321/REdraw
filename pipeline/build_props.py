@@ -418,6 +418,10 @@ class Placer:
         asp = np.array([math.log(max(self._dims(k)[1], 0.3) / max(self._dims(k)[0], 0.5)) for k in keys])
         return keys, w / w.sum(), asp
 
+    def _height_weights(self, keys: list[str], h: float, sigma: float) -> np.ndarray:
+        lh = np.array([math.log(max(h, 0.5) / max(self._dims(k)[0], 0.5)) for k in keys])
+        return np.exp(-(lh**2) / (2 * sigma * sigma))
+
     def _dims(self, pid: str) -> tuple[float, float]:
         """(height_m, crown_radius_m) of a tree prop model."""
         e = self.manifest[self.ids.index(pid)]
@@ -467,8 +471,22 @@ class Placer:
         euc_p = float(assumption("props.lidar_trees.eucalyptus_tall_share"))
         fan_h = float(assumption("props.lidar_trees.palm_fan_min_height_m"))
         sig = float(assumption("props.lidar_trees.aspect_sigma"))
+        hsig = float(assumption("props.lidar_trees.height_sigma"))
         mixes = {k: self._species_weights(k) for k in
                  ("palm", "conifer", "broadleaf_street", "broadleaf_yard", "broadleaf_commercial", "broadleaf_open")}
+        # Watershed crowns of a 2014 QL2 CHM come out narrower than the drip line (crowns are cut at 40 % of the top
+        # height and touching crowns split), so measured radii are rescaled per class so that the class median
+        # crown/height ratio matches the models; relative differences between trees are kept.
+        rk: dict[str, float] = {}
+        for c, mk in (("palm", "palm"), ("conifer", "conifer"), ("broadleaf", "broadleaf_yard")):
+            sel = cls == c
+            if not sel.any():
+                continue
+            keys_c, w_c, asp_c = mixes[mk]
+            model = float(np.sum(w_c * np.exp(asp_c)))
+            meas = float(np.median(r[sel] / np.maximum(h[sel], 0.5)))
+            rk[c] = float(np.clip(model / max(meas, 1e-3), 1.0, 4.0))
+            stats[f"lidar_crown_scale_{c}"] = round(rk[c], 3)
         kept: list[tuple[float, float]] = []
         from shapely.geometry import Point
 
@@ -496,8 +514,11 @@ class Placer:
                     continue
                 xi, zi = float(q[0]), float(q[1])
                 stats["lidar_moved_off_road"] += 1
-            hi, ri = float(h[i]), float(r[i])
             c = str(cls[i])
+            hi, ri = float(h[i]), float(r[i]) * rk.get(c, 1.0)
+            if c == "palm" and hero is None and bd[i] > open_b and rd[i] > open_r:
+                c = "broadleaf"  # no planted palms out in the canyons: a geometric misfire (narrow oak / shrub clump)
+                stats["lidar_palm_in_open_space_as_broadleaf"] = stats.get("lidar_palm_in_open_space_as_broadleaf", 0) + 1
             if c == "palm":
                 keys, w, asp = mixes["palm"]
                 f = 1.0 / (1.0 + math.exp(-(hi - fan_h) / 1.2))
@@ -519,6 +540,8 @@ class Placer:
             if len(keys) > 1:
                 la = math.log(max(ri, 0.3) / max(hi, 0.5))
                 w = w * np.exp(-((la - asp) ** 2) / (2 * sig * sig))
+                if c != "palm":  # palms: height already decides fan vs queen
+                    w = w * self._height_weights(keys, hi, hsig)
             w = w / w.sum() if w.sum() > 0 else np.full(len(keys), 1.0 / len(keys))
             pid = keys[int(self.rng.choice(len(keys), p=w))]
             h0, r0 = self._dims(pid)

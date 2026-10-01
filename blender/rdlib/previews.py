@@ -14,7 +14,7 @@ import bpy
 import numpy as np
 
 from . import atlas, bl, foliage, houses, materials, props, vehicles
-from .mesh import Part, box, cylinder
+from .mesh import Part, box
 
 WALL_TINTS = ["#E8D9BC", "#DCC5A0", "#CDB08A", "#EFE9DE", "#BDB394", "#D9C3A2", "#C9B7A0", "#E2CFB0"]
 
@@ -90,7 +90,6 @@ def sheet(man: dict[str, Any], mat_dir: Path, path: Path, rows: list[list[tuple[
             x += w + gap
         maxw = max(maxw, x - gap)
     add_part(p, "sheet", man, mat_dir)
-    H = len(rows) * (S + 0.9)
     bl.setup_render(width_px, int(width_px * (S + 0.25 + (len(rows) - 1) * (S + 0.9) + 0.75) / (maxw + 0.8)), samples=samples)
     bl.setup_world(sun_elev_deg=32, sun_azimuth_deg=215, strength=4.5, sky_strength=0.12)
     bpy.context.scene.view_settings.exposure = -0.25
@@ -114,8 +113,8 @@ def materials_sheets(man: dict[str, Any], mat_dir: Path, out_dir: Path, samples:
     singles = ["window_slider", "window_pair", "window_picture", "window_small", "window_arched", "door_front", "door_slider", "storefront"]
     orow = [(f"open:{n}:0:{t}", n, 1, 1) for n in singles]
     grow = [(f"open:garage_2car:0:{t}", "garage_2car", 2, 1), (f"open:garage_3car:0:{t}", "garage_3car", 3, 1),
-            (f"open:storefront_sign:0:{t}", "storefront_sign", 1, 1), (f"open:school_window_band:0:#D8D2C4", "school_window_band", 1, 1),
-            (f"open:school_door:0:#D8D2C4", "school_door", 1, 1)]
+            (f"open:storefront_sign:0:{t}", "storefront_sign", 1, 1), ("open:school_window_band:0:#D8D2C4", "school_window_band", 1, 1),
+            ("open:school_door:0:#D8D2C4", "school_door", 1, 1)]
     p1 = out_dir / "materials_facade.jpg"
     # span panels: build each span cell as its own key so the preview uses the real per-cell lookup
     rows = [wrow, orow, grow]
@@ -150,7 +149,6 @@ def sheet_spans(man: dict[str, Any], mat_dir: Path, path: Path, rows: list, samp
             x += w + gap
         maxw = max(maxw, x - gap)
     add_part(p, "sheet", man, mat_dir)
-    H = len(rows) * (S + 0.9)
     bl.setup_render(1600, int(1600 * (S + 0.25 + (len(rows) - 1) * (S + 0.9) + 0.75) / (maxw + 0.8)), samples=samples)
     bl.setup_world(sun_elev_deg=30, sun_azimuth_deg=215, strength=4.5, sky_strength=0.12)
     bpy.context.scene.view_settings.exposure = -0.25
@@ -248,10 +246,16 @@ def street_scene(man: dict[str, Any], mat_dir: Path, tex_dir: Path, path: Path, 
         world += houses.ground_rect(dx - 0.7, gy + 0.6, dx + 0.7, 23.0, "pavers", 3.0, z0 + 0.012)
         bed_x0, bed_x1 = (gx1 + 0.3, bx0 + bw) if st.garage_side < 0 else (bx0, gx0 - 0.3)
         world += houses.ground_rect(bed_x0, 21.6, bed_x1, 23.0, "mulch", 2.0, z0 + 0.008)
+        bed_plant = "succulent_agave" if i % 3 == 2 else "shrub"  # xeriscape beds on some lots
         for k in range(int((bed_x1 - bed_x0) / 1.6)):
             sx = bed_x0 + 0.8 + k * 1.6
             if abs(sx - dx) > 1.2:
-                inst.place("shrub", sx, 22.3 + rng.uniform(-0.2, 0.2), z0, rng.uniform(0, 360), rng.uniform(0.8, 1.1))
+                kind = bed_plant if k % 2 == 0 else "shrub"
+                inst.place(kind, sx, 22.3 + rng.uniform(-0.2, 0.2), z0, rng.uniform(0, 360),
+                           rng.uniform(0.55, 0.75) if kind == "succulent_agave" else rng.uniform(0.8, 1.1))
+        if i in (0, 3, 5):  # clipped hedge along the lot line (2 m segments, local x along the run)
+            for k in range(5):
+                inst.place("hedge", x + lot / 2 - 0.5, 12.0 + 2.0 * k, z0, 90.0, 1.0)
         inst.place("grass_ornamental", gx0 - 0.6 if st.garage_side > 0 else gx1 + 0.6, gy + 0.6, z0, rng.uniform(0, 360))
         # yard tree / palm
         if i % 3 == 0:
@@ -265,6 +269,8 @@ def street_scene(man: dict[str, Any], mat_dir: Path, tex_dir: Path, path: Path, 
         # side-yard return wall with a gate pier (stucco, 1.8 m)
         wx = bx0 - 0.9 if st.garage_side > 0 else bx0 + bw + 0.9
         world += box(0.2, 4.0, 1.8, f"wall:stucco_sand:{tints[i]}").moved(wx, 25.0, z0)
+        if i in (1, 4):
+            inst.place("shrub_bougainvillea", wx, 23.2, z0, rng.uniform(0, 360), 0.8)
     # backyard fences / second row backdrop (simple massing: two-storey boxes with hip roofs)
     for i, x in enumerate(np.arange(-60, 110, 17.0)):
         st = houses.HouseStyle(tints[i % 7], trims[i % 7], roofs[(i + 3) % 7], floors=2, seed=40 + i)
@@ -292,8 +298,14 @@ def street_scene(man: dict[str, Any], mat_dir: Path, tex_dir: Path, path: Path, 
     world += Part(np.array(P), [[0, 1, 2, 3]], ["decal:yellow_dashed_4in"], [[(0, -5 / 12), (0, x1 / 12), (1, x1 / 12), (1, -5 / 12)]])
     add_part(world, "street", man, mat_dir)
     # near side: parkway trees, lamp, hedge line
-    for tx in (-24.0, 6.0, 30.0):
-        inst.place("tree_street", tx, -7.4, z0, rng.uniform(0, 360), 1.0)
+    for tx, sp in ((-24.0, "tree_street"), (6.0, "tree_jacaranda"), (30.0, "tree_street")):
+        inst.place(sp, tx, -7.4, z0, rng.uniform(0, 360), 1.0)
+    inst.place("tree_ficus", -34.0, -16.0, z0, 20.0, 1.0)
+    for k in range(10):
+        inst.place("grass_tuft", -9.0 + k * 0.9 + rng.uniform(-0.3, 0.3), -7.0 + rng.uniform(-0.6, 0.6), z0, rng.uniform(0, 360), 1.2)
+    # Canary Island pines behind the first row
+    for px in (-12.0, 66.0):
+        inst.place("tree_pine_canary", px, 47.0, z0 + 1.0, rng.uniform(0, 360), 0.95)
     inst.place("street_lamp", 12.0, -6.4, z0, 0.0)
     inst.place("street_lamp", 45.0, 6.4, z0, 180.0)
     # vehicles

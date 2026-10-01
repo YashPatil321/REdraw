@@ -2,7 +2,7 @@
 
 Procedural, seed-fixed props and hero campus models for Redraw, built with the
 `bpy` wheel (no Blender UI). Everything here regenerates from code + real open
-data; only the scripts, tests and `previews/*.png` are committed.
+data; only the scripts, tests and `previews/*` are committed.
 
 ## Setup and commands
 
@@ -11,7 +11,9 @@ python3.11 -m venv .venv-blender
 .venv-blender/bin/pip install bpy==5.0.1 shapely          # bpy 4.5.x also works
 
 .venv-blender/bin/python blender/build_all_assets.py          # everything (about 5 min on 4 CPUs)
-.venv-blender/bin/python blender/build_all_assets.py --only vehicles trees street   # props only, seconds
+.venv-blender/bin/python blender/build_all_assets.py --only vehicles trees street   # props only (trees bake LOD1 impostors: ~1-2 min each)
+.venv-blender/bin/python blender/build_all_assets.py --only materials   # material atlases, ~30 s
+.venv-blender/bin/python blender/build_all_assets.py --only previews --previews street_scene vegetation
 .venv-blender/bin/python blender/build_all_assets.py --no-previews --samples 32
 
 .venv/bin/python blender/extract_hero_sites.py   # hero footprints/layout (main venv: geopandas); run automatically if missing
@@ -19,7 +21,8 @@ python3.11 -m venv .venv-blender
 .venv/bin/pytest blender/tests                   # glbs parse, manifest, hero overrides, placements format
 ```
 
-Stages of `build_all_assets.py`: `vehicles trees street heroes manifest previews`.
+Stages of `build_all_assets.py`: `materials vehicles trees street heroes manifest previews`;
+`--previews` picks among `sheets street_scene vehicles vegetation heroes`.
 Previews render with Cycles on the CPU (EEVEE needs a GPU context headless bpy
 does not have) and are re-encoded to stay under 400 KB.
 
@@ -28,7 +31,7 @@ does not have) and are re-encoded to stay under 400 KB.
 | Path | What |
 | --- | --- |
 | `client/public/assets/props/vehicles/*.glb` | 7 vehicles |
-| `client/public/assets/props/vegetation/*.glb` | 8 plants (alpha-card foliage) |
+| `client/public/assets/props/vegetation/*.glb` | 14 plants (alpha-card foliage) + `tree_*_lod1.glb` impostors |
 | `client/public/assets/props/street/street_lamp.glb` | SD cobra-head street light |
 | `client/public/assets/props/props_manifest.json` | prop table (below) |
 | `client/public/assets/props/placements.json` + `.bin` | instances from `pipeline/build_props.py` (below) |
@@ -36,7 +39,7 @@ does not have) and are re-encoded to stay under 400 KB.
 | `pipeline/hero_overrides/hero_overrides.json` | hero placement table the pipeline reads |
 | `pipeline/hero_overrides/<id>_trees.json` | campus trees, lot lights, parked-car stalls (merged into placements) |
 | `blender/build/` | generated textures, `hero_sites.json` (gitignored) |
-| `blender/previews/*.png` | committed beauty renders |
+| `blender/previews/*.{png,jpg}` | committed beauty renders (< 400 KB each) |
 
 ## Conventions (all assets)
 
@@ -155,22 +158,43 @@ and a `fleet_share` (`props.vehicle_type_shares`).
 ## Vegetation and street furniture
 
 One mesh + one material per plant: `foliage` (alphaMode MASK, doubleSided) with a
-generated 512 x 512 palette PNG atlas (leaf cells in x < 448, a bark strip in the
-last 64 px column mapped onto the trunk tubes). Leaf cards are scattered in
-ellipsoid clumps; their normals are bent outward from the canopy center so the
-card cloud shades like a rounded crown.
+generated 1024 x 1024 palette PNG atlas (four 448 x 512 leaf cells drawn at 4x
+supersampling with per-leaf color jitter, folded blades, midribs, twigs and sun bias;
+transparent texels bled with leaf color so mipmaps have no dark fringe; a 128 px bark
+strip on the right mapped onto the trunk tubes). Leaf cards are scattered in ellipsoid
+clumps (biased to the clump shells); their normals are bent outward from the canopy
+center so the card cloud shades like a rounded crown, and `COLOR_0` carries a baked
+crown ambient occlusion (inner / underside cards darker) to multiply into the base color.
 
-| id | species / use | height | tris |
+**LODs (trees).** `lods[0]` = the card tree (`max_distance_m` 140), `lods[1]` =
+`<id>_lod1.glb`: a Cycles-baked impostor (orthographic side + top views under a white
+sky, i.e. albedo x AO, 512 px per view) on 3 crossed vertical quads + 1 horizontal crown
+quad; the vertical quads are doubled back to back and split into a few cells whose normals
+follow an ellipsoidal crown, the top quad faces up only and sits high in the crown at 80 %
+width (80 triangles), so it lights like LOD0 from any sun / view direction. Cull backfaces,
+let impostors cast shadows but not receive them (crossed silhouettes would self-shadow).
+
+| id | species / use | height | tris (LOD0 / LOD1) |
 | --- | --- | --- | --- |
-| `tree_oak` | coast live oak, canyons / slopes / big yards | 9.6 m, 15 m wide | 1778 |
-| `tree_palm_fan` | Mexican fan palm (Washingtonia robusta), arterials / commercial | 19 m | 390 |
-| `tree_palm_queen` | queen palm (Syagrus), entries / yards / centers | 12 m | 372 |
-| `tree_eucalyptus` | eucalyptus windbreak, edges / slopes | 22.7 m | 1392 |
-| `tree_jacaranda` | jacaranda (autumn: green, sparse purple), streets / yards | 9.4 m | 1368 |
-| `tree_street` | Brisbane box / elm / pistache parkway tree | 8.8 m | 1208 |
-| `shrub` | irrigated shrub mound with bougainvillea accents | 1.6 m | 220 |
+| `tree_oak` | coast live oak (Quercus agrifolia), canyons / slopes / big yards | 9.5 m | 2558 / 80 |
+| `tree_palm_fan` | Mexican fan palm (Washingtonia robusta), arterials / commercial | 19.5 m | 450 / 80 |
+| `tree_palm_queen` | queen palm (Syagrus romanzoffiana), entries / yards / centers | 11.8 m | 924 / 80 |
+| `tree_pine_canary` | Canary Island pine (Pinus canariensis), parks / slopes / school edges | 20.5 m | 3384 / 80 |
+| `tree_eucalyptus` | eucalyptus windbreak, edges / slopes / canyon rims | 22.6 m | 2152 / 80 |
+| `tree_jacaranda` | jacaranda (autumn: green, sparse late bloom), streets / yards | 9.2 m | 2028 / 80 |
+| `tree_ficus` | Indian laurel fig (Ficus microcarpa), commercial / parking lots | 8.7 m | 2858 / 80 |
+| `tree_street` | Brisbane box (Lophostemon) parkway tree, stands in for elm / pistache | 8.8 m | ~2100 / 80 |
+| `shrub` | irrigated shrub mound | 1.5 m | 340 |
+| `shrub_bougainvillea` | bougainvillea mound, magenta bracts (walls, entries, slopes) | 2.6 m | 824 |
+| `succulent_agave` | Agave americana rosettes + echeveria (xeriscape) | 0.9 m | 1900 |
+| `hedge` | clipped hedge SEGMENT, 2.0 m along local x: tile end to end | 1.6 m | 350 |
 | `grass_ornamental` | bunch grass clump | 0.9 m | 14 |
+| `grass_tuft` | lawn tuft, kind `groundcover` (client scatters it procedurally near the camera; not placed) | 0.2 m | 6 |
 | `street_lamp` | SD cobra head, 30 ft galvanized pole, 8 ft arm toward -z, LED lens emissive | 9.4 m | 190 |
+
+Palms stay well under 2k triangles on purpose: their crowns are a few dozen big
+fronds, extra cards add nothing visible. Tree entries also carry `crown_radius_m`
+(95th percentile of the card radius) so placements can scale a model to a measured crown.
 
 ## `props_manifest.json`
 
@@ -185,8 +209,9 @@ A JSON list, one object per prop:
  "fleet_share": 0.3, "paint_colors": [{"name": "white", "hex": "#E9EAEA", "share": 0.25}], "notes": "..."}
 ```
 
-`kind` is `vehicle | tree | shrub | lamp`; `footprint_radius_m` is the largest
-horizontal distance from the origin; trees also carry `alpha_mode: "MASK"`.
+`kind` is `vehicle | tree | shrub | lamp | groundcover`; `footprint_radius_m` is the largest
+horizontal distance from the origin; plants carry `alpha_mode: "MASK"`, trees also
+`crown_radius_m`, `lods` and `lod1_file`.
 
 ## Hero campuses
 
@@ -218,9 +243,20 @@ horizontal distance from the origin; trees also carry `alpha_mode: "MASK"`.
 Heroes use per-face vertex colors (`COLOR_0`) on 3-4 class materials
 (`hero_matte`, `hero_glass`, `hero_metal`, `hero_glow`) because the pipeline's hero
 loader keeps base color, roughness, `COLOR_0` and textures (not metallic,
-emissive or alpha). Trees are NOT in the hero glbs (alpha cards would turn into
+emissive or alpha). On top of that every vertex carries the material-atlas contract
+(the loader keeps `_`-prefixed attributes): `_MAT` / `_VARIANT` from each palette key
+(`rdlib/atlas.py KEY_MAT`: stucco / stone walls, trim, glass, TPO / gravel / standing-seam
+flat roofs, tile roofs, solar panels, and `_MAT` 6 ground cells for asphalt, concrete,
+pavers, lawn, sage scrub, mulch, DG; sports surfaces and paint lines stay `_MAT` 7
+vertex color) and atlas `TEXCOORD_0` (facade u = meters along the wall / 3, roofs / 4,
+ground planar by the cell's `world_size_m`). Vertices are split between faces of
+different (`_MAT`, `_VARIANT`), so the point attributes are exact; `COLOR_0` stays the
+tint (walls / trim) and the color-only fallback. The hero previews are rendered from
+these attributes with the real atlases. Trees are NOT in the hero glbs (alpha cards would turn into
 opaque quads in the baked tiles): they go to `<id>_trees.json` and from there into
-`placements.bin`.
+`placements.bin`. `<id>_trees.json` also lists `keepout` polygons (local x east / y north:
+modeled buildings, fields, courts, track, rubber play areas, parking) where
+`build_props.py` must not put real lidar trees.
 
 `hero_overrides.json`:
 
@@ -270,6 +306,38 @@ so a client can cull / stream by distance (there are ~300k instances; draw only
 cells near the camera, e.g. within 1.5 km). Parked cars carry no color: pick from
 `paint_colors` by share, seeded by the record index.
 
+**Real trees.** When `data/raw/lidar/trees.parquet` exists (pipeline/lidar_features.py:
+individual trees from the 2014 USGS 3DEP QL2 point cloud: easting / northing, height,
+crown radius, palm / broadleaf / conifer guess, ground before / after), every tree inside
+the region bbox becomes an instance at its real position (x, z recomputed from UTM with the
+current scene origin):
+
+- trees on ground regraded since the survey (`|ground_y - ground_lidar_m| > lidar.ground_change_m`)
+  are stale and dropped; tops inside / within `props.lidar_trees.building_clearance_m` of a
+  footprint are dropped (roof artifacts); tops over a travel lane are moved back to the curb
+  (+ `road_clearance_m`); inside hero radii the hero `keepout` polygons apply instead
+- species: `palm` -> fan / queen palm by height (`palm_fan_min_height_m`), `conifer` -> Canary
+  pine, `broadleaf` -> a context mix (`props.lidar_trees.mix.broadleaf_{street,yard,commercial,open}`
+  from the distance to roads / buildings and the nearest building type); broadleaf taller than
+  `eucalyptus_min_height_m` -> mostly eucalyptus; palms out in open space are treated as
+  broadleaf; within a class each species is weighted by how well its model crown/height ratio
+  matches the tree (`aspect_sigma`), seeded
+- scale = `(h / h_model)^0.7 * (r / r_model)^0.3` (`height_weight`, clamped to `scale_clamp`),
+  so these records may exceed `suggested_scale_range` (header `scale_note`). Watershed crowns
+  come out narrower than drip lines, so measured radii are first rescaled per class so the class
+  median crown/height ratio matches the models (`stats.lidar_crown_scale_*`)
+- the rule-based tree rules below then only fill GAPS: houses built after
+  `props.lidar_trees.survey_year` (`parcel_year_built`), developed `gap_cell_m` cells without
+  any lidar tree, and anything outside the lidar AOI; never within a few meters of a real tree;
+  gap trees are young (`young_scale`). Hero layout trees survive only where no real tree stands
+  within 20 m. Slope trees come only from lidar inside the AOI. Shrubs, hedges, agave,
+  bougainvillea, grass, lamps and parked cars are always rule-based.
+
+The header records `trees_source` (`lidar+gaps` or `procedural`), `region_bbox` and the
+lidar counts in `stats`. The run refuses to start while `region_meta.json` describes another
+bbox than `region.yaml` (`--allow-region-mismatch` for dev only), and every record is clipped
+to the region bbox polygon.
+
 Rules (densities in `data/config/assumptions.yaml -> props.*`, all `verified: false`):
 
 - street trees on both curbs of residential and arterial streets: offset from the
@@ -277,9 +345,10 @@ Rules (densities in `data/config/assumptions.yaml -> props.*`, all `verified: fa
   `props.curb_extra_m`) + `props.parkway_offset_m`; spacing
   `props.street_tree_spacing_m` with jitter, `props.street_tree_presence` fill;
   species from `props.species_mix.{residential,arterial}_street`; none on freeways
-- yard trees, shrubs and ornamental grass around houses (`props.*_per_house`),
-  palms / trees around commercial and apartment buildings
-  (`props.commercial_palm_spacing_m`)
+- yard trees, shrubs and ornamental grass around houses (`props.*_per_house`; shrub
+  species from `props.species_mix.yard_shrub`: shrub / agave / bougainvillea / clipped
+  hedge runs of `props.hedge_run_segments` 2 m segments along a house wall), palms /
+  trees around commercial and apartment buildings (`props.commercial_palm_spacing_m`)
 - oaks / eucalyptus and scrub on undeveloped slopes steeper than
   `props.slope_min_grade`, at least `props.open_space_building_clearance_m` from
   buildings, clumped with a noise mask
@@ -296,11 +365,15 @@ Rules (densities in `data/config/assumptions.yaml -> props.*`, all `verified: fa
 
 `blender/tests/test_assets.py` (main venv, trimesh): palette and material contracts,
 every manifest entry exists and parses, triangle counts match the manifest and the
-budgets (cars < 1500, bus < 3000, plants < 2000), vehicles are -z forward with
-headlights in front, plants use MASK atlases, hero glbs load through
-`pipeline.glb.load_glb_meshes` with `COLOR_0`, placements header/binary agree
-(size, sections, cells, scale ranges, extent) and the placement helpers
-(`rot_y`, heightmap orientation, cell sorting). Tests that need built outputs skip
+budgets (cars < 1500, bus < 3000, trees < 4000 with broadleaf / conifer LOD0 2-4k,
+LOD1 <= 128, shrubs < 2000), every species present, tree LOD tables, vehicles are -z
+forward with headlights in front, plants use MASK atlases, hero glbs load through
+`pipeline.glb.load_glb_meshes` with `COLOR_0`, `_MAT` / `_VARIANT` (in range) and UVs,
+hero keep-out polygons, materials manifest names / indices stable (append-only), atlas
+textures sized as declared, placements header/binary agree (size, sections, cells, scale
+ranges, extent, inside the region bbox), the lidar placement rules on a synthetic mini
+world (building / road / region filters, species, scale, gaps), the lidar loader (frame,
+stale trees) and the placement helpers (`rot_y`, heightmap orientation, cell sorting). Tests that need built outputs skip
 with a hint when they are missing.
 
 ## Layout of the code
@@ -313,4 +386,6 @@ with a hint when they are missing.
 | `rdlib/materials.py` | PBR prop materials, paint palette (pure python) |
 | `rdlib/palette.py` | hero colors (pure python; append-only table) |
 | `rdlib/vehicles.py`, `foliage.py`, `props.py`, `heroes.py` | builders |
-| `rdlib/bl.py` | Part -> Blender mesh, custom normals, glTF export, Cycles preview helpers |
+| `rdlib/bl.py` | Part -> Blender mesh (incl. hero `_MAT` / `_VARIANT` / atlas UVs), custom normals, glTF export, Cycles preview helpers |
+| `rdlib/impostor.py` | LOD1 tree impostors (Cycles bake + crossed quads) |
+| `rdlib/matgen.py`, `texgen.py`, `atlas.py`, `houses.py`, `previews.py` | material atlases, atlas conventions, tract houses and preview scenes |

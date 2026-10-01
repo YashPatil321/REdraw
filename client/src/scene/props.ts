@@ -679,3 +679,16 @@ async function loadFoliage(buf: ArrayBuffer): Promise<{ geometry: THREE.BufferGe
   mat.needsUpdate = true;
   return { geometry: merged, material: mat };
 }
+
+/** The lawn grass tuft for near-camera scattering (props manifest entry with `scatter`), or null. */
+export async function loadGrassTuft(fetchAsset: AssetFetcher): Promise<{ geometry: THREE.BufferGeometry; material: THREE.Material } | null> {
+  try {
+    const raw = JSON.parse(new TextDecoder().decode(await fetchAsset('props/props_manifest.json'))) as Record<string, unknown> | unknown[];
+    const info = parsePropsManifest(raw);
+    const e = info.entries.find((x) => typeof x['scatter'] === 'string' || x.id === 'grass_tuft' || x['kind'] === 'groundcover');
+    if (!e) return null;
+    return await loadFoliage(await fetchAsset(e.file.startsWith('props/') ? e.file : `props/${e.file}`));
+  } catch {
+    return null;
+  }
+}

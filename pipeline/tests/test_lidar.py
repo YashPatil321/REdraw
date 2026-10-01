@@ -229,3 +229,18 @@ def test_crown_window_and_species_guess() -> None:
     assert crown_window_radius_m(40.0) == 5.0
     g = species_guess(np.array([12.0, 12.0, 15.0]), np.array([1.5, 4.0, 2.5]), np.array([0.9, 0.9, 0.5]))
     assert list(g) == ["palm", "broadleaf", "conifer"]
+
+
+def test_species_guess_isolation_rule() -> None:
+    g = species_guess(np.array([12.0, 12.0]), np.array([1.5, 1.5]), np.array([0.9, 0.9]), canopy_cover=np.array([0.1, 0.8]))
+    assert list(g) == ["palm", "broadleaf"]
+
+
+def test_canopy_cover_at() -> None:
+    from pipeline.lidar_features import canopy_cover_at
+
+    chm = np.zeros((100, 100), dtype=np.float32)
+    chm[:, :50] = 10.0  # west half is canopy
+    core = np.array([0.0, 0.0, 50.0, 50.0])
+    cov = canopy_cover_at(chm, core, 0.5, np.array([5.0, 45.0]), np.array([25.0, 25.0]), window_m=10.0)
+    assert cov[0] == pytest.approx(1.0) and cov[1] == pytest.approx(0.0)
