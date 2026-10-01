@@ -175,3 +175,25 @@ def test_synthetic_hd_manifest_and_tiles(synthetic_build) -> None:
     assert all("_MAT" in n and "_VARIANT" in n and "TEXCOORD_0" in n for n in names)
     rm = json.loads((d["processed"] / "region_meta.json").read_text())
     assert rm["synthetic"] is True and rm["tiles"] == {"rows": 8, "cols": 8}
+
+
+def test_raw_edge_shapes_survive_simplification() -> None:
+    import networkx as nx
+    import osmnx as ox
+
+    from pipeline.build_roads import explode_edge_geometry
+
+    G = nx.MultiDiGraph(crs="EPSG:4326")
+    for n, (x, y) in {1: (-117.10, 33.00), 2: (-117.09, 33.01), 3: (-117.08, 33.01)}.items():
+        G.add_node(n, x=x, y=y)
+    bend = LineString([(-117.10, 33.00), (-117.10, 33.01), (-117.09, 33.01)])  # L-shaped road 1 -> 2
+    G.add_edge(1, 2, osmid="w1", highway="residential", oneway=False, reversed=False, length=2000.0, geometry=bend)
+    G.add_edge(2, 1, osmid="w1", highway="residential", oneway=False, reversed=True, length=2000.0, geometry=LineString(bend.coords[::-1]))
+    G.add_edge(2, 3, osmid="w2", highway="residential", oneway=False, reversed=False, length=900.0)
+    G.add_edge(3, 2, osmid="w2", highway="residential", oneway=False, reversed=True, length=900.0)
+    assert explode_edge_geometry(G) == 1  # one shared corner vertex for both directions
+    S = ox.simplify_graph(G)
+    d = S.get_edge_data(1, 2) or S.get_edge_data(1, 3)
+    e = next(iter(d.values()))
+    assert any(abs(x + 117.10) < 1e-9 and abs(y - 33.01) < 1e-9 for x, y in e["geometry"].coords)  # corner kept
+    assert all(n < 8_000_000_000 for n in S.nodes)
