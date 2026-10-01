@@ -357,3 +357,112 @@ when that file exists at build time).
   `sandieguito_west`); trips continue outside the bbox. Two exits may therefore share a
   `node_id`; `network_nodes.boundary_exit` names only the exit that owns the node.
 
+
+## Lidar features (`data/raw/lidar/`, v1 2026-10-01)
+
+Written by `pipeline/fetch_lidar.py` then `pipeline/lidar_features.py`; raw-data files (not committed),
+read by `build_buildings.py`, `build_buildings_blender.py` and `build_props.py`.
+
+    .venv/bin/python -m pipeline.fetch_lidar        # EPT nodes -> 1 km UTM LAZ tiles (cached, resumable)
+    .venv/bin/python -m pipeline.lidar_features     # rasters, roofs, missing buildings, trees (cached per tile)
+        --force           recompute everything       --force-roofs   recompute roofs only
+        --tiles-only      stop before roofs          --no-shift      ignore the registration shift
+
+Source: USGS 3DEP **CA_SanDiegoQL2_2014** EPT (`s3://usgs-lidar-public`, public domain), flown 2014,
+~4.6 pts/m2 over the bbox. The brief's CA_SanDiego_2015_C17_1 has no points over the bbox. Class codes:
+1 unclassified, 2 ground, 7 noise, 21/22 unclassified/ground in swath overlap, with no building or
+vegetation class, so buildings and trees are separated geometrically (plane-fit residual + multi-return
+penetration). **Anything built or planted after 2014 is missing**, and land regraded since then is
+flagged by comparing with the 2024 3DEP DEM (`ground_change_0p5m.tif`, `lidar.ground_change_m`).
+Lidar x/y are shifted by the measured lidar -> footprint registration (`work/registration.json`,
+about (-1.0, +1.0) m) so roofs line up with the map footprints. Heights are NAVD88 m.
+
+Rasters: GeoTIFF, EPSG:32611, 0.5 m, north-up, extent = bbox + `lidar.fetch_buffer_m` (snapped to 10 m),
+float32 (NaN nodata), deflate, 512x512 tiles.
+
+| file | content |
+|---|---|
+| `dsm_0p5m.tif` | max of all non-noise returns per cell, gaps filled, >= DTM |
+| `dtm_0p5m.tif` | lidar bare earth (classes 2, 22): 1 m cell means + Delaunay interpolation under buildings / canopy |
+| `ndsm_0p5m.tif` | DSM - DTM (height above bare earth, m, >= 0) |
+| `chm_0p5m.tif` | canopy height model: nDSM on vegetation cells, else 0 |
+| `ground_change_0p5m.tif` | 3DEP 2024 DEM (`dem_3dep_10m.tif`) - lidar 2014 DTM (m) |
+| `surface_class_0p5m.tif` | uint8: 0 ground/low, 1 building-like (planar, opaque, nDSM > 2.5 m), 2 vegetation, 3 other elevated |
+
+### `buildings_roofs.parquet` (one row per footprint)
+
+Every `osm_buildings.geojson` footprint whose representative point is inside the region bbox.
+Key: `building_id` = the footprint's `id` (Overture GERS id string) + centroid. Heights are above
+ground (m). Roof points are the returns inside the footprint shrunk by `lidar.footprint_shrink_m`
+(0.5 m) and higher than `lidar.roof_min_height_m`.
+
+| column | meaning |
+|---|---|
+| `building_id`, `osm_way_id`, `footprint_source` | footprint ids / source (OpenStreetMap, Microsoft ML Buildings, Esri) |
+| `centroid_lat`, `centroid_lon`, `scene_x`, `scene_z`, `easting`, `northing` | footprint centroid (WGS84, scene m, UTM 11N) |
+| `lat`, `lon` | a point guaranteed inside the footprint (for spatial joins) |
+| `footprint_area_m2`, `overture_height_m` | footprint area; parsed Overture/OSM `height` tag (validation only) |
+| `ground_elev_m` (= `ground_elev`) | footprint median ground, 3DEP 2024 DEM (same surface as the scene terrain) |
+| `ground_elev_lidar_m`, `ground_change_m` | 2014 lidar ground and 2024 - 2014 difference |
+| `eave_height_m` (= `eave_h`) | 5th percentile of roof-point heights (flat roofs: 90th percentile) |
+| `ridge_height_m` (= `ridge_h`) | 99th percentile of roof-point heights (flat roofs: 90th percentile) |
+| `height_p50_m`, `height_max_m`, `ndsm_p90_m` | median / max roof-point height; 90th pct nDSM over the footprint |
+| `roof_type` | `flat` / `gable` / `hip` / `complex` / `shed` / `unknown` (see below) |
+| `roof_pitch_deg` (= `pitch_deg`) | inlier-weighted mean slope of sloped planes (flat: mean slope) |
+| `ridge_azimuth_deg` | compass azimuth [0, 180) of the main ridge (intersection of the strongest opposite plane pair); NaN for flat |
+| `n_planes`, `inlier_frac`, `plane_rmse_m` | RANSAC planes, share of roof points on a plane, plane-fit RMSE |
+| `eave_perimeter_frac` | share of the (shrunk) outline next to a sloped plane draining outward across it (hip ~1, gable ~L/(L+W)) |
+| `planes` | list of `{normal: [e, n, up], offset, area_m2, slope_deg, aspect_deg}`; `planes_json` holds the same plus `n_points`, `rmse_m` as JSON |
+| `n_roof_points`, `n_points_footprint`, `roof_cover_frac`, `point_density_m2` | point counts inside the shrunk footprint |
+| `lidar_status` | `present` / `absent` (no roof in 2014: built later or footprint error) / `absent_regraded_after_2014` |
+| `quality` | `good` (>= 40 roof points, >= 70 % on planes) / `fair` (>= 12 points) / `poor` / `none` (absent) |
+
+Plane frame: local ENU meters with origin at the footprint centroid (`easting`, `northing`) and height
+above ground; a point (e, n, h) is on the plane when `normal . (e, n, h) = offset`, so the roof height at
+(e, n) is `(offset - ne*e - nn*n) / nup`. `area_m2` is horizontal (projected) area. Absent footprints keep
+NaN heights, `roof_type` `unknown` and empty `planes`.
+
+Roof typing: sequential RANSAC on roof points (inlier = within `lidar.ransac_threshold_m` and point normal
+within 15 deg of the plane normal, 1-point hypotheses from 3D PCA normals, largest connected patch only),
+near-identical planes merged, leftovers absorbed by neighbouring planes. `flat`: planes flatter than
+`lidar.flat_roof_max_slope_deg` hold >= 60 % of plane points; `shed`: one facing direction; `hip`: >= 3
+facing directions and eaves on >= `lidar.hip_min_eave_frac` of the outline; `gable`: two opposite
+facing directions (>= 85 % of sloped points); `complex`: everything else (multi-wing tract homes with
+hip + gable wings, cross gables, split levels).
+
+### `missing_buildings.geojson` (WGS84 polygons)
+
+Lidar buildings with no footprint (every `osm_buildings.geojson` footprint, also outside the bbox,
+masks them): nDSM > `lidar.missing_building_min_height_m`, planar (1.5 m plane residual < 0.2 m) and
+opaque (< 30 % multi-return), opened by a 1 m disk, at least 2.5 m wide, area >= `lidar.missing_building_min_area_m2`,
+not within 6 m of a drive-graph road (overpasses) or on ground regraded after 2014, centroid inside the
+bbox. Polygonized from the 0.5 m mask and simplified (0.5 m). Properties: `lidar_id` (`lidar_NNNNN`),
+`area_m2`, `height_m` (= ridge), the same roof columns as `buildings_roofs.parquet` (from the polygon
+shrunk 0.25 m; `planes` is a JSON string here), `penetration`, `centroid_*`, `quality`, `lidar_status`.
+
+### `trees.parquet` (one row per tree)
+
+Tree tops = variable-window local maxima of the 0.6 m-Gaussian-smoothed CHM (window radius = half the
+Popescu & Wynne 2004 crown width for that height, clipped to 1-5 m) taller than `lidar.tree_min_height_m`;
+crowns = marker watershed of the inverted CHM on vegetation cells, trimmed below 40 % of the top
+height. Trees on building footprints (+1.5 m) or regraded ground are dropped; inside the bbox only.
+
+| column | meaning |
+|---|---|
+| `tree_id` | 0..n-1 (stable for a given build) |
+| `x`, `z` | scene meters (`pipeline.geo`, region.yaml origin; x east, z south) |
+| `lat`, `lon`, `easting`, `northing` | tree top position |
+| `ground_y` | ground elevation at the trunk, 3DEP 2024 DEM (scene terrain), NAVD88 m |
+| `ground_lidar_m` | 2014 lidar ground there (`abs(ground_y - ground_lidar_m) > lidar.ground_change_m` = stale) |
+| `height_m` | max CHM inside the crown (m above ground) |
+| `crown_radius_m` | radius of a circle with the crown's area |
+| `crown_mean_ratio` | mean crown CHM / top height (cone ~0.33-0.5, dome ~0.7+) |
+| `canopy_cover_20m` | share of canopy cells in the 20 m square around the top |
+| `species_guess` | `palm` / `broadleaf` / `conifer`: **a crude geometric guess, not a classification**. palm = tall (>= `lidar.palm_min_height_m`), small crown (radius <= `lidar.palm_max_crown_radius_m`, <= `lidar.palm_max_radius_height_ratio` x height), fairly isolated (`canopy_cover_20m` < `lidar.palm_max_canopy_cover`); conifer = conical crown (`crown_mean_ratio` < `lidar.conifer_max_crown_fill`, narrow, >= `lidar.conifer_min_height_m`); else broadleaf |
+
+### `lidar_validation.json`
+
+Counts (roof types, status, quality, missing buildings, trees by guess), Overture height tag - lidar
+ridge statistics (all / per footprint source / per roof type, n, median, MAE, RMSE, share within 1 / 2 m,
+correlation; also against p50 and eave heights), height / pitch / crown percentiles, the registration
+samples and per-stage timings.

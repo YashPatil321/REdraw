@@ -767,7 +767,8 @@ export class SceneController {
         nx = -e.dz;
         nz = e.dx;
       }
-      const side = lanes * 3.4 + 2.5;
+      // at the curb edge of the street (a Street View vantage), clear of front yards
+      const side = Math.max(1.6, lanes * 3.4 - 1.0);
       px = hit.x + nx * side;
       pz = hit.z + nz * side;
       heading = faceTarget && nl > 1 ? Math.atan2(x - px, -(z - pz)) : Math.atan2(e.dx, -e.dz);

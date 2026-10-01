@@ -85,6 +85,12 @@ PROCESSED_OUTPUTS = [
 ]
 
 SYNTHETIC_TEXTURE_PX = 512
+LAND_COVER_SOURCE = {
+    "name": "Overture Maps base/land_cover (ESA WorldCover 10 m derived), terrain splat-mask prior only",
+    "license": "CC BY 4.0 (ESA WorldCover)",
+    "kind": "overture",
+    "attribution": "(c) ESA WorldCover project / Contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium; Overture Maps Foundation",
+}
 SPLAT_PX_LIDAR = 1024  # splat mask size per tile when the 0.5 m lidar rasters exist (~1.1 m/px)
 SYNTHETIC_TERRAIN_BUDGET = 400_000  # the synthetic DEM is a smooth 10 m grid: no need for 2M
 POPULATION_SOURCES = ("acs", "footprints")
@@ -294,6 +300,14 @@ def finish(
     if raw is not None:
         fetch_land_cover(raw)
         landcover = load_land_cover_scene(raw)
+        if landcover:
+            import json as _json
+
+            import pyarrow.parquet as _pq
+
+            rel = _json.loads((_pq.read_schema(raw / "overture" / "land_cover.parquet").metadata or {}).get(b"redraw_key", b"{}").decode() or "{}").get("release", "")
+            url = f"https://overturemaps-us-west-2.s3.amazonaws.com/release/{rel}/theme=base/type=land_cover/"
+            sources = [*sources, dict(LAND_COVER_SOURCE, url=url, release=rel, retrieved=today())]
         lidar_rasters = {k: raw / "lidar" / f for k, f in (("chm", "chm_0p5m.tif"), ("ndsm", "ndsm_0p5m.tif")) if (raw / "lidar" / f).exists()}
     splat_px = SPLAT_PX_LIDAR if lidar_rasters else min(1024, max(256, texture_px))
     splats = write_splat_masks(grid, tb.albedo, assets / "terrain", splat_px, paved, water, landuse, lawn_extra=layout.medians, landcover=landcover, lidar=lidar_rasters, dirt_extra=[p for p, k in layout.paths if k == "trail"])

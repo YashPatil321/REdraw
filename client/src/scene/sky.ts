@@ -305,10 +305,20 @@ export class SkySystem {
     this.fog.color.copy(this.horizon).lerp(this.horizonSun, 0.3).multiplyScalar(1 - 0.85 * this.dim);
 
     // hemisphere fallback (no IBL)
-    this.hemi.intensity = this.ibl ? 0 : (0.25 + 1.1 * day) * (1 - 0.6 * this.dim);
     const warm = 1 - THREE.MathUtils.smoothstep(el, 2, 35);
-    this.hemi.color.setRGB(0.62 + 0.1 * warm, 0.74, 0.95);
-    this.hemi.groundColor.setRGB(0.32, 0.27, 0.22);
+    if (this.ibl) {
+      // the sky-only environment misses light bounced off sunlit ground and
+      // walls: shade would read cold blue. Add that bounce as a warm, weak
+      // hemisphere term proportional to the direct sun (albedo ~0.2).
+      const bounce = SUN_E0 * tl * Math.max(sEl, 0.28) * 0.11 * (1 - 0.8 * this.dim);
+      this.hemi.intensity = bounce;
+      this.hemi.color.setRGB(0.6, 0.54, 0.47);
+      this.hemi.groundColor.setRGB(1.0, 0.86, 0.7);
+    } else {
+      this.hemi.intensity = (0.25 + 1.1 * day) * (1 - 0.6 * this.dim);
+      this.hemi.color.setRGB(0.62 + 0.1 * warm, 0.74, 0.95);
+      this.hemi.groundColor.setRGB(0.32, 0.27, 0.22);
+    }
 
     // environment (PMREM) when the sun moved enough
     const envKey = `${Math.round(el * 2)}:${Math.round(pos.azimuth)}:${this.dim.toFixed(1)}:${this.ibl ? 1 : 0}`;

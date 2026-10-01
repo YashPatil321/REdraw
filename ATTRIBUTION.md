@@ -15,9 +15,10 @@ by `pipeline/fetch_aws.py`. See <https://docs.overturemaps.org/attribution/>.
 
 | Theme / type | Used for | License |
 | --- | --- | --- |
-| transportation / segment, connector | drive, walk and bike networks (`roads_drive.graphml`, `network_*.parquet`, `roads.geojson`, road meshes) | ODbL 1.0, derived from OpenStreetMap (a few TomTom-sourced segments, also ODbL) |
+| transportation / segment, connector | drive, walk and bike networks (`roads_drive.graphml`, `network_*.parquet`, `roads.geojson`, road meshes), plus render-only private streets, service roads, paseos and trails (roads / ground tiles) | ODbL 1.0, derived from OpenStreetMap (a few TomTom-sourced segments, also ODbL) |
 | buildings / building | building footprints, heights, `roof:shape`, colours (`buildings.geojson`, building meshes), and the footprint population estimate | ODbL 1.0 (theme). Sources: OpenStreetMap (ODbL), **Microsoft ML Buildings via Overture** (ODbL), Esri Community Maps (CC BY 4.0 with OpenStreetMap waivers); the per-record mix is tallied in `aws_sources.json` |
 | base / land_use, water | school campus polygons, land-use typing of generic buildings | ODbL 1.0, derived from OpenStreetMap |
+| base / land_cover | weak prior for the terrain land-cover splat masks (lawn / scrub / dirt / canopy) | CC BY 4.0, derived from ESA WorldCover 10 m. Attribution: **(c) ESA WorldCover project / Contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium** |
 | places / place | extra school names and locations | Mixed: CDLA-Permissive-2.0 (Overture, Meta, Microsoft, BrightQuery and others), Apache 2.0 (Foursquare records), CC0 1.0 (AllThePlaces records); tallied per record in `aws_sources.json` |
 
 Required attribution: **(c) OpenStreetMap contributors, Overture Maps Foundation**.
