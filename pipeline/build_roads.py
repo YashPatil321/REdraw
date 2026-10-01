@@ -1134,6 +1134,9 @@ def load_osm_drive(raw_graphml: Path) -> tuple[nx.MultiDiGraph, np.ndarray]:
     G = ox.io.load_graphml(raw_graphml)
     sig = [(d["x"], d["y"]) for _, d in G.nodes(data=True) if as_str(first(d.get("highway"))) == "traffic_signals"]
     if not G.graph.get("simplified", False):
+        n_add = explode_edge_geometry(G)
+        if n_add:
+            log(f"roads: {n_add:,} shape vertices of the raw edge geometry kept through simplification")
         G = ox.simplify_graph(G)
     Gp = ox.project_graph(G, to_crs="EPSG:32611")
     if sig:
@@ -1143,3 +1146,69 @@ def load_osm_drive(raw_graphml: Path) -> tuple[nx.MultiDiGraph, np.ndarray]:
     else:
         sig_utm = np.zeros((0, 2))
     return Gp, sig_utm
+
+
+SHAPE_NODE_ID_BASE = 8_000_000_000  # temporary ids of interior shape vertices (removed by simplify)
+
+
+def explode_edge_geometry(G: nx.MultiDiGraph) -> int:
+    """Turn the interior vertices of every edge `geometry` into degree-2 graph nodes (in place).
+
+    Raw graphs built from Overture (pipeline/fetch_aws.py) have nodes only at connectors and keep
+    the road shape in each edge's `geometry`; osmnx.simplify_graph rebuilds merged geometry from
+    node coordinates only, which would turn every curve into straight chords. Both directions of
+    a two-way way share the same shape nodes, so simplify removes them again and the merged edge
+    follows the true shape. Edge `length` is split by the geodesic length of each piece."""
+    from pyproj import Geod
+
+    geod = Geod(ellps="WGS84")
+    shape_ids: dict[tuple[Any, ...], int] = {}
+    nxt = SHAPE_NODE_ID_BASE
+    add_edges: list[tuple[Any, Any, dict[str, Any]]] = []
+    remove: list[tuple[Any, Any, Any]] = []
+    new_nodes: list[tuple[int, float, float]] = []
+    for u, v, k, d in list(G.edges(keys=True, data=True)):
+        g = d.get("geometry")
+        if g is None:
+            continue
+        c = np.asarray(g.coords)[:, :2]
+        if len(c) < 3:
+            continue
+        pu = np.array([G.nodes[u]["x"], G.nodes[u]["y"]])
+        if np.hypot(*(c[0] - pu)) > np.hypot(*(c[-1] - pu)):
+            c = c[::-1]
+        inner = c[1:-1]
+        keep = np.r_[True, np.any(np.abs(np.diff(inner, axis=0)) > 1e-9, axis=1)] if len(inner) else np.zeros(0, bool)
+        inner = inner[keep]
+        # drop interior vertices that coincide with the end nodes
+        pv = np.array([G.nodes[v]["x"], G.nodes[v]["y"]])
+        inner = inner[(np.abs(inner - pu).max(axis=1) > 1e-9) & (np.abs(inner - pv).max(axis=1) > 1e-9)]
+        if not len(inner):
+            continue
+        way = (min(str(u), str(v)), max(str(u), str(v)), as_str(d.get("osmid")))
+        ids = []
+        for x, y in inner:
+            key = (*way, round(float(x), 7), round(float(y), 7))
+            nid = shape_ids.get(key)
+            if nid is None:
+                nid = nxt
+                nxt += 1
+                shape_ids[key] = nid
+                new_nodes.append((nid, float(x), float(y)))
+            ids.append(nid)
+        chain = [u, *ids, v]
+        pts = np.vstack([pu, inner, pv])
+        seg = np.array([geod.inv(pts[i, 0], pts[i, 1], pts[i + 1, 0], pts[i + 1, 1])[2] for i in range(len(pts) - 1)])
+        total = float(d.get("length") or seg.sum())
+        frac = seg / max(seg.sum(), 1e-9)
+        base = {kk: vv for kk, vv in d.items() if kk not in ("geometry", "length")}
+        for i in range(len(chain) - 1):
+            add_edges.append((chain[i], chain[i + 1], {**base, "length": total * float(frac[i])}))
+        remove.append((u, v, k))
+    for nid, x, y in new_nodes:
+        G.add_node(nid, x=x, y=y, street_count=2)
+    G.remove_edges_from(remove)
+    for a, b, d in add_edges:
+        G.add_edge(a, b, **d)
+    return len(shape_ids)
+

@@ -433,11 +433,11 @@ def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, di
         hs = sorted([b for b in builders if b.garages], key=lambda b: np.hypot(*(np.array(b.fp.plan_poly.centroid.coords[0]) - [cx, -cz])))
         p0, p1, n = hs[0].garages[0]
         m = (p0 + p1) / 2
-        c = m + n * 11 + np.array([-n[1], n[0]]) * 2.5
+        c = m + n * 15 + np.array([-n[1], n[0]]) * 5.0
         log(f"closeup cam {c} target {m} floor {hs[0].floor}")
         gz = float(T.sample(c[0], -c[1]))
         log(f"closeup ground {gz}")
-        bl.add_camera((float(c[0]), float(c[1]), gz + 1.7), (float(m[0]), float(m[1]), hs[0].floor + 2.0), lens=28.0)
+        bl.add_camera((float(c[0]), float(c[1]), gz + 2.4), (float(m[0]), float(m[1]), hs[0].floor + 2.2), lens=30.0)
     else:
         gz = float(T.sample(cx, cz))
         cam = (cx - 95.0, -(cz + 70.0), gz + 85.0)
