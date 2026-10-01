@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import struct
 import sys
 from pathlib import Path
 from typing import Any
@@ -484,33 +483,44 @@ def _rot_toward_local(a: float, hero_rot: float) -> float:
     return float(math.atan2(-dx, -dz)) + hero_rot
 
 
-def cells_index(arr: np.ndarray, ext: dict[str, float]) -> tuple[np.ndarray, dict[str, Any]]:
-    """Sort records by 500 m cell (row-major from the north-west) and return the cell table."""
+def cells_index(arr: np.ndarray, ext: dict[str, float], n_props: int) -> tuple[np.ndarray, dict[str, Any], list[dict[str, Any]]]:
+    """Sort records by (prop_index, 500 m cell) and build per-prop sections with per-cell ranges.
+
+    Each prop's records are contiguous (a section: byte offset + count), and inside a section
+    they are grouped by grid cell (row-major from the north-west corner), so a client can
+    instance one prop type per draw call and stream / cull by cell.
+    """
     cols = int(math.ceil((ext["max_x"] - ext["min_x"]) / CELL_M))
     rows = int(math.ceil((ext["max_z"] - ext["min_z"]) / CELL_M))
     ci = np.clip(((arr[:, 0] - ext["min_x"]) // CELL_M).astype(int), 0, cols - 1)
     ri = np.clip(((arr[:, 2] - ext["min_z"]) // CELL_M).astype(int), 0, rows - 1)
     cell = ri * cols + ci
-    order = np.lexsort((arr[:, 5], cell))
-    arr = arr[order]
-    cell = cell[order]
-    ranges = []
-    if len(cell):
-        starts = np.flatnonzero(np.r_[True, cell[1:] != cell[:-1]])
-        ends = np.r_[starts[1:], len(cell)]
-        ranges = [[int(cell[s]), int(s), int(e - s)] for s, e in zip(starts, ends, strict=True)]
-    return arr, {"size_m": CELL_M, "min_x": ext["min_x"], "min_z": ext["min_z"], "cols": cols, "rows": rows,
-                 "order": "row-major from (min_x, min_z) = north-west; cell = row * cols + col",
-                 "ranges": ranges, "ranges_fields": ["cell", "first_record", "count"]}
+    prop = arr[:, 5].astype(int)
+    order = np.lexsort((cell, prop))
+    arr, cell, prop = arr[order], cell[order], prop[order]
+    sections = []
+    for k in range(n_props):
+        idx = np.flatnonzero(prop == k)
+        first = int(idx[0]) if len(idx) else 0
+        ranges = []
+        if len(idx):
+            c = cell[idx]
+            starts = np.flatnonzero(np.r_[True, c[1:] != c[:-1]])
+            ends = np.r_[starts[1:], len(c)]
+            ranges = [[int(c[s0]), first + int(s0), int(e - s0)] for s0, e in zip(starts, ends, strict=True)]
+        sections.append({"offset": first * STRIDE, "first_record": first, "count": int(len(idx)), "cells": ranges})
+    grid = {"size_m": CELL_M, "min_x": ext["min_x"], "min_z": ext["min_z"], "cols": cols, "rows": rows,
+            "order": "row-major from (min_x, min_z) = north-west corner; cell = row * cols + col",
+            "ranges_fields": ["cell", "first_record", "count"]}
+    return arr, grid, sections
 
 
 def write_outputs(out_dir: Path, arr: np.ndarray, placer: Placer, stats: dict[str, int], meta: dict[str, Any]) -> Path:
     ext = meta.get("terrain_extent_scene") or meta.get("extent_scene")
-    arr, cells = cells_index(arr, ext)
+    arr, grid, sections = cells_index(arr, ext, len(placer.ids))
     out_dir.mkdir(parents=True, exist_ok=True)
     binp = out_dir / "placements.bin"
     binp.write_bytes(arr.astype(RECORD_DTYPE).tobytes())
-    counts = np.bincount(arr[:, 5].astype(int), minlength=len(placer.ids)) if len(arr) else np.zeros(len(placer.ids), int)
     header = {
         "format": "redraw-placements",
         "version": FORMAT_VERSION,
@@ -520,6 +530,8 @@ def write_outputs(out_dir: Path, arr: np.ndarray, placer: Placer, stats: dict[st
         "frame": "scene meters: x east, y up (terrain elevation), z south (docs/coordinates.md)",
         "bin": "placements.bin",
         "count": int(len(arr)),
+        "fields": RECORD_FIELDS,
+        "stride": STRIDE,
         "record": {
             "fields": RECORD_FIELDS,
             "dtype": "float32",
@@ -532,9 +544,9 @@ def write_outputs(out_dir: Path, arr: np.ndarray, placer: Placer, stats: dict[st
                 "prop_index": "index into props[] below (stored as float32, integral)",
             },
         },
-        "props": [{"index": i, "id": pid, "kind": placer.manifest[i]["kind"], "file": placer.manifest[i]["file"],
-                   "count": int(counts[i])} for i, pid in enumerate(placer.ids)],
-        "cells": cells,
+        "props": [{"index": i, "id": pid, "kind": placer.manifest[i]["kind"], "file": placer.manifest[i]["file"], **sections[i]}
+                  for i, pid in enumerate(placer.ids)],
+        "cells": grid,
         "stats": stats,
         "tint_note": "vehicle records (parked cars) carry no color: pick paint_colors from props_manifest.json by share, "
                      "seeded by the record index, for a stable look",
@@ -577,4 +589,3 @@ if __name__ == "__main__":
     except Fail as e:
         print(f"[build_props] ERROR {e}", file=sys.stderr)
         raise SystemExit(2) from None
-    del struct
