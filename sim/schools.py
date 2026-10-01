@@ -50,29 +50,30 @@ def service_rate(curb_spots: float, unload_s: float) -> float:
     return max(float(curb_spots), 1e-6) / max(float(unload_s), 1e-6)
 
 
-def _serve_with_balking(A_: np.ndarray, s: np.ndarray, balk_s: float) -> tuple[np.ndarray, np.ndarray]:
-    """Sequential fluid server where arrivals facing a wait > balk_s leave (informal drop-off)."""
+def _serve_with_balking(A_: np.ndarray, s: np.ndarray, balk_s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Sequential fluid server where arrivals facing a wait > their balk_s leave (informal drop-off)."""
     n = len(A_)
+    A_l, s_l, bk_l = A_.tolist(), s.tolist(), np.broadcast_to(balk_s, (n,)).tolist()
     B = np.empty(n)
     balked = np.zeros(n, dtype=bool)
     c = -np.inf
     last_b = -np.inf
     for k in range(n):
-        a = A_[k]
+        a = A_l[k]
         wait = c - a if c > a else 0.0
-        if wait > balk_s:
+        if wait > bk_l[k]:
             balked[k] = True
             B[k] = max(last_b, a) if last_b > -np.inf else a  # keeps B sorted; zero weight
             continue
         B[k] = a + wait
         last_b = B[k]
-        c = B[k] + s[k]
+        c = B[k] + s_l[k]
     return B, balked
 
 
 def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: float, tg: TimeGrid,
-              balk_wait_s: float | None = None) -> QueueOutput:
-    """Fluid curb queue. With ``balk_wait_s`` set, arrivals facing a longer expected wait balk."""
+              balk_wait_s: float | np.ndarray | None = None) -> QueueOutput:
+    """Fluid curb queue. With ``balk_wait_s`` (scalar or per arrival) set, arrivals facing a longer wait balk."""
     n_b = tg.n_bins
     car_len = Af("schools.car_length_m")
     if len(arr_t) == 0:
@@ -90,7 +91,8 @@ def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: flo
         B = C - s
         balked_sorted = np.zeros(len(A_), dtype=bool)
     else:
-        B, balked_sorted = _serve_with_balking(A_, s, float(balk_wait_s))
+        bw = np.broadcast_to(np.asarray(balk_wait_s, dtype=np.float64), arr_t.shape)[order]
+        B, balked_sorted = _serve_with_balking(A_, s, bw)
     wait_sorted = np.where(balked_sorted, 0.0, np.maximum(B - A_, 0.0))
     W = np.where(balked_sorted, 0.0, W)  # balked cars never join the line
     cumA = np.cumsum(W)
@@ -122,19 +124,31 @@ def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: flo
     )
 
 
-def spill_effects(net: Network, approach_edge: int, spill_m: np.ndarray, capf: np.ndarray, extra: np.ndarray) -> None:
-    """Apply spillback effects of one entrance in place on (B, E) capacity factor and extra delay arrays."""
+def upstream_edges(net: Network, approach_edge: int) -> np.ndarray:
+    """Edges feeding the approach edge's upstream node (where a spilled queue backs up), no U-turns."""
+    u = net.eu[approach_edge]
+    v = net.ev[approach_edge]
+    return np.nonzero((net.ev == u) & (net.eu != v))[0]
+
+
+def spill_effects(net: Network, approach_edge: int, spill_m: np.ndarray, capf: np.ndarray, extra: np.ndarray) -> np.ndarray:
+    """Apply spillback effects of one entrance in place on (B, E) capacity factor and extra delay arrays.
+
+    Returns the per-bin extra delay (s) added to each upstream edge, so the assignment can
+    exempt this entrance's own drop-off cars: their time in the line is the point-queue wait,
+    and charging them the spillback delay as well would count the same queue twice.
+    """
     L = float(net.length_m[approach_edge])
     over = spill_m > L
+    per_bin = np.zeros(len(spill_m))
     if not over.any():
-        return
+        return per_bin
     car_len = Af("schools.car_length_m")
     red = Af("schools.queue_capacity_reduction_per_spill")
     per_car = Af("schools.upstream_spill_delay_s_per_car")
     capf[over, approach_edge] *= red
-    u = net.eu[approach_edge]
-    v = net.ev[approach_edge]
-    up = np.nonzero((net.ev == u) & (net.eu != v))[0]
+    up = upstream_edges(net, approach_edge)
     if len(up):
-        spilled_cars = (spill_m[over] - L) / car_len
-        extra[np.ix_(np.nonzero(over)[0], up)] += (per_car * spilled_cars)[:, None]
+        per_bin[over] = per_car * (spill_m[over] - L) / car_len
+        extra[np.ix_(np.nonzero(over)[0], up)] += per_bin[over][:, None]
+    return per_bin

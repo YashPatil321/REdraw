@@ -8,6 +8,7 @@ so real (ACS + LODES) and synthetic builds share it. Fixed seed (rule 14.5).
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -18,11 +19,15 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from scipy.spatial import cKDTree
+from shapely.affinity import affine_transform
+from shapely.geometry import LineString, MultiPolygon, Point, Polygon
+from shapely.ops import nearest_points, unary_union
+from shapely.strtree import STRtree
 
 from pipeline.build_roads import FREEWAY_CLASSES, local_node_mask
 from pipeline.common import log
 from pipeline.config import assumption
-from pipeline.geo import latlon_to_scene, scene_to_latlon
+from pipeline.geo import latlon_to_scene, scene_origin, scene_to_latlon, utm_to_lonlat
 
 INCOME_BANDS = ["lt50k", "50_100k", "100_150k", "150_200k", "gt200k"]
 KID_MIN_AGE, KID_MAX_AGE = 5, 17  # n_kids counts persons aged 5-18; students are 5..17 (grade = age - 5)
@@ -44,20 +49,143 @@ def grades_from_name(name: str) -> list[int] | None:
     return None
 
 
+# Schools that do not take students by neighbourhood (nearest-school assignment would be wrong).
+NON_ATTENDANCE_SCHOOL_RE = re.compile(r"continuation|preschool|pre-school|adult|montessori|christian|torah|private", re.I)
+
+
+def osm_school_grades(name: str) -> list[int] | None:
+    """Grade band for an OSM-only school, None if it should not be added (spec 5.5)."""
+    if NON_ATTENDANCE_SCHOOL_RE.search(name):
+        return None
+    return grades_from_name(name)
+
+
+def osm_school_id(name: str) -> str:
+    import unicodedata
+
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
+    return "osm_" + re.sub(r"_+", "_", "".join(ch if ch.isalnum() else "_" for ch in ascii_name)).strip("_")
+
+
+# Road class rank for picking a campus's "main road" (larger = bigger road).
+ROAD_RANK = {"trunk": 5, "primary": 4, "secondary": 3, "tertiary": 2, "residential": 1, "living_street": 1, "unclassified": 1}
+
+
+def edge_lines(edges: pd.DataFrame) -> list[LineString]:
+    """Edge polylines in scene (x, z) from the flattened geometry column."""
+    out = []
+    for g in edges["geometry"]:
+        a = np.asarray(g, dtype=np.float64).reshape(-1, 3)
+        out.append(LineString(a[:, [0, 2]]) if len(a) >= 2 else LineString([a[0, [0, 2]], a[0, [0, 2]] + 0.01]))
+    return out
+
+
+def _entrance_candidates(nodes: pd.DataFrame, edges: pd.DataFrame, local: np.ndarray) -> tuple[pd.DataFrame, pd.DataFrame]:
+    loc_edges = edges[~edges["highway"].isin(FREEWAY_CLASSES)]
+    has_in = nodes["node_id"].isin(set(loc_edges["v"])).to_numpy() & local
+    return nodes[has_in], loc_edges
+
+
+def _approach_edge(loc_edges: pd.DataFrame, nid: int) -> int:
+    inc = loc_edges[loc_edges["v"] == nid]
+    return int(inc.sort_values(["length_m", "edge_idx"], ascending=[False, True])["edge_idx"].iloc[0])
+
+
 def snap_entrance(x: float, z: float, nodes: pd.DataFrame, edges: pd.DataFrame, local: np.ndarray) -> tuple[int, int, float]:
     """Nearest local node with an incoming non-freeway edge; approach = longest such edge.
 
     Returns (node_id, approach_edge_idx, snap distance m).
     """
-    loc_edges = edges[~edges["highway"].isin(FREEWAY_CLASSES)]
-    has_in = nodes["node_id"].isin(set(loc_edges["v"])).to_numpy() & local
-    cand = nodes[has_in]
+    cand, loc_edges = _entrance_candidates(nodes, edges, local)
     d = np.hypot(cand["x"].to_numpy() - x, cand["z"].to_numpy() - z)
     i = int(np.argmin(d))
     nid = int(cand["node_id"].iloc[i])
-    inc = loc_edges[loc_edges["v"] == nid]
-    approach = int(inc.sort_values(["length_m", "edge_idx"], ascending=[False, True])["edge_idx"].iloc[0])
-    return nid, approach, float(d[i])
+    return nid, _approach_edge(loc_edges, nid), float(d[i])
+
+
+def campus_entrance(
+    campus: Polygon | MultiPolygon,
+    nodes: pd.DataFrame,
+    edges: pd.DataFrame,
+    local: np.ndarray,
+    lines: list[LineString],
+    tree: STRtree,
+    core: Point | None = None,
+) -> dict[str, Any] | None:
+    """Drop-off entrance inferred from a campus polygon (scene x, z):
+
+    1. main road = the highest-class non-freeway road within school_entrance.main_road_search_m
+       of the campus; ties go to the road closest to the campus core (`core`: area-weighted
+       centroid of the school's buildings, else a point inside the campus);
+    2. P = the point of that road (all its edges near the campus) closest to the core;
+       B = the campus boundary point closest to P (the side facing the main road);
+    3. node = the drive node (with an incoming non-freeway edge) closest to B among nodes within
+       school_entrance.campus_search_m of the campus and the main road's junctions within
+       main_road_search_m of it.
+    Returns None when no candidate node is near the campus.
+    """
+    from pipeline.build_roads import road_key
+
+    search = float(assumption("school_entrance.main_road_search_m"))
+    near_m = float(assumption("school_entrance.campus_search_m"))
+    core = core if core is not None else campus.representative_point()
+    cand, loc_edges = _entrance_candidates(nodes, edges, local)
+    roads: dict[str, list[int]] = {}
+    rank_of: dict[str, int] = {}
+    for k in tree.query(campus.buffer(search)):
+        k = int(k)
+        rank = ROAD_RANK.get(str(edges["highway"].iloc[k]), 0)
+        if rank == 0 or lines[k].distance(campus) > search:
+            continue
+        key = road_key({"name": edges["name"].iloc[k], "ref": edges["ref"].iloc[k], "osmid": edges["osmid"].iloc[k]})
+        roads.setdefault(key, []).append(k)
+        rank_of[key] = max(rank_of.get(key, 0), rank)
+    boundary = campus.boundary
+    main_desc = ""
+    main_nodes: set[int] = set()
+    if roads:
+        def score(key: str) -> tuple[int, float]:
+            return rank_of[key], -min(lines[k].distance(core) for k in roads[key])
+
+        best = max(roads, key=score)
+        road = unary_union([lines[k] for k in roads[best]])
+        p_road = nearest_points(road, core)[0]
+        b_pt = nearest_points(p_road, boundary)[1]
+        main_nodes = {int(edges["u"].iloc[k]) for k in roads[best]} | {int(edges["v"].iloc[k]) for k in roads[best]}
+        k0 = roads[best][0]
+        main_desc = str(edges["name"].iloc[k0] or edges["ref"].iloc[k0] or edges["highway"].iloc[k0])
+    else:
+        b_pt = nearest_points(core, boundary)[1]
+    zone = campus.buffer(near_m)
+    cx, cz = cand["x"].to_numpy(), cand["z"].to_numpy()
+    # candidates: nodes at the campus, plus the main road's own junctions next to it
+    inside = np.array([zone.contains(Point(a, b)) for a, b in zip(cx, cz, strict=True)]) if len(cand) else np.zeros(0, bool)
+    inside |= cand["node_id"].isin(main_nodes).to_numpy() & np.array([campus.distance(Point(a, b)) <= search for a, b in zip(cx, cz, strict=True)], dtype=bool)
+    if not inside.any():
+        return None
+    sub = cand[inside]
+    d = np.hypot(sub["x"].to_numpy() - b_pt.x, sub["z"].to_numpy() - b_pt.y)
+    i = int(np.argmin(d))
+    nid = int(sub["node_id"].iloc[i])
+    return {
+        "node_id": nid,
+        "approach_edge_idx": _approach_edge(loc_edges, nid),
+        "x": float(b_pt.x),
+        "z": float(b_pt.y),
+        "snap_distance_m": float(d[i]),
+        "main_road": main_desc,
+    }
+
+
+def school_core(buildings: pd.DataFrame, sid: str) -> Point | None:
+    """Area-weighted centroid (scene x, z) of a school's buildings, None if it has none."""
+    if "school_id" not in buildings.columns:
+        return None
+    b = buildings[buildings["school_id"] == sid]
+    if not len(b):
+        return None
+    w = b["area_m2"].to_numpy(dtype=np.float64)
+    return Point(float(np.average(b["centroid_x"], weights=w)), float(np.average(b["centroid_z"], weights=w)))
 
 
 def resolve_schools(
@@ -67,7 +195,13 @@ def resolve_schools(
     buildings: pd.DataFrame,
     osm_schools: gpd.GeoDataFrame | None = None,
 ) -> list[dict[str, Any]]:
-    """schools.yaml merged with OSM amenity=school (spec 5.5); entrances snapped to the network."""
+    """schools.yaml merged with OSM amenity=school (spec 5.5); entrances snapped to the network.
+
+    `osm_schools` (from fetch_osm.load_schools, EPSG:32611) carries a `school_id` column:
+    schools.yaml ids for matched campuses and `osm_*` ids for OSM-only campuses to add. When a
+    school has a campus polygon, unverified (placeholder) entrances are moved to the campus
+    boundary facing its main road (`campus_entrance`); verified entrances snap to the nearest node.
+    """
     local = local_node_mask(nodes, edges)
     defaults = {
         "bell_start": assumption("schools.defaults.bell_start"),
@@ -75,53 +209,72 @@ def resolve_schools(
         "unload_seconds": float(assumption("schools.defaults.unload_seconds")),
     }
     entries = [dict(s, source="schools.yaml") for s in schools_cfg]
+    campuses: dict[str, Any] = {}
     if osm_schools is not None and len(osm_schools):
-        max_d = float(assumption("pipeline.school_snap_max_dist_m"))
-        for row in osm_schools.to_crs("EPSG:4326").itertuples():
-            name = str(getattr(row, "name", "") or "")
-            c = row.geometry.representative_point()
-            sx, sz = latlon_to_scene(c.y, c.x)
-            near = False
-            for s in entries:
-                x2, z2 = latlon_to_scene(float(s["lat"]), float(s["lon"]))
-                if math.hypot(sx - x2, sz - z2) <= max_d or (name and name.lower() == str(s["name"]).lower()):
-                    near = True
-                    break
-            grades = grades_from_name(name) if name else None
-            if near or grades is None:
-                continue  # already listed, or a school we cannot place in a grade band (e.g. preschool)
-            sid = "osm_" + "".join(ch if ch.isalnum() else "_" for ch in name.lower()).strip("_")
+        g32 = osm_schools.to_crs("EPSG:32611")
+        o = scene_origin()
+        if "school_id" not in g32.columns:
+            g32 = g32.assign(school_id=None)
+        polys = g32[g32.geometry.geom_type.isin(["Polygon", "MultiPolygon"]) & g32["school_id"].notna()]
+        for sid, grp in polys.groupby("school_id"):
+            u = unary_union(list(grp.geometry))
+            campuses[str(sid)] = affine_transform(u, [1, 0, 0, -1, -o.easting, o.northing])
+        known = {str(s["id"]) for s in entries}
+        added = g32[g32["school_id"].notna() & ~g32["school_id"].isin(known)]
+        for sid, grp in added.groupby("school_id"):
+            name = str(grp["name"].dropna().iloc[0]) if grp["name"].notna().any() else str(sid)
+            grades = osm_school_grades(name)
+            if grades is None:
+                continue
+            c = unary_union(list(grp.geometry)).representative_point()
+            lon, lat = utm_to_lonlat(c.x, c.y)
             entries.append(
                 {
-                    "id": sid,
+                    "id": str(sid),
                     "name": name,
                     "grades": grades,
                     "bell_start": defaults["bell_start"],
-                    "lat": c.y,
-                    "lon": c.x,
+                    "lat": lat,
+                    "lon": lon,
                     "verified": False,
                     "source": "osm",
-                    "entrances": [{"id": "main_dropoff", "lat": c.y, "lon": c.x, "curb_spots": defaults["curb_spots"], "unload_seconds": defaults["unload_seconds"], "verified": False}],
+                    "entrances": [{"id": "main_dropoff", "lat": lat, "lon": lon, "curb_spots": defaults["curb_spots"], "unload_seconds": defaults["unload_seconds"], "verified": False}],
                 }
             )
+    lines = edge_lines(edges) if campuses else []
+    tree = STRtree(lines) if campuses else None
     out = []
     for s in entries:
         x, z = latlon_to_scene(float(s["lat"]), float(s["lon"]))
         bids = sorted(int(b) for b in buildings.loc[buildings["school_id"] == s["id"], "id"]) if "school_id" in buildings else []
+        campus = campuses.get(str(s["id"]))
         ents = []
         for e in s.get("entrances") or [{"id": "main_dropoff", "lat": s["lat"], "lon": s["lon"]}]:
             ex, ez = latlon_to_scene(float(e["lat"]), float(e["lon"]))
-            nid, appr, dist = snap_entrance(ex, ez, nodes, edges, local)
+            inferred = None
+            if campus is not None and tree is not None and not bool(e.get("verified", False)):
+                inferred = campus_entrance(campus, nodes, edges, local, lines, tree, school_core(buildings, s["id"]))
+            if inferred is not None:
+                ex, ez = inferred["x"], inferred["z"]
+                nid, appr, dist = inferred["node_id"], inferred["approach_edge_idx"], inferred["snap_distance_m"]
+                method = f"campus boundary facing {inferred['main_road']}" if inferred["main_road"] else "campus boundary"
+            else:
+                nid, appr, dist = snap_entrance(ex, ez, nodes, edges, local)
+                method = "nearest node to configured point"
+            elat, elon = scene_to_latlon(ex, ez)
             ents.append(
                 {
                     "id": e["id"],
-                    "lat": float(e["lat"]),
-                    "lon": float(e["lon"]),
-                    "x": ex,
-                    "z": ez,
-                    "node_id": nid,
-                    "approach_edge_idx": appr,
-                    "snap_distance_m": dist,
+                    "lat": float(elat),
+                    "lon": float(elon),
+                    "x": float(ex),
+                    "z": float(ez),
+                    "node_id": int(nid),
+                    "approach_edge_idx": int(appr),
+                    "snap_distance_m": float(dist),
+                    "snap_method": method,
+                    "configured_lat": float(e["lat"]),
+                    "configured_lon": float(e["lon"]),
                     "curb_spots": int(e.get("curb_spots", defaults["curb_spots"])),
                     "unload_seconds": float(e.get("unload_seconds", defaults["unload_seconds"])),
                     "verified": bool(e.get("verified", False)),
@@ -139,6 +292,7 @@ def resolve_schools(
                 "z": z,
                 "verified": bool(s.get("verified", False)),
                 "source": s.get("source", "schools.yaml"),
+                "has_campus_polygon": campus is not None,
                 "building_ids": bids,
                 "entrances": ents,
                 "students": 0,
@@ -238,6 +392,30 @@ def household_capacity(btype: str, area_m2: float, levels: Any) -> int:
     return 0
 
 
+def footprint_units(buildings: pd.DataFrame) -> np.ndarray:
+    """Dwelling units per building for the footprint population estimate (explicit fallback when
+    Census ACS is unavailable; `build_all.py --population-source footprints`).
+
+    - house: footprint_population.households_per_house (1);
+    - house tagged building=terrace (townhouse row): area / footprint_population.townhouse_unit_footprint_m2;
+    - apartments: household_capacity (area x levels / pipeline.apartment_m2_per_household, clipped
+      by population.persons_per_unit_apartment_building); levels from the tag, else height / level height;
+    - everything else: 0.
+    """
+    per_house = int(assumption("footprint_population.households_per_house"))
+    town_m2 = float(assumption("footprint_population.townhouse_unit_footprint_m2"))
+    tags = buildings["building_tag"] if "building_tag" in buildings.columns else pd.Series(["yes"] * len(buildings), index=buildings.index)
+    lv_col = "levels_est" if "levels_est" in buildings.columns else "levels"
+    out = np.zeros(len(buildings), dtype=np.int64)
+    for k, (t, a, lv, tag) in enumerate(zip(buildings["type"], buildings["area_m2"], buildings[lv_col], tags, strict=True)):
+        if t == "house":
+            out[k] = max(per_house, int(round(float(a) / town_m2))) if tag == "terrace" else per_house
+        elif t == "apartments":
+            lv2 = None if lv is None or (isinstance(lv, float) and math.isnan(lv)) else int(lv)
+            out[k] = household_capacity("apartments", float(a), lv2)
+    return out
+
+
 def allocate_households(rng: np.random.Generator, caps: np.ndarray, weights: np.ndarray, n: int) -> np.ndarray:
     """Assign n households to buildings (indices). Fill unit slots without replacement;
     if demand exceeds total capacity, extra households go by footprint area weight."""
@@ -272,7 +450,11 @@ def synthesize_population(
     exit_node = {e["id"]: int(e["node_id"]) for e in exits}
 
     res = buildings[buildings["type"].isin(["house", "apartments"])].copy()
-    res["cap"] = [household_capacity(t, a, lv) for t, a, lv in zip(res["type"], res["area_m2"], res["levels"], strict=True)]
+    if "units" in res.columns:  # footprint estimate (footprint_units) precomputed the dwelling units
+        res["cap"] = res["units"].astype(int)
+        res = res[res["cap"] > 0]
+    else:
+        res["cap"] = [household_capacity(t, a, lv) for t, a, lv in zip(res["type"], res["area_m2"], res["levels"], strict=True)]
 
     hh_rows: list[dict[str, Any]] = []
     for dist in dists:

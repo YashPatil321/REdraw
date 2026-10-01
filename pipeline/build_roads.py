@@ -171,10 +171,13 @@ def label_for(name: str, ref: str, labels: list[dict[str, Any]]) -> str:
     """Arterial label (region.yaml arterial_labels) by case-insensitive name prefix or ref."""
     lname = (name or "").lower()
     refs = set(normalize_ref(ref))
+    # Name matches win over ref matches, so "Ted Williams Parkway" (ref CA 56) keeps its own
+    # label even though "Ted Williams Freeway" (also CA 56) is listed first.
     for lab in labels:
         ln = str(lab.get("name", "")).lower()
         if ln and any(part.strip().startswith(ln) for part in lname.split(",")):
             return str(lab["name"])
+    for lab in labels:
         lref = lab.get("ref")
         if lref and refs & set(normalize_ref(str(lref))):
             return str(lab["name"])
@@ -222,6 +225,49 @@ class RoadNetwork:
     nodes: pd.DataFrame
     edges: pd.DataFrame  # row order == edge_idx
     exits: list[dict[str, Any]]
+    signal_source: str = "osm"  # "osm" (tagged / snapped), "inferred" (signal_inference.*) or "none"
+
+
+def road_key(data: dict[str, Any]) -> str:
+    """Identity of the road an edge belongs to: name, else ref, else way id."""
+    name = as_str(data.get("name")).strip().lower()
+    if name:
+        return "n:" + name.split(",")[0].strip()
+    ref = normalize_ref(as_str(data.get("ref")))
+    if ref:
+        return "r:" + ref[0]
+    return "w:" + as_str(first(data.get("osmid")))
+
+
+def infer_signals(G: nx.MultiDiGraph) -> set[Any]:
+    """Signalized junctions for sources without signal data (Overture), per assumptions
+    signal_inference.*:
+
+    1. two or more distinct roads (road_key) of `road_classes` meet at the node, or
+    2. a freeway ramp (`ramp_classes`) meets an edge of `ramp_arterial_classes` (ramp terminal).
+
+    `_link` classes other than ramps never count as a road (slip lanes).
+    """
+    road_classes = set(assumption("signal_inference.road_classes"))
+    min_roads = int(assumption("signal_inference.min_distinct_roads"))
+    ramp_classes = set(assumption("signal_inference.ramp_classes"))
+    ramp_arterial = set(assumption("signal_inference.ramp_arterial_classes"))
+    out: set[Any] = set()
+    for n in G.nodes:
+        roads: set[str] = set()
+        has_ramp = False
+        has_arterial = False
+        for _, _, d in list(G.in_edges(n, data=True)) + list(G.out_edges(n, data=True)):
+            hw = as_str(first(d.get("highway")))
+            if hw in ramp_classes:
+                has_ramp = True
+            if hw in ramp_arterial:
+                has_arterial = True
+            if hw in road_classes:
+                roads.add(road_key(d))
+        if len(roads) >= min_roads or (has_ramp and has_arterial):
+            out.add(n)
+    return out
 
 
 def exit_road_key(label: str) -> str:
@@ -248,6 +294,166 @@ def edge_matches(data: dict[str, Any], name_prefix: str, refs: list[str]) -> boo
         return True
     erefs = set(normalize_ref(as_str(data.get("ref"))))
     return bool(refs and erefs & set(refs))
+
+
+EXIT_SPLIT_SEARCH_M = 300.0  # matching road edges within this distance of an exit point are split there
+EXIT_SPLIT_MIN_GAIN_M = 30.0  # split only when the nearest matching node is this much farther than the road
+EXIT_NODE_ID_BASE = 9_000_000_000  # synthetic node ids for exit split points (never OSM ids)
+
+
+def split_edges_at_exits(G: nx.MultiDiGraph, exits_xy: list[tuple[dict[str, Any], float, float]], labels: list[dict[str, Any]]) -> int:
+    """Insert a node where each exit's road crosses the exit point (UTM graph, in place).
+
+    Simplified freeways have no nodes between interchanges, so the nearest existing node of
+    the exit road can be far from the bbox edge. The nearest carriageway (and, for a divided
+    road, the nearest opposite-direction carriageway) is split at the point closest to the
+    exit; the two split nodes are joined both ways by short virtual edges so the exit node can
+    absorb outbound and emit inbound trips. Returns the number of nodes added.
+    """
+    from shapely.geometry import Point
+    from shapely.ops import substring
+
+    o = scene_origin()
+    added = 0
+    for ei, (ex, x, z) in enumerate(exits_xy):
+        pt = Point(x + o.easting, o.northing - z)
+        prefix, refs = exit_matcher(ex, labels)
+        groups: dict[tuple[Any, Any], list[tuple[Any, Any, Any, dict[str, Any]]]] = {}
+        node_d = math.inf
+        for u, v, k, d in G.edges(keys=True, data=True):
+            if not edge_matches(d, prefix, refs):
+                continue
+            for n in (u, v):
+                node_d = min(node_d, math.hypot(G.nodes[n]["x"] - pt.x, G.nodes[n]["y"] - pt.y))
+            groups.setdefault((min(u, v), max(u, v)), []).append((u, v, k, d))
+
+        def geom_of(u: Any, v: Any, d: dict[str, Any]) -> LineString:
+            g = d.get("geometry")
+            if g is None:
+                return LineString([(G.nodes[u]["x"], G.nodes[u]["y"]), (G.nodes[v]["x"], G.nodes[v]["y"])])
+            c = list(g.coords)
+            if math.hypot(c[0][0] - G.nodes[u]["x"], c[0][1] - G.nodes[u]["y"]) > math.hypot(c[-1][0] - G.nodes[u]["x"], c[-1][1] - G.nodes[u]["y"]):
+                c = c[::-1]
+            return LineString(c)
+
+        scored = []
+        for key, es in groups.items():
+            u, v, _, d = es[0]
+            g = geom_of(u, v, d)
+            dist = g.distance(pt)
+            if dist <= EXIT_SPLIT_SEARCH_M:
+                scored.append((dist, key, es))
+        scored.sort(key=lambda t: (t[0], str(t[1])))
+        if not scored or node_d - scored[0][0] < EXIT_SPLIT_MIN_GAIN_M:
+            continue
+        chosen = [scored[0]]
+        first_two_way = len(scored[0][2]) > 1
+        if not first_two_way:
+            # divided road: also split the nearest carriageway running the other way
+            u0, v0, _, d0 = scored[0][2][0]
+            g0 = geom_of(u0, v0, d0)
+            t0 = g0.interpolate(g0.project(pt))
+            h0 = g0.interpolate(min(g0.length, g0.project(pt) + 5.0))
+            dir0 = (h0.x - t0.x, h0.y - t0.y)
+            for cand in scored[1:]:
+                u1, v1, _, d1 = cand[2][0]
+                g1 = geom_of(u1, v1, d1)
+                t1 = g1.interpolate(g1.project(pt))
+                h1 = g1.interpolate(min(g1.length, g1.project(pt) + 5.0))
+                if (h1.x - t1.x) * dir0[0] + (h1.y - t1.y) * dir0[1] < 0:
+                    chosen.append(cand)
+                    break
+        new_nodes = []
+        for j, (_, _, es) in enumerate(chosen):
+            u, v, _, d = es[0]
+            g = geom_of(u, v, d)
+            at = g.project(pt)
+            if at < 5.0 or at > g.length - 5.0:
+                new_nodes.append(u if at < 5.0 else v)  # already (almost) at a node
+                continue
+            nid = EXIT_NODE_ID_BASE + 10 * ei + j
+            sp = g.interpolate(at)
+            G.add_node(nid, x=sp.x, y=sp.y, street_count=2, exit_split=str(ex["id"]))
+            for uu, vv, kk, dd in es:
+                gg = geom_of(uu, vv, dd)
+                a = gg.project(sp)
+                L = max(float(dd.get("length", gg.length)), 1.0)
+                for s_, e_, part in ((uu, nid, substring(gg, 0, a)), (nid, vv, substring(gg, a, gg.length))):
+                    nd = dict(dd)
+                    nd["geometry"] = part
+                    nd["length"] = max(L * part.length / max(gg.length, 1e-6), 0.5)
+                    G.add_edge(s_, e_, **nd)
+                G.remove_edge(uu, vv, kk)
+            new_nodes.append(nid)
+            added += 1
+        if len(new_nodes) == 2 and new_nodes[0] != new_nodes[1]:
+            a, b = new_nodes
+            gap = math.hypot(G.nodes[a]["x"] - G.nodes[b]["x"], G.nodes[a]["y"] - G.nodes[b]["y"])
+            tmpl = chosen[0][2][0][3]
+            for s_, e_ in ((a, b), (b, a)):
+                G.add_edge(
+                    s_,
+                    e_,
+                    highway=as_str(first(tmpl.get("highway"))) or "motorway_link",
+                    name="",
+                    ref=as_str(tmpl.get("ref")),
+                    lanes="1",
+                    oneway=True,
+                    osmid="virtual_exit_turnaround",
+                    length=max(gap, 1.0),
+                    geometry=LineString([(G.nodes[s_]["x"], G.nodes[s_]["y"]), (G.nodes[e_]["x"], G.nodes[e_]["y"])]),
+                )
+    return added
+
+
+ISLAND_CONNECT_MAX_M = 300.0  # max gap bridged by a virtual connector to a disconnected road island
+
+
+def connect_islands(G: nx.MultiDiGraph, max_gap: float = ISLAND_CONNECT_MAX_M) -> int:
+    """Join road pieces outside the largest strongly connected component to it (UTM graph, in
+    place) with short two-way virtual connectors (osmid 'virtual_connector').
+
+    Overture's drive network leaves gated communities as islands (their private gate roads are
+    not drivable for the public) and has a few one-way stubs; without connectors their homes
+    would snap to a node kilometers away. Each remaining piece (largest first) is linked from its
+    node closest to the main component, if within `max_gap`. Returns connectors added.
+    """
+    from scipy.spatial import cKDTree
+
+    added = 0
+    tried: set[frozenset[Any]] = set()
+    while True:
+        sccs = sorted(nx.strongly_connected_components(G), key=len, reverse=True)
+        if len(sccs) <= 1:
+            return added
+        main = sccs[0]
+        pieces = [c for c in sccs[1:] if frozenset(c) not in tried]
+        if not pieces:
+            return added
+        piece = pieces[0]
+        tried.add(frozenset(piece))
+        mids = list(main)
+        tree = cKDTree(np.array([[G.nodes[n]["x"], G.nodes[n]["y"]] for n in mids]))
+        pn = list(piece)
+        d, k = tree.query(np.array([[G.nodes[n]["x"], G.nodes[n]["y"]] for n in pn]), k=1)
+        i = int(np.argmin(d))
+        if float(d[i]) > max_gap:
+            continue
+        a, b = pn[i], mids[int(k[i])]
+        for s_, e_, rev in ((a, b, False), (b, a, True)):
+            G.add_edge(
+                s_,
+                e_,
+                highway="residential",
+                name="",
+                ref="",
+                oneway=False,
+                reversed=rev,
+                osmid="virtual_connector",
+                length=max(float(d[i]), 1.0),
+                geometry=LineString([(G.nodes[s_]["x"], G.nodes[s_]["y"]), (G.nodes[e_]["x"], G.nodes[e_]["y"])]),
+            )
+        added += 1
 
 
 def add_exit_turnarounds(G: nx.MultiDiGraph, exits_xy: list[tuple[dict[str, Any], float, float]], labels: list[dict[str, Any]]) -> int:
@@ -322,15 +528,24 @@ def build_network(
     from pipeline.geo import latlon_to_scene
 
     exits_xy = []
+    config_xz: dict[str, tuple[float, float]] = {}
     for ex in region_cfg.get("exits", []):
         x, z = latlon_to_scene(float(ex["lat"]), float(ex["lon"]))
-        exits_xy.append((ex, x, z))
+        config_xz[str(ex["id"])] = (x, z)
+        tx, tz = exit_target(G, ex, x, z, labels)
+        if math.hypot(tx - x, tz - z) > 1.0:
+            log(f"exit {ex['id']}: snap target {math.hypot(tx - x, tz - z):.0f} m from the region.yaml point (road / bbox edge crossing)")
+        exits_xy.append((ex, tx, tz))
+    n_split = split_edges_at_exits(G, exits_xy, labels)
+    if n_split:
+        log(f"roads: split {n_split} carriageway(s) at exit points")
     n_turn = add_exit_turnarounds(G, exits_xy, labels)
 
+    n_conn = connect_islands(G)
     before = G.number_of_nodes()
     largest = max(nx.strongly_connected_components(G), key=len)
     G = G.subgraph(largest).copy()
-    log(f"roads: kept largest strongly connected component {G.number_of_nodes():,}/{before:,} nodes ({n_turn} exit turnarounds added)")
+    log(f"roads: kept largest strongly connected component {G.number_of_nodes():,}/{before:,} nodes ({n_turn} exit turnarounds, {n_conn} island connectors added)")
 
     # Signals
     node_ids = np.array(list(G.nodes), dtype=np.int64)
@@ -343,6 +558,12 @@ def build_network(
         tree = cKDTree(np.asarray(signal_points_utm)[:, :2])
         d, _ = tree.query(np.column_stack([nx_, ny_]), k=1)
         signal |= d <= float(assumption("pipeline.signal_snap_radius_m"))
+    signal_source = "osm" if signal.any() else "none"
+    if not signal.any() and bool(assumption("signal_inference.enabled_when_source_has_none")):
+        inferred = infer_signals(G)
+        signal = np.array([n in inferred for n in node_ids])
+        signal_source = "inferred"
+        log(f"roads: source has no traffic signals; inferred {int(signal.sum()):,} signalized junctions (assumptions signal_inference.*)")
     # Only junction nodes (degree > 2 undirected) carry a signal in the model.
     und = G.to_undirected(as_view=True)
     junction = np.array([und.degree(n) >= 3 for n in node_ids])
@@ -431,16 +652,72 @@ def build_network(
             "boundary_exit": [""] * len(node_ids),
         }
     )
-    exits = snap_exits(nodes, edges, exits_xy, labels)
+    exits = snap_exits(nodes, edges, exits_xy, labels, config_xz)
     for ex in exits:
         nodes.loc[nodes["node_id"] == ex["node_id"], "boundary_exit"] = ex["id"]
-    return RoadNetwork(G=G, nodes=nodes, edges=edges, exits=exits)
+    return RoadNetwork(G=G, nodes=nodes, edges=edges, exits=exits, signal_source=signal_source)
+
+
+EXIT_ON_ROAD_TOL_M = 50.0  # a region.yaml exit point this close to its road is used as is
+
+
+def exit_target(G: nx.MultiDiGraph, ex: dict[str, Any], x: float, z: float, labels: list[dict[str, Any]]) -> tuple[float, float]:
+    """Scene snap target for an exit: the nearest point of its road when the region.yaml point
+    lies on the road (within EXIT_ON_ROAD_TOL_M); otherwise the point where the road crosses the
+    WGS84 region bbox edge nearest the configured point (within EXIT_SEARCH_RADIUS_M); otherwise
+    the configured point."""
+    from shapely.geometry import Point, Polygon
+    from shapely.ops import nearest_points
+
+    from pipeline.config import region
+    from pipeline.geo import lonlat_to_utm
+
+    o = scene_origin()
+    b = region()["bbox"]
+    n = 50
+    ring_ll = (
+        [(b["west"] + (b["east"] - b["west"]) * i / n, b["south"]) for i in range(n)]
+        + [(b["east"], b["south"] + (b["north"] - b["south"]) * i / n) for i in range(n)]
+        + [(b["east"] - (b["east"] - b["west"]) * i / n, b["north"]) for i in range(n)]
+        + [(b["west"], b["north"] - (b["north"] - b["south"]) * i / n) for i in range(n)]
+    )
+    ring = Polygon([lonlat_to_utm(lo, la) for lo, la in ring_ll]).exterior
+    pt = Point(x + o.easting, o.northing - z)
+    prefix, refs = exit_matcher(ex, labels)
+    best, bd = None, EXIT_SEARCH_RADIUS_M
+    on_road, od = None, EXIT_ON_ROAD_TOL_M
+    for u, v, d in G.edges(data=True):
+        if not edge_matches(d, prefix, refs):
+            continue
+        g = d.get("geometry") or LineString([(G.nodes[u]["x"], G.nodes[u]["y"]), (G.nodes[v]["x"], G.nodes[v]["y"])])
+        gd = g.distance(pt)
+        if gd <= od:
+            on_road, od = nearest_points(g, pt)[0], gd
+        if gd > bd:
+            continue
+        inter = g.intersection(ring)
+        pts = [inter] if inter.geom_type == "Point" else list(getattr(inter, "geoms", []))
+        for q in pts:
+            if q.geom_type == "Point" and q.distance(pt) < bd:
+                best, bd = q, q.distance(pt)
+    target = on_road if on_road is not None else best
+    if target is None:
+        return x, z
+    return target.x - o.easting, o.northing - target.y
 
 
 def snap_exits(
-    nodes: pd.DataFrame, edges: pd.DataFrame, exits_xy: list[tuple[dict[str, Any], float, float]], labels: list[dict[str, Any]]
+    nodes: pd.DataFrame,
+    edges: pd.DataFrame,
+    exits_xy: list[tuple[dict[str, Any], float, float]],
+    labels: list[dict[str, Any]],
+    config_xz: dict[str, tuple[float, float]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Snap each region.yaml exit to the nearest node of its road (spec 5.4.3)."""
+    """Snap each region.yaml exit to the nearest node of its road (spec 5.4.3).
+
+    `exits_xy` holds the snap targets (road / bbox edge crossings); `snap_distance_m` is the
+    distance from the chosen node to the region.yaml point (`config_xz`), so a wrong config
+    coordinate stays visible."""
     out = []
     pos = nodes.set_index("node_id")[["x", "z"]]
     used: set[int] = set()
@@ -464,7 +741,10 @@ def snap_exits(
                 "x": float(cp.iloc[i]["x"]),
                 "z": float(cp.iloc[i]["z"]),
                 "bearing_deg": float(ex.get("bearing_deg", 0)),
-                "snap_distance_m": float(d[i]),
+                "snap_distance_m": float(
+                    np.hypot(float(cp.iloc[i]["x"]) - (config_xz or {}).get(str(ex["id"]), (x, z))[0], float(cp.iloc[i]["z"]) - (config_xz or {}).get(str(ex["id"]), (x, z))[1])
+                ),
+                "target_distance_m": float(d[i]),
                 "verified": bool(ex.get("verified", False)),
             }
         )

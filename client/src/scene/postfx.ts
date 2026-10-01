@@ -82,7 +82,7 @@ export class PostFX {
     }
     if (!usedAo) this.composer.addPass(new RenderPass(scene, camera));
     if (q.bloom) {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.55, 0.6, 1.0);
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x / 2, size.y / 2), 0.35, 0.55, 1.4);
       this.composer.addPass(this.bloom);
     }
     this.composer.addPass(new OutputPass());
@@ -100,8 +100,8 @@ export class PostFX {
   /** Stronger bloom for the ghost-traffic night look. */
   setGhost(on: boolean): void {
     if (this.bloom) {
-      this.bloom.strength = on ? 1.25 : 0.55;
-      this.bloom.threshold = on ? 0.6 : 1.0;
+      this.bloom.strength = on ? 1.25 : 0.35;
+      this.bloom.threshold = on ? 0.6 : 1.4;
     }
     if (this.grade) this.grade.uniforms['uVignette']!.value = on ? 0.55 : 0.32;
   }

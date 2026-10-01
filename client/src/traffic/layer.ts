@@ -19,13 +19,21 @@ const TRAIL_SEGMENTS = 10;
 const TRAIL_STEP_S = 6; // sim seconds between trail samples
 const LANE_OFFSET_M = 2.2;
 
-const BUS_KINDS = new Set(['shuttle', 'school_bus']);
+const WHITE = new THREE.Color(1, 1, 1);
 
-/** Box with a constant `aLight` value (0 body, 1 headlight, 2 taillight, 3 dark glass). */
+/**
+ * Box with a constant `aLight` value (0 body, 1 headlight, 2 taillight, 3 dark
+ * glass, 4 dark trim), white vertex color and `aTint` = 1 on the body (the
+ * instance color goes there only). Same attribute contract as the Blender
+ * props (`_LIGHT`, `_TINT`, COLOR_0 baked from materials).
+ */
 function part(w: number, h: number, d: number, x: number, y: number, z: number, light: number): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d).translate(x, y, z).toNonIndexed();
   g.deleteAttribute('uv');
-  g.setAttribute('aLight', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count).fill(light), 1));
+  const n = g.getAttribute('position').count;
+  g.setAttribute('aLight', new THREE.BufferAttribute(new Float32Array(n).fill(light), 1));
+  g.setAttribute('aTint', new THREE.BufferAttribute(new Float32Array(n).fill(light === 0 ? 1 : 0), 1));
+  g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
   return g;
 }
 
@@ -66,15 +74,29 @@ export const vehicleLightUniforms = {
 };
 
 function vehicleMaterial(): THREE.MeshLambertMaterial {
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true });
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, vehicleLightUniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aLight;\nvarying float vLight;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLight = aLight;');
+      .replace('#include <common>', '#include <common>\nattribute float aLight;\nattribute float aTint;\nvarying float vLight;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLight = aLight;')
+      // instance color (speed or paint) only on the tintable body panels
+      .replace(
+        '#include <color_vertex>',
+        `vColor = vec4(1.0);
+        #ifdef USE_COLOR
+          vColor.rgb *= color;
+        #endif
+        #ifdef USE_INSTANCING_COLOR
+          vColor.rgb *= mix(vec3(1.0), instanceColor.rgb, aTint);
+        #endif`,
+      );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying float vLight;\nuniform float uHead;\nuniform float uTail;')
-      .replace('#include <color_fragment>', '#include <color_fragment>\nif (vLight > 2.5) diffuseColor.rgb = diffuseColor.rgb * 0.25 + vec3(0.04, 0.05, 0.07);')
+      .replace(
+        '#include <color_fragment>',
+        '#include <color_fragment>\nif (vLight > 2.5 && vLight < 3.5) diffuseColor.rgb = diffuseColor.rgb * 0.25 + vec3(0.04, 0.05, 0.07);',
+      )
       .replace(
         '#include <opaque_fragment>',
         `if (vLight > 0.5 && vLight < 1.5) outgoingLight = vec3(1.0, 0.93, 0.78) * uHead;
@@ -92,8 +114,32 @@ let sharedBar: THREE.BufferGeometry | null = null;
 
 /** Optional vehicle meshes from the props library (fallback: procedural boxes). */
 export interface VehicleGeometries {
-  car?: THREE.BufferGeometry;
+  /** passenger car variants with their fleet share (sedan, SUV, minivan, pickup...) */
+  cars?: Array<{ id: string; geometry: THREE.BufferGeometry; share: number }>;
+  /** yellow school bus */
   bus?: THREE.BufferGeometry;
+  /** shuttle van (plan shuttles) */
+  shuttle?: THREE.BufferGeometry;
+  /** realistic paint colors (linear RGB), used when zoomed in */
+  paint?: Array<[number, number, number]>;
+}
+
+/** Deterministic hash of a trajectory index to [0, 1). */
+function hash01(i: number, salt: number): number {
+  const x = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** Pick a variant index by cumulative share (deterministic per trajectory). Pure; unit tested. */
+export function pickVariant(shares: number[], u: number): number {
+  const total = shares.reduce((a, b) => a + Math.max(0, b), 0);
+  if (total <= 0) return 0;
+  let acc = 0;
+  for (let k = 0; k < shares.length; k++) {
+    acc += Math.max(0, shares[k]!) / total;
+    if (u < acc) return k;
+  }
+  return shares.length - 1;
 }
 
 export interface LayerOptions {
@@ -107,8 +153,14 @@ export interface LayerOptions {
 export class TrafficLayer {
   readonly group = new THREE.Group();
   readonly overlay: RoadOverlay;
-  private cars: THREE.InstancedMesh;
-  private buses: THREE.InstancedMesh;
+  /** one instanced mesh per vehicle model: car variants, then school bus, then shuttle */
+  private fleets: Array<{ mesh: THREE.InstancedMesh; kind: 'car' | 'school_bus' | 'shuttle'; n: number }> = [];
+  /** per trajectory: fleet index */
+  private fleetOf: Uint8Array;
+  /** per trajectory: paint color index */
+  private paintOf: Uint16Array;
+  /** 'speed': cars colored by speed (legend); 'paint': realistic paint when zoomed in */
+  private colorMode: 'speed' | 'paint' = 'speed';
   private bars: THREE.InstancedMesh | null = null;
   private barLabels: CSS2DObject[] = [];
   private barEntrances: Array<{ k: number; x: number; y: number; y0: number; z: number; curb: number }> = [];
@@ -116,7 +168,6 @@ export class TrafficLayer {
   private trailPos: Float32Array;
   private trailCol: Float32Array;
   private cursors: Int32Array;
-  private isBus: Uint8Array;
   private nTraj: number;
   private tmp: PosOut = { x: 0, y: 0, z: 0, dx: 1, dz: 0 };
   private col: RGB = [0, 0, 0];
@@ -137,40 +188,47 @@ export class TrafficLayer {
 
     this.nTraj = Math.min(pb.nTrajectories, MAX_VEHICLES);
     this.cursors = new Int32Array(this.nTraj).fill(-1);
-    this.isBus = new Uint8Array(this.nTraj);
-    let nBus = 0;
-    for (let i = 0; i < this.nTraj; i++) {
-      const kind = pb.header.kinds?.[String(pb.trajKind[i])] ?? 'car';
-      if (BUS_KINDS.has(kind)) {
-        this.isBus[i] = 1;
-        nBus++;
-      }
-    }
     sharedCar ??= carGeometry();
     sharedBus ??= busGeometry();
     sharedBar ??= new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
-
-    const carGeo = opts.vehicles?.car ?? sharedCar;
-    const busGeo = opts.vehicles?.bus ?? sharedBus;
-    this.cars = new THREE.InstancedMesh(carGeo, vehicleMaterial(), Math.max(1, this.nTraj - nBus));
-    this.cars.castShadow = opts.castShadows ?? false;
-    this.cars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.cars.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, this.nTraj - nBus) * 3), 3);
-    this.cars.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    this.cars.frustumCulled = false;
-    this.cars.count = 0;
-    this.cars.name = 'cars';
-    this.group.add(this.cars);
-
     this.shuttleColor = new THREE.Color(opts.accent);
-    this.buses = new THREE.InstancedMesh(busGeo, vehicleMaterial(), Math.max(1, nBus));
-    this.buses.castShadow = opts.castShadows ?? false;
-    this.buses.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.buses.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, nBus) * 3), 3);
-    this.buses.frustumCulled = false;
-    this.buses.count = 0;
-    this.buses.name = 'buses';
-    this.group.add(this.buses);
+
+    // models: prop library variants when available, else the procedural car / bus
+    const v = opts.vehicles ?? {};
+    const carModels = v.cars?.length ? v.cars : [{ id: 'car', geometry: sharedCar, share: 1 }];
+    const models: Array<{ geometry: THREE.BufferGeometry; kind: 'car' | 'school_bus' | 'shuttle'; name: string }> = [
+      ...carModels.map((c) => ({ geometry: c.geometry, kind: 'car' as const, name: `cars:${c.id}` })),
+      { geometry: v.bus ?? sharedBus, kind: 'school_bus', name: 'buses' },
+      { geometry: v.shuttle ?? v.bus ?? sharedBus, kind: 'shuttle', name: 'shuttles' },
+    ];
+    const shares = carModels.map((c) => c.share);
+    this.fleetOf = new Uint8Array(this.nTraj);
+    this.paintOf = new Uint16Array(this.nTraj);
+    const counts = new Array<number>(models.length).fill(0);
+    const nPaint = Math.max(1, v.paint?.length ?? 1);
+    for (let i = 0; i < this.nTraj; i++) {
+      const kind = pb.header.kinds?.[String(pb.trajKind[i])] ?? 'car';
+      let f: number;
+      if (kind === 'school_bus') f = carModels.length;
+      else if (kind === 'shuttle') f = carModels.length + 1;
+      else f = pickVariant(shares, hash01(i, 1));
+      this.fleetOf[i] = f;
+      this.paintOf[i] = Math.floor(hash01(i, 2) * nPaint) % nPaint;
+      counts[f]!++;
+    }
+    models.forEach((m, k) => {
+      const n = Math.max(1, counts[k]!);
+      const mesh = new THREE.InstancedMesh(m.geometry, vehicleMaterial(), n);
+      mesh.castShadow = opts.castShadows ?? false;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+      mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      mesh.name = m.name;
+      this.group.add(mesh);
+      this.fleets.push({ mesh, kind: m.kind, n: 0 });
+    });
 
     const nv = this.nTraj * TRAIL_SEGMENTS * 2;
     this.trailPos = new Float32Array(nv * 3);
@@ -246,14 +304,23 @@ export class TrafficLayer {
     for (const e of this.barEntrances) e.y = fn(e.x, e.z, e.y0);
   }
 
+  /** Realistic paint colors (close up, with prop models) or the speed legend colors. */
+  setColorMode(mode: 'speed' | 'paint'): void {
+    this.colorMode = mode;
+  }
+
+  /** Instances drawn per model (debugging / tests). */
+  get fleetCounts(): Record<string, number> {
+    return Object.fromEntries(this.fleets.map((f) => [f.mesh.name, f.mesh.count]));
+  }
+
   setGhost(on: boolean): void {
     this.ghost = on;
     this.trails.visible = on;
   }
 
   setCastShadows(on: boolean): void {
-    this.cars.castShadow = on;
-    this.buses.castShadow = on;
+    for (const f of this.fleets) f.mesh.castShadow = on;
   }
 
   setLabelsVisible(on: boolean): void {
@@ -298,12 +365,9 @@ export class TrafficLayer {
       this.overlay.setFromBins(pb.edgeVc, b0, b1, w);
     }
 
-    const cm = this.cars.instanceMatrix.array as Float32Array;
-    const cc = this.cars.instanceColor!.array as Float32Array;
-    const bm = this.buses.instanceMatrix.array as Float32Array;
-    const bc = this.buses.instanceColor!.array as Float32Array;
-    let nc = 0;
-    let nb = 0;
+    for (const f of this.fleets) f.n = 0;
+    const paint = this.opts.vehicles?.paint;
+    const usePaint = this.colorMode === 'paint' && !!paint?.length;
     let nt = 0;
     const out = this.tmp;
     const col = this.col;
@@ -312,9 +376,10 @@ export class TrafficLayer {
       const c = this.locate(i, t);
       if (c < 0) continue;
       if (!this.place(c, t, out)) continue;
-      const bus = this.isBus[i] === 1;
-      const m = bus ? bm : cm;
-      const k = bus ? nb++ : nc++;
+      const fleet = this.fleets[this.fleetOf[i]!]!;
+      const m = fleet.mesh.instanceMatrix.array as Float32Array;
+      const cc = fleet.mesh.instanceColor!.array as Float32Array;
+      const k = fleet.n++;
       const o = k * 16;
       const dx = out.dx;
       const dz = out.dz;
@@ -336,12 +401,17 @@ export class TrafficLayer {
       m[o + 15] = 1;
       const dur = pb.trajExitS[c]! - pb.trajEnterS[c]!;
       const kph = dur > 0 ? (this.net.length[pb.trajEdge[c]!]! / dur) * 3.6 : 0;
-      if (bus) {
-        const kind = cfg.kinds?.[String(pb.trajKind[i])];
-        const bcol = kind === 'shuttle' ? this.shuttleColor : this.busColor;
-        bc[k * 3] = bcol.r;
-        bc[k * 3 + 1] = bcol.g;
-        bc[k * 3 + 2] = bcol.b;
+      if (fleet.kind !== 'car') {
+        // prop school buses carry their own yellow paint (not tintable); shuttles get the plan / baseline accent
+        const bcol = fleet.kind === 'shuttle' ? this.shuttleColor : this.opts.vehicles?.bus ? WHITE : this.busColor;
+        cc[k * 3] = bcol.r;
+        cc[k * 3 + 1] = bcol.g;
+        cc[k * 3 + 2] = bcol.b;
+      } else if (usePaint) {
+        const pc = paint![this.paintOf[i]!]!;
+        cc[k * 3] = pc[0];
+        cc[k * 3 + 1] = pc[1];
+        cc[k * 3 + 2] = pc[2];
       } else {
         speedColor(kph, col);
         // ramp colors are sRGB; instance colors are linear
@@ -352,12 +422,11 @@ export class TrafficLayer {
 
       if (this.ghost) nt = this.writeTrail(i, c, t, kph, nt);
     }
-    this.cars.count = nc;
-    this.buses.count = nb;
-    this.cars.instanceMatrix.needsUpdate = true;
-    this.cars.instanceColor!.needsUpdate = true;
-    this.buses.instanceMatrix.needsUpdate = true;
-    this.buses.instanceColor!.needsUpdate = true;
+    for (const f of this.fleets) {
+      f.mesh.count = f.n;
+      f.mesh.instanceMatrix.needsUpdate = true;
+      f.mesh.instanceColor!.needsUpdate = true;
+    }
     if (this.ghost) {
       const g = this.trails.geometry;
       g.setDrawRange(0, nt * 2);
@@ -443,10 +512,10 @@ export class TrafficLayer {
 
   dispose(): void {
     this.overlay.dispose();
-    (this.cars.material as THREE.Material).dispose();
-    (this.buses.material as THREE.Material).dispose();
-    this.cars.dispose();
-    this.buses.dispose();
+    for (const f of this.fleets) {
+      (f.mesh.material as THREE.Material).dispose();
+      f.mesh.dispose();
+    }
     this.trails.geometry.dispose();
     (this.trails.material as THREE.Material).dispose();
     if (this.bars) {

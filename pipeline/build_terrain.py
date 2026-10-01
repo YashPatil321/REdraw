@@ -93,6 +93,8 @@ def terrain_from_raster(path: Path, extent: Extent, spacing: float = DEM_SPACING
     dst_transform = from_origin(west, north, spacing, spacing)
     dst = np.full((rows, cols), np.nan, dtype=np.float32)
     with rasterio.open(path) as src:
+        # A finer DEM (e.g. 2 m lidar) is averaged onto the grid instead of point-sampled.
+        finer = src.crs is not None and src.crs.is_projected and abs(src.transform.a) < spacing / 1.5
         reproject(
             source=rasterio.band(src, 1),
             destination=dst,
@@ -102,7 +104,7 @@ def terrain_from_raster(path: Path, extent: Extent, spacing: float = DEM_SPACING
             dst_transform=dst_transform,
             dst_crs="EPSG:32611",
             dst_nodata=np.nan,
-            resampling=Resampling.bilinear,
+            resampling=Resampling.average if finer else Resampling.bilinear,
         )
     bad = ~np.isfinite(dst)
     if bad.mean() > 0.05:
@@ -267,10 +269,29 @@ def write_terrain_outputs(
     return infos, tris, meta
 
 
-def run_real(processed: Path, assets: Path, grid: TileGrid, dem_path: Path, naip_path: Path) -> tuple[Terrain, list[dict[str, Any]], int]:
+REAL_TEXTURE_PX = 1536  # per tile; <= 4096 (spec 5.1.3). Tiles are ~3 km, so ~2 m per texel.
+
+
+def terrain_sources(dem_path: Path, imagery_path: Path) -> list[dict[str, Any]]:
+    """DEM + imagery provenance from the `.source.json` sidecars / data/raw/aws_sources.json."""
+    from pipeline.sources import raw_sources
+
+    return [s for s in raw_sources(dem_path.parent, dem_path, imagery_path) if s.get("kind") in ("dem", "imagery")]
+
+
+def run_real(
+    processed: Path, assets: Path, grid: TileGrid, dem_path: Path, naip_path: Path
+) -> tuple[Terrain, list[dict[str, Any]], int, list[dict[str, Any]]]:
+    """Real terrain: DEM -> grid, imagery albedo. Returns (terrain, tiles, triangles, sources)."""
     from pipeline.build_buildings import flatten_terrain_for_heroes, load_heroes
 
     terrain = terrain_from_raster(dem_path, grid.extent)
     flatten_terrain_for_heroes(terrain, load_heroes())
-    infos, tris, _ = write_terrain_outputs(terrain, grid, raster_albedo(naip_path), processed, assets, texture_px=1536)
-    return terrain, infos, tris
+    infos, tris, meta = write_terrain_outputs(terrain, grid, raster_albedo(naip_path), processed, assets, texture_px=REAL_TEXTURE_PX)
+    sources = terrain_sources(dem_path, naip_path)
+    meta = dict(meta, texture_px=REAL_TEXTURE_PX, sources=sources)
+    write_json(processed / "terrain_meta.json", meta)
+    write_json(assets / "terrain" / "terrain_meta.json", meta)
+    for s in sources:
+        log(f"terrain source ({s.get('kind')}): {s.get('name')}")
+    return terrain, infos, tris, sources

@@ -4,7 +4,7 @@
  */
 
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import { addTool, isDraftDirty, newDraft, removeTool, runPlan, savePlan, setDraftText, updateParam } from '../actions';
+import { OFFLINE_VIEWER, addTool, isDraftDirty, newDraft, removeTool, runPlan, savePlan, setDraftText, updateParam } from '../actions';
 import { hashFor } from '../router';
 import { store } from '../state';
 import type { ToolDef, ToolInstance } from '../types';
@@ -321,7 +321,15 @@ export class RdPlanSummary extends LitElement {
         })}
       </div>
 
-      <h3 style="margin:6px 0 0">Budget ${s.checking ? html`<span class="muted small">checking…</span>` : nothing}</h3>
+      ${OFFLINE_VIEWER
+        ? html`<div class="small warnc" style="margin:8px 0;padding:8px;border:1px solid rgba(255,196,77,0.4);border-radius:8px">
+            <b>Static viewer.</b> Sketch freely, but costs, checks, saving and running plans need the live Python API
+            (<code>uvicorn api.main:app</code>). Open a saved plan from Browse to see its full report.
+          </div>`
+        : nothing}
+      ${OFFLINE_VIEWER
+        ? nothing
+        : html`<h3 style="margin:6px 0 0">Budget ${s.checking ? html`<span class="muted small">checking…</span>` : nothing}</h3>
       ${budgetBar('Upfront', c?.cost_upfront_usd ?? 0, c?.budget_upfront_usd ?? mission?.budget_usd_upfront ?? 0)}
       ${budgetBar('Per year', c?.cost_per_year_usd ?? 0, c?.budget_per_year_usd ?? mission?.budget_usd_per_year ?? 0)}
       ${c?.over_budget ? html`<div class="small warnc">Over budget: the plan can still run but will be marked over budget.</div>` : nothing}
@@ -331,12 +339,12 @@ export class RdPlanSummary extends LitElement {
         ${(c?.warnings ?? []).map((e) => html`<div class="warnc">! ${e}</div>`)}
         ${c?.ok ? html`<div style="color:var(--good)">✓ Plan checks out on the server.</div>` : nothing}
       </div>
-      <p class="muted small" style="margin:0">Costs and checks come from the simulation server.</p>
+      <p class="muted small" style="margin:0">Costs and checks come from the simulation server.</p>`}
 
       <div class="row">
         <button ?disabled=${s.draft.tools.length === 0 || !!saved || !!job} @click=${() => void savePlan()}>${s.plan && dirty ? 'Save as new' : saved ? 'Saved' : 'Save'}</button>
         <span class="spacer"></span>
-        <button class="primary" ?disabled=${!c?.ok || !!job} @click=${() => void runPlan()} title="Runs 20 seeds of plan and baseline">Run plan</button>
+        <button class="primary" ?disabled=${OFFLINE_VIEWER ? s.draft.tools.length === 0 : !c?.ok || !!job} @click=${() => void runPlan()} title=${OFFLINE_VIEWER ? 'Live runs need the Python API' : 'Runs 20 seeds of plan and baseline'}>Run plan</button>
       </div>
       ${job
         ? html`<div>

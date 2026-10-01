@@ -1,6 +1,10 @@
 """Run the whole world-data pipeline (spec 5, milestone M1).
 
     python pipeline/build_all.py              # real data: OSM, USGS 3DEP, NAIP, ACS, LODES
+    python pipeline/build_all.py --population-source footprints
+                                              # real map data; households ESTIMATED from real
+                                              # residential footprints (explicit, labeled fallback
+                                              # when Census ACS/LODES are unreachable)
     python pipeline/build_all.py --synthetic  # offline FAKE world, same formats (dev/CI only)
 
 Writes data/processed/ (docs/data_contract.md) and client/public/assets/.
@@ -36,6 +40,7 @@ from pipeline.build_buildings import (
 from pipeline.build_population import (
     WorkModel,
     fallback_dist,
+    footprint_units,
     resolve_schools,
     students_by_school,
     synthesize_population,
@@ -51,6 +56,7 @@ from pipeline.build_roads import (
 from pipeline.build_terrain import Terrain, write_terrain_outputs
 from pipeline.common import (
     CONTRACT_VERSION,
+    DataSourceUnavailable,
     TileGrid,
     ensure_dirs,
     log,
@@ -60,8 +66,9 @@ from pipeline.common import (
     today,
     write_json,
 )
-from pipeline.config import assumption, load_yaml, region
+from pipeline.config import assumption, assumption_range, load_yaml, region
 from pipeline.geo import PROJECTION, scene_origin
+from pipeline.sources import attribution_lines
 
 PROCESSED_OUTPUTS = [
     "region_meta.json",
@@ -77,13 +84,8 @@ PROCESSED_OUTPUTS = [
     "terrain_meta.json",
 ]
 
-REAL_SOURCES = [
-    {"name": "OpenStreetMap (roads, buildings, schools) via Overpass/OSMnx", "license": "ODbL 1.0", "url": "https://www.openstreetmap.org/copyright"},
-    {"name": "USGS 3D Elevation Program (3DEP) 1/3 arc-second DEM via py3dep", "license": "Public domain (USGS)", "url": "https://www.usgs.gov/3d-elevation-program"},
-    {"name": "USDA NAIP imagery via Microsoft Planetary Computer", "license": "Public domain (USDA FSA)", "url": "https://planetarycomputer.microsoft.com/dataset/naip"},
-    {"name": "US Census Bureau ACS 5-year estimates (block groups) and TIGER/Line", "license": "Public domain (US Census Bureau)", "url": "https://www.census.gov/data/developers.html"},
-    {"name": "US Census Bureau LEHD LODES 8 (OD, WAC, RAC)", "license": "Public domain (US Census Bureau)", "url": "https://lehd.ces.census.gov/data/"},
-]
+POPULATION_SOURCES = ("acs", "footprints")
+POPULATION_SOURCE_LABEL = {"acs": "acs_lodes", "footprints": "footprint_estimate", "synthetic": "synthetic"}
 
 
 def clean_outputs(processed: Path, assets: Path) -> None:
@@ -146,8 +148,10 @@ def draco_compress(assets: Path, files: list[Path]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def synthetic_work_model(bdf: pd.DataFrame, net: RoadNetwork) -> WorkModel:
-    """Synthetic: internal jobs at commercial/school buildings (area weighted), rest via exits."""
+def synthetic_work_model(bdf: pd.DataFrame, net: RoadNetwork, source: str = "assumptions (synthetic)") -> WorkModel:
+    """Internal jobs at commercial/school buildings (area weighted), the rest via exits
+    (assumptions demand.external_job_share, population_synthesis.external_exit_shares).
+    Used by the synthetic world and by the footprint population estimate."""
     nodes, edges = net.nodes, net.edges
     loc = nodes[local_node_mask(nodes, edges)]
     tree = cKDTree(loc[["x", "z"]].to_numpy())
@@ -163,7 +167,7 @@ def synthetic_work_model(bdf: pd.DataFrame, net: RoadNetwork) -> WorkModel:
         internal_nodes={"": agg.index.to_numpy(dtype=np.int64)},
         internal_weights={"": (agg / agg.sum()).to_numpy()},
         exit_probs={"": shares},
-        source="assumptions (synthetic)",
+        source=source,
     )
 
 
@@ -185,7 +189,11 @@ def finish(
     osm_schools: Any = None,
     sources: list[dict[str, Any]],
     skip_draco: bool = False,
+    population: str = "synthetic",
+    extra_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Shared tail. `population` is 'synthetic', 'acs' (dists + work given) or 'footprints'
+    (households estimated from real residential footprints inside the region bbox)."""
     reg = region()
     schools_cfg = load_yaml("schools.yaml")["schools"]
     write_network(net, processed)
@@ -198,11 +206,25 @@ def finish(
     btiles, b_tris, heroes = build_building_tiles(bdf, grid, assets / "buildings", hero_list)
 
     schools = resolve_schools(schools_cfg, net.nodes, net.edges, bdf, osm_schools)
+    pop_bdf = bdf
+    if population != "synthetic":
+        # people live and (internal) jobs are inside the region bbox; the terrain buffer is scenery
+        rext = region_extent()
+        pop_bdf = bdf[np.asarray(rext.contains(bdf["centroid_x"].to_numpy(), bdf["centroid_z"].to_numpy()))]
+    if population == "footprints":
+        units = footprint_units(pop_bdf)
+        pop_bdf = pop_bdf.assign(units=units)
+        n_hh = int(units.sum())
+        by_type = pop_bdf.assign(units=units).groupby("type")["units"].sum().to_dict()
+        log("POPULATION SOURCE: FOOTPRINT ESTIMATE (explicit fallback; Census ACS/LODES not used)")
+        log(f"  {n_hh:,} households from {int((units > 0).sum()):,} residential footprints inside the region bbox: {by_type}")
+        dists = [fallback_dist("", n_hh)]
+        work = synthetic_work_model(pop_bdf, net, source="assumptions (footprint estimate: commercial/school buildings by area + exit shares)")
     if dists is None:
         dists = [fallback_dist("", int(assumption("population.target_households_fallback")))]
     if work is None:
-        work = synthetic_work_model(bdf, net)
-    hh, persons = synthesize_population(bdf, dists, work, net.nodes, net.edges, net.exits, schools, int(assumption("population.seed")))
+        work = synthetic_work_model(pop_bdf, net)
+    hh, persons = synthesize_population(pop_bdf, dists, work, net.nodes, net.edges, net.exits, schools, int(assumption("population.seed")))
     write_population(hh, persons, processed)
     sbs = students_by_school(persons, schools)
     for s in schools:
@@ -243,6 +265,7 @@ def finish(
         "buildings_by_type": {k: int(v) for k, v in bdf["type"].value_counts().items()},
         "road_edges": int(len(net.edges)),
         "road_nodes": int(len(net.nodes)),
+        "signals": int(net.nodes["signalized"].sum()),
         "households": int(len(hh)),
         "persons": int(len(persons)),
         "workers": int(persons["is_worker"].sum()),
@@ -262,7 +285,11 @@ def finish(
         "terrain_extent_scene": grid.extent.as_dict(),
         "tiles": {"rows": grid.rows, "cols": grid.cols},
         "counts": counts,
+        "population_source": POPULATION_SOURCE_LABEL[population],
+        "signal_source": "synthetic" if synthetic else net.signal_source,
         "sources": sources,
+        "attribution": attribution_lines(sources),
+        **(extra_meta or {}),
     }
     if synthetic:
         meta["warning"] = "SYNTHETIC DEV DATA: procedurally generated stand-in world. NOT real geography, buildings, roads or people."
@@ -279,11 +306,21 @@ def print_counts(meta: dict[str, Any]) -> None:
     print(f"  buildings      : {c['buildings']:,}  {c['buildings_by_type']}")
     print(f"  road nodes     : {c['road_nodes']:,}")
     print(f"  road edges     : {c['road_edges']:,}")
-    print(f"  households     : {c['households']:,}")
+    print(f"  signals        : {c.get('signals', 0):,}  ({meta.get('signal_source', '')})")
+    print(f"  households     : {c['households']:,}  (population source: {meta.get('population_source', '')})")
     print(f"  persons        : {c['persons']:,}  (workers {c['workers']:,}, students {c['students']:,})")
     print("  students per school:")
     for k, v in c["students_by_school"].items():
-        print(f"    {k:<22} {v:,}")
+        print(f"    {k:<36} {v:,}")
+    if meta.get("population_source") == "footprint_estimate":
+        lo, hi = assumption_range("population.target_households_fallback")
+        tgt = int(assumption("population.target_households_fallback"))
+        ok = lo <= c["households"] <= hi
+        print(f"  sanity check   : {c['households']:,} households vs target_households_fallback {tgt:,} (range {lo:,}-{hi:,}): {'OK' if ok else 'OUTSIDE RANGE'}")
+        if not ok:
+            print("  WARNING: the footprint estimate is outside the assumed range. The count is NOT scaled to fit;")
+            print("           check the region bbox (region.yaml) and footprint_population.* assumptions.")
+        print("  NOTE: households are a FOOTPRINT ESTIMATE (no Census data); see region_meta.json sources.")
     print("=" * 60 + "\n")
 
 
@@ -328,7 +365,7 @@ def run_synthetic(skip_draco: bool = False) -> dict[str, Any]:
     return meta
 
 
-def run_real(skip_draco: bool = False) -> dict[str, Any]:
+def run_real(skip_draco: bool = False, population_source: str = "acs") -> dict[str, Any]:
     from pipeline import (
         build_buildings,
         build_population,
@@ -339,7 +376,10 @@ def run_real(skip_draco: bool = False) -> dict[str, Any]:
         fetch_imagery,
         fetch_osm,
     )
+    from pipeline.sources import not_available, population_sources, raw_sources
 
+    if population_source not in POPULATION_SOURCES:
+        raise ValueError(f"population_source must be one of {POPULATION_SOURCES}, got {population_source!r}")
     t0 = time.time()
     dirs = ensure_dirs()
     raw = dirs["raw"]
@@ -348,20 +388,59 @@ def run_real(skip_draco: bool = False) -> dict[str, Any]:
     osm = fetch_osm.fetch_all(raw)
     dem_path = fetch_dem.fetch(raw)
     naip_path = fetch_imagery.fetch(raw)
-    census = fetch_census.fetch_all(raw)
+    census = None
+    if population_source == "acs":
+        try:
+            census = fetch_census.fetch_all(raw)
+        except DataSourceUnavailable as e:
+            e.args = (
+                str(e)
+                + "  Alternative: `python pipeline/build_all.py --population-source footprints` estimates households\n"
+                "  from the real residential building footprints instead (explicit, labeled fallback; not census data).\n",
+            )
+            raise
+    else:
+        log("=" * 72)
+        log("POPULATION SOURCE: footprints (explicit fallback). Census ACS/LODES/TIGER are NOT used;")
+        log("households will be ESTIMATED from real residential building footprints and assumptions.yaml.")
+        log("region_meta.json records population_source = footprint_estimate.")
+        log("=" * 72)
     clean_outputs(dirs["processed"], dirs["assets"])
     # 2. build
-    terrain, tiles, tris = build_terrain.run_real(dirs["processed"], dirs["assets"], grid, dem_path, naip_path)
+    t = time.time()
+    terrain, tiles, tris, terrain_srcs = build_terrain.run_real(dirs["processed"], dirs["assets"], grid, dem_path, naip_path)
+    log(f"timing: terrain {time.time() - t:.1f}s")
+    t = time.time()
     G, sig = build_roads.load_osm_drive(osm["drive"])
     net = build_network(G, terrain, region(), sig)
-    footprints = build_buildings.load_osm_buildings(osm["buildings"])
+    log(f"timing: roads {time.time() - t:.1f}s")
+    footprints = build_buildings.load_osm_buildings(osm["buildings"], build_buildings.load_landuse(raw))
     osm_schools, school_areas = fetch_osm.load_schools(osm["schools"], load_yaml("schools.yaml")["schools"])
-    bgs, frac = fetch_census.load_block_groups(census["tiger_bg"])
-    acs = fetch_census.load_acs(census["acs"])
-    dists = build_population.dists_from_acs(acs, frac)
-    od, xwalk = fetch_census.load_lodes(census["od_main"], census["xwalk"])
-    work = build_population.work_model_from_lodes(od, xwalk, set(frac), net.nodes, net.edges, net.exits, region()["bbox"])
-    sources = [dict(s, retrieved=today()) for s in REAL_SOURCES]
+    bgs = dists = work = None
+    if census is not None:
+        bgs, frac = fetch_census.load_block_groups(census["tiger_bg"])
+        acs = fetch_census.load_acs(census["acs"])
+        dists = build_population.dists_from_acs(acs, frac)
+        od, xwalk = fetch_census.load_lodes(census["od_main"], census["xwalk"])
+        work = build_population.work_model_from_lodes(od, xwalk, set(frac), net.nodes, net.edges, net.exits, region()["bbox"])
+    map_srcs = [s for s in raw_sources(raw, dem_path, naip_path) if s.get("kind") not in ("dem", "imagery")]
+    sources = [dict(s, retrieved=s.get("retrieved", today())) for s in terrain_srcs + map_srcs] + population_sources(population_source)
+    extra: dict[str, Any] = {
+        "population_note": (
+            "Households ESTIMATED from real residential building footprints (explicit --population-source footprints "
+            "fallback; Census ACS/LODES unavailable). Not census data."
+            if population_source == "footprints"
+            else "Households synthesized to match Census ACS 5-year block group totals; commutes from LEHD LODES."
+        ),
+        "signal_note": (
+            "Traffic signals inferred from road classes (assumptions signal_inference.*); the map source has no signal data."
+            if net.signal_source == "inferred"
+            else "Traffic signals from OSM highway=traffic_signals."
+        ),
+    }
+    na = not_available(raw)
+    if na:
+        extra["sources_not_available"] = na
     meta = finish(
         synthetic=False,
         terrain=terrain,
@@ -379,6 +458,8 @@ def run_real(skip_draco: bool = False) -> dict[str, Any]:
         osm_schools=osm_schools,
         sources=sources,
         skip_draco=skip_draco,
+        population=population_source,
+        extra_meta=extra,
     )
     log(f"real build finished in {time.time() - t0:.1f}s")
     return meta
@@ -388,11 +469,18 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--synthetic", action="store_true", help="build the offline FAKE stand-in world (dev/CI only)")
     ap.add_argument("--no-draco", action="store_true", help="skip Draco compression (manifest.draco=false)")
+    ap.add_argument(
+        "--population-source",
+        choices=POPULATION_SOURCES,
+        default="acs",
+        help="real mode: 'acs' (Census ACS + LODES, default) or 'footprints' (explicit fallback: households "
+        "estimated from real residential footprints; recorded as footprint_estimate in region_meta.json)",
+    )
     args = ap.parse_args(argv)
-    from pipeline.common import DataSourceUnavailable
-
+    if args.synthetic and args.population_source != "acs":
+        ap.error("--population-source applies to the real build only (the synthetic world has its own population)")
     try:
-        meta = run_synthetic(args.no_draco) if args.synthetic else run_real(args.no_draco)
+        meta = run_synthetic(args.no_draco) if args.synthetic else run_real(args.no_draco, args.population_source)
     except DataSourceUnavailable as e:
         print(str(e), file=sys.stderr)
         return 2

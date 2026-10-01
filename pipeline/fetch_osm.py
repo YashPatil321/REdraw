@@ -6,6 +6,7 @@ building footprints and amenity=school features. Cached in data/raw/ (skipped if
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -125,32 +126,104 @@ def fetch_all(raw: Path | None = None) -> dict[str, Path]:
     }
 
 
-def load_schools(path: Path, schools_cfg: list[dict[str, Any]]) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """OSM amenity=school -> (all schools EPSG:32611, campus polygons tagged with schools.yaml ids).
+SCHOOL_NAME_RE = re.compile(r"school|academy|elementary|middle|high|montessori|preschool|campus|college", re.I)
 
-    A campus polygon gets the id of the schools.yaml school whose point is inside it or within
-    pipeline.school_snap_max_dist_m of it.
+
+def school_name_key(name: Any) -> str:
+    """Normalized school name for matching ('Design39 Campus' == 'Design39Campus')."""
+    import unicodedata
+
+    n = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode().lower()
+    n = re.sub(r"[^a-z0-9]", "", n)
+    n = re.sub(r"^the", "", n)
+    while n.endswith(("campus", "school", "schools")):
+        n = re.sub(r"(campus|schools|school)$", "", n)
+    return n
+
+
+def match_campuses(gdf: gpd.GeoDataFrame, schools_cfg: list[dict[str, Any]]) -> list[str | None]:
+    """schools.yaml id for each OSM school feature (EPSG:32611), or None.
+
+    1. name match (normalized) always wins;
+    2. otherwise a polygon gets the id of a schools.yaml point it contains, or the nearest one
+       within pipeline.school_snap_max_dist_m, but only if the polygon is unnamed or its name
+       is not another school's name (so a neighbouring campus is never captured);
+    3. points (Overture places) match by name only.
     """
+    from shapely.geometry import Point
+
+    from pipeline.geo import lonlat_to_utm
+
+    max_d = float(assumption("pipeline.school_snap_max_dist_m"))
+    pts = [(str(s["id"]), Point(*lonlat_to_utm(float(s["lon"]), float(s["lat"]))), school_name_key(s["name"])) for s in schools_cfg]
+    by_key = {k: i for i, _, k in pts}
+    out: list[str | None] = []
+    for name, g in zip(gdf["name"], gdf.geometry, strict=True):
+        key = school_name_key(name)
+        if key and key in by_key:
+            out.append(by_key[key])
+            continue
+        if g.geom_type not in ("Polygon", "MultiPolygon"):
+            out.append(None)
+            continue
+        # named after another school (not just "Maintenance" or similar): never captured
+        named_other = bool(SCHOOL_NAME_RE.search(str(name or "")))
+        inside = [i for i, pt, _ in pts if g.contains(pt)]
+        if inside:
+            out.append(None if named_other else inside[0])
+            continue
+        if named_other:
+            out.append(None)
+            continue
+        best, bd = None, max_d
+        for i, pt, _ in pts:
+            d = g.distance(pt)
+            if d <= bd:
+                best, bd = i, d
+        out.append(best)
+    return out
+
+
+def load_schools(path: Path, schools_cfg: list[dict[str, Any]]) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """OSM amenity=school -> (all schools EPSG:32611 with a `school_id` column, campus polygons
+    tagged with schools.yaml ids). Matching rules: `match_campuses`."""
     gdf = gpd.read_file(path).to_crs("EPSG:32611")
     if "name" not in gdf.columns:
         gdf["name"] = None
-    max_d = float(assumption("pipeline.school_snap_max_dist_m"))
-    pts = []
-    for s in schools_cfg:
-        from pipeline.geo import lonlat_to_utm
+    gdf["school_id"] = match_campuses(gdf, schools_cfg)
+    gdf["osm_added"] = False
+    # OSM-only campuses (not in schools.yaml) become schools too (spec 5.5), but only campus
+    # polygons inside the region bbox whose name gives a K-12 grade band (no preschools,
+    # continuation or adult schools, no Overture place points).
+    from pipeline.build_population import osm_school_grades, osm_school_id
+    from pipeline.common import region_extent
+    from pipeline.geo import scene_origin
 
-        pts.append((s["id"], *lonlat_to_utm(float(s["lon"]), float(s["lat"]))))
-    areas = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
-    sid = []
-    for g in areas.geometry:
-        best, bd = None, max_d
-        for i, e, n in pts:
-            d = g.distance(gpd.points_from_xy([e], [n])[0])
-            if d <= bd:
-                best, bd = i, d
-        sid.append(best)
-    areas["school_id"] = sid
-    areas = areas[areas["school_id"].notna()][["school_id", "name", "geometry"]]
+    o = scene_origin()
+    rext = region_extent()
+    taken = {str(s["id"]) for s in schools_cfg}
+    for i in gdf.index[gdf["school_id"].isna()]:
+        g = gdf.geometry[i]
+        name = gdf.at[i, "name"]
+        if g.geom_type not in ("Polygon", "MultiPolygon") or not name or osm_school_grades(str(name)) is None:
+            continue
+        c = g.representative_point()
+        if not rext.contains(c.x - o.easting, o.northing - c.y):
+            continue
+        sid = osm_school_id(str(name))
+        if sid in taken and not (gdf["school_id"] == sid).any():
+            continue
+        gdf.at[i, "school_id"] = sid
+        gdf.at[i, "osm_added"] = True
+    areas = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"]) & gdf["school_id"].notna()]
+    areas = areas[["school_id", "name", "geometry"]].copy()
+    log(f"schools: {int(gdf['osm_added'].sum())} OSM-only campuses added: {sorted(set(gdf.loc[gdf['osm_added'], 'school_id']))}")
+    for s in schools_cfg:
+        hit = areas[areas["school_id"] == s["id"]]
+        if len(hit):
+            log(f"schools: {s['id']} <- OSM campus {', '.join(repr(n) for n in hit['name'])} ({hit.geometry.area.sum():,.0f} m2)")
+        else:
+            log(f"WARNING schools: {s['id']} ({s['name']}) has no OSM campus polygon; buildings near its point are not tagged")
     return gdf, gpd.GeoDataFrame(areas, geometry="geometry", crs="EPSG:32611")
 
 

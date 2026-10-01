@@ -3,7 +3,8 @@
  * logic: costs, validation and results always come from the server.
  */
 
-import { ApiError, api, with503Retry } from './api';
+import { ApiError, LIVE_API_BASE, STATIC_VIEWER, api, with503Retry } from './api';
+import { STATIC_NOTICE } from './staticPaths';
 import { hashFor } from './router';
 import { store, toast, type View } from './state';
 import { parsePlayback } from './traffic/playback';
@@ -15,6 +16,15 @@ let checkSeq = 0;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 /** JSON of the draft as last saved, to detect edits after saving */
 let savedDraftKey: string | null = null;
+
+/** Static viewer without a hosted API: checks, saves, runs and votes are not possible. */
+export const OFFLINE_VIEWER = STATIC_VIEWER && !LIVE_API_BASE;
+
+function offline(what: string): boolean {
+  if (!OFFLINE_VIEWER) return false;
+  toast(`${what} needs the live Python API. ${STATIC_NOTICE}`, 'error', 12000);
+  return true;
+}
 
 function errText(e: unknown): string {
   if (e instanceof ApiError) return e.detail;
@@ -89,7 +99,7 @@ export function scheduleCheck(): void {
 
 async function runCheck(): Promise<void> {
   const seq = ++checkSeq;
-  if (store.get().draft.tools.length === 0) {
+  if (store.get().draft.tools.length === 0 || OFFLINE_VIEWER) {
     store.set({ check: null, checking: false });
     return;
   }
@@ -106,6 +116,7 @@ async function runCheck(): Promise<void> {
 }
 
 export async function savePlan(): Promise<string | null> {
+  if (offline('Saving a plan')) return null;
   try {
     const cur = store.get().plan;
     // the author can update in place; anyone else saves a new plan (fork)
@@ -122,6 +133,7 @@ export async function savePlan(): Promise<string | null> {
 }
 
 export async function runPlan(): Promise<void> {
+  if (offline('Running a plan')) return;
   const s = store.get();
   let id = s.plan?.id ?? null;
   if (!id || isDraftDirty()) id = await savePlan();
@@ -245,6 +257,7 @@ function waitForPlan(id: string): void {
 }
 
 export async function vote(id: string, value: 1 | -1): Promise<number | null> {
+  if (offline('Voting')) return null;
   try {
     return (await api.vote(id, value)).votes;
   } catch (e) {

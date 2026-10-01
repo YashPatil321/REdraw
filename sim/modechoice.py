@@ -15,6 +15,7 @@ bike/walk routes) and caps (carpool adoption cap, teen parking permits).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -33,12 +34,13 @@ class Draws:
     demand_factor: float
     dep_habit_z: np.ndarray
     buffer_u: np.ndarray
-    selfdrive_u: np.ndarray
     bus_u: np.ndarray
     hh_continue_u: np.ndarray
+    balk_u: np.ndarray  # per household: patience in the curb line (fixed trait, see demand.balk_threshold_s)
     jitter_z: np.ndarray
+    hh_jitter_z: np.ndarray  # per household: day jitter shared by the household's school trips
     nocommute_u: np.ndarray
-    gumbel_student: np.ndarray
+    gumbel_student: np.ndarray  # (H, M) per household: siblings decide together
     gumbel_worker: np.ndarray
     rng_external: np.random.Generator
     rng_traj: np.random.Generator
@@ -54,13 +56,14 @@ def make_draws(world: WorldState, seed: int) -> Draws:
         seed=int(seed),
         demand_factor=float(world.knobs["demand_scale"] * (1.0 + s_fac.uniform(-var, var))),
         dep_habit_z=habit.standard_normal(P),
-        buffer_u=habit.random(P),
-        selfdrive_u=habit.random(P),
+        buffer_u=habit.random(H),
         bus_u=habit.random(P),
         hh_continue_u=habit.random(H),
+        balk_u=habit.random(H),
         jitter_z=s_jit.standard_normal(P),
+        hh_jitter_z=s_jit.standard_normal(H),
         nocommute_u=s_noc.random(P),
-        gumbel_student=s_gs.gumbel(size=(P, len(STUDENT_MODES))).astype(np.float32),
+        gumbel_student=s_gs.gumbel(size=(H, len(STUDENT_MODES))).astype(np.float32),
         gumbel_worker=s_gw.gumbel(size=(P, len(WORKER_MODES))).astype(np.float32),
         rng_external=s_ext,
         rng_traj=s_traj,
@@ -158,20 +161,39 @@ class ModeResult:
     shuttle_plans: list[ShuttlePlan]
 
 
-def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = None) -> ModeResult:
+LEVELS = ("es", "ms", "hs")
+
+
+def student_level(grade: np.ndarray, age: np.ndarray) -> np.ndarray:
+    """0 = elementary (K-5), 1 = middle (6-8), 2 = high school (9-12); by grade, else by age."""
+    g = np.where(grade >= 0, grade, age - 5)
+    return np.where(g <= 5, 0, np.where(g <= 8, 1, 2)).astype(np.int64)
+
+
+@dataclass
+class _StudentUtil:
+    si: np.ndarray
+    V: np.ndarray
+    av: np.ndarray
+    tmin: np.ndarray
+    car_s: np.ndarray
+    dist: np.ndarray
+    level: np.ndarray
+    plans: list[ShuttlePlan]
+
+
+def _student_utils(world: WorldState, draws: Draws | None) -> _StudentUtil:
+    """Systematic utilities (incl. calibrated ASC adjustments and tool shifts) and availability for students."""
     p = world.persons
     hh = world.households
     bt = Af("modechoice.beta_time_per_min")
     bc = Af("modechoice.beta_cost_per_usd")
-    bh = Af("modechoice.beta_habit")
     cpk = Af("modechoice.vehicle_cost_per_km")
     circ = Af("sim_engine.circuity_factor")
     walk_c = Af("modechoice.speeds_kph.walk_child")
     walk_a = Af("modechoice.speeds_kph.walk_adult")
     bike_v = Af("modechoice.speeds_kph.bike")
     bus_v = Af("modechoice.speeds_kph.bus_avg")
-
-    # ---------------- students ----------------
     si = np.nonzero(p.school >= 0)[0]
     sch = p.school[si]
     home = hh.home_node[p.hh[si]]
@@ -181,25 +203,25 @@ def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = Non
     car_s = school_car_time_s(world)[sch, home] if len(si) else np.zeros(0)
     car_min = car_s / 60.0
     age = p.age[si]
+    level = student_level(p.grade[si], age)
     walk_speed = np.where(age <= 13, walk_c, walk_a)
     M = len(STUDENT_MODES)
     V = np.zeros((len(si), M))
     av = np.zeros((len(si), M), dtype=bool)
     tmin = np.full((len(si), M), np.nan)
     veh = hh.vehicles[p.hh[si]] >= 1
-    # drive_dropoff
     k = S_IDX["drive_dropoff"]
     V[:, k] = Af("modechoice.asc_student.drive_dropoff") + bt * car_min + bc * cpk * dist
     av[:, k] = veh
-    # carpool
     k = S_IDX["carpool"]
     V[:, k] = Af("modechoice.asc_student.carpool") + bt * car_min + bc * cpk * dist / Af("modechoice.carpool_kids_per_car")
     av[:, k] = True
-    # school bus (existing district busing)
+    # school bus (existing district busing); eligibility is a fixed household-level fact
     k = S_IDX["school_bus"]
     tmin[:, k] = dist / bus_v * 60.0
     V[:, k] = Af("modechoice.asc_student.school_bus") + bt * tmin[:, k]
-    av[:, k] = draws.bus_u[si] < Af("modechoice.school_bus_available_share")
+    bus_u = draws.bus_u[si] if draws is not None else np.ones(len(si))
+    av[:, k] = bus_u < Af("modechoice.school_bus_available_share")
     # shuttle (tool)
     k = S_IDX["school_shuttle"]
     plans = [shuttle_plan(world, sh) for sh in world.shuttles]
@@ -221,49 +243,45 @@ def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = Non
         tmin[:, k] = wk / walk_speed * 60.0 + wait + ride / bus_v * 60.0
         V[:, k] = Af("modechoice.asc_student.school_shuttle") + bt * np.nan_to_num(tmin[:, k])
     av[:, k] = has_sh
-    # walk
     k = S_IDX["walk"]
     tmin[:, k] = dist / walk_speed * 60.0
     V[:, k] = Af("modechoice.asc_student.walk") + bt * tmin[:, k]
     av[:, k] = dist <= _age_limits(age, "max_walk_km_by_age")
-    # bike
     k = S_IDX["bike"]
     tmin[:, k] = dist / bike_v * 60.0
     V[:, k] = Af("modechoice.asc_student.bike") + bt * tmin[:, k]
     av[:, k] = dist <= _age_limits(age, "max_bike_km_by_age")
-    # teen drives self
+    # teen drives self: licensed high schoolers of driving age in a household with a car; how many of
+    # them do it is set by demand.hs_self_drive_share through the calibrated ASC (see calibrate_ascs)
     k = S_IDX["teen_drive"]
     V[:, k] = Af("modechoice.asc_student.self_drive") + bt * car_min + bc * cpk * dist
-    av[:, k] = (
-        (p.grade[si] >= 9) & (age >= int(A("demand.min_driving_age"))) & p.has_license[si] & veh
-        & (draws.selfdrive_u[si] < Af("demand.hs_self_drive_share"))
-    )
+    av[:, k] = (p.grade[si] >= 9) & (age >= int(A("demand.min_driving_age"))) & p.has_license[si] & veh
+    if world.asc_student_adj is not None and len(world.asc_student_adj):
+        V += world.asc_student_adj[level]
     for m, i in S_IDX.items():
         V[:, i] += world.shift_student[m][si]
     _apply_hints(p.mode_hint[si], STUDENT_MODES, V, av)
-    if habit is not None:
-        V[np.arange(len(si)), habit.student_mode] += bh * av[np.arange(len(si)), habit.student_mode]
-    G = draws.gumbel_student[si]
-    smode, U = _choose(V, av, G)
+    return _StudentUtil(si, V, av, tmin, car_s, dist, level, plans)
 
-    # caps: shuttle capacity, teen permits, carpool adoption
-    for j, plan in enumerate(plans):
-        riders = np.nonzero((smode == S_IDX["school_shuttle"]) & (shp == j))[0]
-        cap = int(plan.capacity / max(draws.demand_factor, 1e-6))
-        smode = _enforce_cap(riders, cap, S_IDX["school_shuttle"], U, av, smode)
-    for s_i, school in enumerate(world.schools):
-        if school.permits_cap is None:
-            continue
-        drivers = np.nonzero((smode == S_IDX["teen_drive"]) & (sch == s_i))[0]
-        smode = _enforce_cap(drivers, int(school.permits_cap), S_IDX["teen_drive"], U, av, smode)
-    if habit is not None:
-        smode = _carpool_caps(world, si, smode, habit.student_mode, U, S_IDX["carpool"],
-                              {S_IDX["drive_dropoff"], S_IDX["teen_drive"]}, student=True)
-    sfixed = np.where(np.isin(smode, [S_IDX["drive_dropoff"], S_IDX["carpool"], S_IDX["teen_drive"]]), np.nan,
-                      tmin[np.arange(len(si)), smode])
 
-    # ---------------- workers ----------------
-    wmask = p.is_worker & ~p.wfh & (p.work_node >= 0) & (draws.nocommute_u >= Af("demand.worker_not_commuting_today_share"))
+@dataclass
+class _WorkerUtil:
+    wi: np.ndarray
+    V: np.ndarray
+    av: np.ndarray
+    tmin: np.ndarray
+    dist: np.ndarray
+
+
+def _worker_utils(world: WorldState, wmask: np.ndarray) -> _WorkerUtil:
+    p = world.persons
+    hh = world.households
+    bt = Af("modechoice.beta_time_per_min")
+    bc = Af("modechoice.beta_cost_per_usd")
+    cpk = Af("modechoice.vehicle_cost_per_km")
+    circ = Af("sim_engine.circuity_factor")
+    walk_a = Af("modechoice.speeds_kph.walk_adult")
+    bike_v = Af("modechoice.speeds_kph.bike")
     wi = np.nonzero(wmask)[0]
     whome = hh.home_node[p.hh[wi]]
     hx, hz = hh.x[p.hh[wi]], hh.z[p.hh[wi]]
@@ -295,9 +313,157 @@ def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = Non
     tw[:, k] = wdist / walk_a * 60.0
     VW[:, k] = Af("modechoice.asc_worker.walk") + bt * tw[:, k]
     aw[:, k] = ~ext & (wdist <= Af("modechoice.max_walk_km_by_age.adult"))
+    if world.asc_worker_adj is not None and len(world.asc_worker_adj):
+        VW += world.asc_worker_adj[None, :]
     for m, i in W_IDX.items():
         VW[:, i] += world.shift_worker[m][wi]
     _apply_hints(p.mode_hint[wi], WORKER_MODES, VW, aw)
+    return _WorkerUtil(wi, VW, aw, tw, wdist)
+
+
+def commuting_mask(world: WorldState, draws: Draws | None) -> np.ndarray:
+    p = world.persons
+    m = p.is_worker & ~p.wfh & (p.work_node >= 0)
+    if draws is not None:
+        m &= draws.nocommute_u >= Af("demand.worker_not_commuting_today_share")
+    return m
+
+
+def _logit_probs(V: np.ndarray, av: np.ndarray) -> np.ndarray:
+    Vm = np.where(av, V, -np.inf)
+    mx = Vm.max(axis=1, keepdims=True)
+    mx = np.where(np.isfinite(mx), mx, 0.0)
+    e = np.where(av, np.exp(np.clip(Vm - mx, -50, 0)), 0.0)
+    tot = e.sum(axis=1, keepdims=True)
+    return e / np.maximum(tot, 1e-300)
+
+
+def _calibrate_group(V: np.ndarray, av: np.ndarray, groups: np.ndarray, n_groups: int,
+                     targets: list[tuple[int, np.ndarray, np.ndarray]], max_adj: float,
+                     iters: int = 80) -> tuple[np.ndarray, dict[str, Any]]:
+    """Alternative-specific constant adjustments so expected logit shares hit the targets.
+
+    ``targets`` is a list of ``(mode, target_by_group, direction)``: the share of ``mode`` among
+    the persons of each group for whom it is available and who have a choice (2+ available
+    modes; captive persons do not respond to constants) should equal ``target_by_group``
+    (NaN = no target). Each target owns one constant per group that is added along
+    ``direction`` (an (M,) vector), e.g. drive_dropoff's constant shifts all car modes
+    against the non-car modes, carpool's shifts carpool against driving. Standard iterative
+    ASC calibration (log-odds update); every constant is bounded by ``max_adj`` so an
+    unreachable target (e.g. no alternative is available) is reported, not forced.
+    """
+    M = V.shape[1]
+    theta = np.zeros((len(targets), n_groups))
+    chooser = av.sum(axis=1) >= 2
+    D = np.stack([d for _, _, d in targets]) if targets else np.zeros((0, M))
+
+    def adj() -> np.ndarray:
+        return theta.T @ D  # (n_groups, M)
+
+    for _ in range(iters):
+        worst = 0.0
+        for ti, (m, tgt, _) in enumerate(targets):
+            P = _logit_probs(V + adj()[groups], av)
+            for g in range(n_groups):
+                if not np.isfinite(tgt[g]):
+                    continue
+                sel = (groups == g) & av[:, m] & chooser
+                if not sel.any():
+                    continue
+                share = float(np.clip(P[sel, m].mean(), 1e-6, 1 - 1e-6))
+                t = float(np.clip(tgt[g], 1e-4, 1 - 1e-4))
+                step = np.log(t / (1 - t)) - np.log(share / (1 - share))
+                theta[ti, g] = float(np.clip(theta[ti, g] + step, -max_adj, max_adj))
+                worst = max(worst, abs(share - t))
+        if worst < 1e-3:
+            break
+    A_ = adj()
+    P = _logit_probs(V + A_[groups], av)
+    info: dict[str, Any] = {}
+    for ti, (m, tgt, _) in enumerate(targets):
+        for g in range(n_groups):
+            sel = (groups == g) & av[:, m] & chooser
+            if np.isfinite(tgt[g]) and sel.any():
+                info[f"{g}:{m}"] = {"target": float(tgt[g]), "modeled": round(float(P[sel, m].mean()), 4),
+                                    "constant": round(float(theta[ti, g]), 3), "at_bound": bool(abs(theta[ti, g]) >= max_adj - 1e-9),
+                                    "n_choosers": int(sel.sum())}
+    return A_, info
+
+
+def calibrate_ascs(world: WorldState) -> dict[str, Any]:
+    """Calibrate student (by school level) and worker ASCs to the baseline mode share targets.
+
+    Uses expected logit probabilities (no random draws), so it is deterministic. Called once
+    on the baseline world at load; plan worlds inherit the adjustments (clone), so plan tools
+    shift utilities relative to the calibrated baseline. Targets: ``sim_behavior.*`` and
+    ``demand.hs_self_drive_share`` in assumptions.yaml.
+    """
+    max_adj = Af("sim_behavior.asc_calibration_max_adjust")
+    world.asc_student_adj = np.zeros((len(LEVELS), len(STUDENT_MODES)))
+    world.asc_worker_adj = np.zeros(len(WORKER_MODES))
+    out: dict[str, Any] = {}
+    su = _student_utils(world, make_draws(world, 0))  # bus eligibility is a fixed (seed-independent) draw
+    M = len(STUDENT_MODES)
+    if len(su.si):
+        car = np.zeros(M)
+        car[[S_IDX["drive_dropoff"], S_IDX["carpool"], S_IDX["teen_drive"]]] = 1.0
+        e_cp = np.zeros(M)
+        e_cp[S_IDX["carpool"]] = 1.0
+        e_td = np.zeros(M)
+        e_td[S_IDX["teen_drive"]] = 1.0
+        tg = [
+            (S_IDX["drive_dropoff"], np.array([Af(f"sim_behavior.student_share_targets.{lv}.drive_dropoff") for lv in LEVELS]), car),
+            (S_IDX["carpool"], np.array([Af(f"sim_behavior.student_share_targets.{lv}.carpool") for lv in LEVELS]), e_cp),
+            (S_IDX["teen_drive"], np.array([np.nan, np.nan, Af("demand.hs_self_drive_share")]), e_td),
+        ]
+        adj, info = _calibrate_group(su.V, su.av, su.level, len(LEVELS), tg, max_adj)
+        world.asc_student_adj = adj
+        out["students"] = {f"{LEVELS[int(k.split(':')[0])]}.{STUDENT_MODES[int(k.split(':')[1])]}": v for k, v in info.items()}
+    wu = _worker_utils(world, commuting_mask(world, None))
+    if len(wu.wi):
+        e_wc = np.zeros(len(WORKER_MODES))
+        e_wc[W_IDX["carpool"]] = 1.0
+        tgw = [(W_IDX["carpool"], np.array([Af("sim_behavior.worker_share_targets.carpool")]), e_wc)]
+        adj, info = _calibrate_group(wu.V, wu.av, np.zeros(len(wu.wi), np.int64), 1, tgw, max_adj)
+        world.asc_worker_adj = adj[0]
+        out["workers"] = {WORKER_MODES[int(k.split(':')[1])]: v for k, v in info.items()}
+    return out
+
+
+def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = None) -> ModeResult:
+    p = world.persons
+    bh = Af("modechoice.beta_habit")
+
+    # ---------------- students ----------------
+    su = _student_utils(world, draws)
+    si, V, av, tmin, plans = su.si, su.V, su.av, su.tmin, su.plans
+    sch = p.school[si]
+    shp = world.shuttle_of_person[si]
+    if habit is not None:
+        V[np.arange(len(si)), habit.student_mode] += bh * av[np.arange(len(si)), habit.student_mode]
+    # siblings share the household's taste draws: one decision per household (common random numbers)
+    G = draws.gumbel_student[p.hh[si]]
+    smode, U = _choose(V, av, G)
+
+    # caps: shuttle capacity, teen permits, carpool adoption
+    for j, plan in enumerate(plans):
+        riders = np.nonzero((smode == S_IDX["school_shuttle"]) & (shp == j))[0]
+        cap = int(plan.capacity / max(draws.demand_factor, 1e-6))
+        smode = _enforce_cap(riders, cap, S_IDX["school_shuttle"], U, av, smode)
+    for s_i, school in enumerate(world.schools):
+        if school.permits_cap is None:
+            continue
+        drivers = np.nonzero((smode == S_IDX["teen_drive"]) & (sch == s_i))[0]
+        smode = _enforce_cap(drivers, int(school.permits_cap), S_IDX["teen_drive"], U, av, smode)
+    if habit is not None:
+        smode = _carpool_caps(world, si, smode, habit.student_mode, U, S_IDX["carpool"],
+                              {S_IDX["drive_dropoff"], S_IDX["teen_drive"]}, student=True)
+    sfixed = np.where(np.isin(smode, [S_IDX["drive_dropoff"], S_IDX["carpool"], S_IDX["teen_drive"]]), np.nan,
+                      tmin[np.arange(len(si)), smode])
+
+    # ---------------- workers ----------------
+    wu = _worker_utils(world, commuting_mask(world, draws))
+    wi, VW, aw, tw = wu.wi, wu.V, wu.av, wu.tmin
     habit_w = None
     if habit is not None:
         habit_w = _align_habit(habit.worker_idx, habit.worker_mode, wi)
@@ -309,7 +475,7 @@ def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = Non
         wmode = _carpool_caps(world, wi, wmode, np.where(habit_w >= 0, habit_w, wmode), UW, W_IDX["carpool"],
                               {W_IDX["drive_alone"]}, student=False)
     wfixed = np.where(np.isin(wmode, [W_IDX["drive_alone"], W_IDX["carpool"]]), np.nan, tw[np.arange(len(wi)), wmode])
-    return ModeResult(si, smode, car_s, dist, sfixed, wi, wmode, wdist, wfixed, plans)
+    return ModeResult(si, smode, su.car_s, su.dist, sfixed, wi, wmode, wu.dist, wfixed, plans)
 
 
 def _apply_hints(hints: np.ndarray, modes: tuple[str, ...], V: np.ndarray, av: np.ndarray) -> None:

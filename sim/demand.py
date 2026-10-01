@@ -47,9 +47,9 @@ class Trips:
     kind: np.ndarray
     weight: np.ndarray
     origin: np.ndarray
-    depart: np.ndarray  # planned departure (s); NaN when derived from target arrival
-    target_arr: np.ndarray  # target arrival at the first waypoint (s) or NaN
-    exp_time: np.ndarray  # initial expected time to the first waypoint (s)
+    depart: np.ndarray  # planned departure (s); NaN when derived from waypoint targets
+    wp_target: np.ndarray  # (n, S) target "ready" time at each waypoint (kid in class / bus at school), NaN = none
+    wp_exp: np.ndarray  # (n, S) initial expected time from departure to "ready" at each waypoint (s)
     wp_node: np.ndarray  # (n, S) node idx, -1 pad (entrance waypoints are resolved each iteration)
     wp_school: np.ndarray  # (n, S) school idx for entrance waypoints, -1 otherwise
     wp_queue: np.ndarray  # (n, S) bool: queue at the drop-off curb
@@ -58,7 +58,7 @@ class Trips:
     driver: np.ndarray  # person idx or -1
     role: np.ndarray
     run_id: np.ndarray = field(default_factory=lambda: np.zeros(0, np.int32))  # shuttle run id or -1
-    target_wp: np.ndarray = field(default_factory=lambda: np.zeros(0, np.int32))  # waypoint the target arrival refers to
+    balk_s: np.ndarray = field(default_factory=lambda: np.zeros(0))  # curb-line wait (s) above which the driver balks
 
     @property
     def n(self) -> int:
@@ -86,15 +86,18 @@ class _TripBuilder:
     def __init__(self, S: int) -> None:
         self.S = S
         self.cols: dict[str, list] = {k: [] for k in (
-            "kind", "weight", "origin", "depart", "target_arr", "exp_time", "final", "driver", "role", "run_id", "target_wp")}
+            "kind", "weight", "origin", "depart", "final", "driver", "role", "run_id", "balk_s")}
         self.wp_node: list[np.ndarray] = []
+        self.wp_target: list[np.ndarray] = []
+        self.wp_exp: list[np.ndarray] = []
         self.wp_school: list[np.ndarray] = []
         self.wp_queue: list[np.ndarray] = []
         self.wp_dwell: list[np.ndarray] = []
         self.n = 0
 
-    def add(self, n: int, *, kind, weight, origin, final, depart=np.nan, target_arr=np.nan, exp_time=0.0,
-            driver=-1, role=ROLE_NONE, wp_node=None, wp_school=None, wp_queue=None, wp_dwell=None, run_id=-1, target_wp=0) -> np.ndarray:
+    def add(self, n: int, *, kind, weight, origin, final, depart=np.nan, wp_target=None, wp_exp=None,
+            driver=-1, role=ROLE_NONE, wp_node=None, wp_school=None, wp_queue=None, wp_dwell=None, run_id=-1,
+            balk_s=np.inf) -> np.ndarray:
         if n == 0:
             return np.zeros(0, np.int64)
         def full(v, dt):
@@ -105,12 +108,10 @@ class _TripBuilder:
         self.cols["origin"].append(full(origin, np.int64))
         self.cols["final"].append(full(final, np.int64))
         self.cols["depart"].append(full(depart, np.float64))
-        self.cols["target_arr"].append(full(target_arr, np.float64))
-        self.cols["exp_time"].append(full(exp_time, np.float64))
         self.cols["driver"].append(full(driver, np.int64))
         self.cols["role"].append(full(role, np.int8))
         self.cols["run_id"].append(full(run_id, np.int32))
-        self.cols["target_wp"].append(full(target_wp, np.int32))
+        self.cols["balk_s"].append(full(balk_s, np.float64))
         S = self.S
         def mat(v, fill, dt):
             m = np.full((n, S), fill, dtype=dt)
@@ -124,6 +125,8 @@ class _TripBuilder:
         self.wp_school.append(mat(wp_school, -1, np.int32))
         self.wp_queue.append(mat(wp_queue, False, bool))
         self.wp_dwell.append(mat(wp_dwell, 0.0, np.float32))
+        self.wp_target.append(mat(wp_target, np.nan, np.float64))
+        self.wp_exp.append(mat(wp_exp, 0.0, np.float64))
         idx = np.arange(self.n, self.n + n)
         self.n += n
         return idx
@@ -136,12 +139,33 @@ class _TripBuilder:
             return np.concatenate(lst) if lst else np.zeros((0, S), dt)
         return Trips(
             kind=cat("kind", np.int8), weight=cat("weight", np.float64), origin=cat("origin", np.int64),
-            depart=cat("depart", np.float64), target_arr=cat("target_arr", np.float64), exp_time=cat("exp_time", np.float64),
+            depart=cat("depart", np.float64), wp_target=catm(self.wp_target, np.float64), wp_exp=catm(self.wp_exp, np.float64),
             wp_node=catm(self.wp_node, np.int64), wp_school=catm(self.wp_school, np.int32),
             wp_queue=catm(self.wp_queue, bool), wp_dwell=catm(self.wp_dwell, np.float32),
             final=cat("final", np.int64), driver=cat("driver", np.int64), role=cat("role", np.int8), run_id=cat("run_id", np.int32),
-            target_wp=cat("target_wp", np.int32),
+            balk_s=cat("balk_s", np.float64),
         )
+
+
+def balk_threshold_s(u: np.ndarray) -> np.ndarray:
+    """Curb-line wait (s) above which a household's driver drops off on a nearby street instead.
+
+    Patience differs between households: thresholds follow a symmetric triangular distribution
+    with mode ``sim_engine.dropoff_balk_wait_min`` and half-width ``sim_behavior.balk_threshold_spread``
+    times that value. ``u`` is a fixed per-household uniform draw, identical across seeds and between
+    baseline and plan. A single shared threshold would put every arrival in a saturated line exactly
+    at the margin, so tiny timing changes would flip many drivers between queueing and balking.
+    """
+    mode = Af("sim_engine.dropoff_balk_wait_min")
+    half = mode * Af("sim_behavior.balk_threshold_spread")
+    if half <= 0:
+        return np.full(len(u), mode * 60.0)
+    lo, hi = mode - half, mode + half
+    u = np.clip(np.asarray(u, dtype=np.float64), 0.0, 1.0)
+    c = (mode - lo) / (hi - lo)
+    left = lo + np.sqrt(u * (hi - lo) * (mode - lo))
+    right = hi - np.sqrt((1.0 - u) * (hi - lo) * (hi - mode))
+    return np.where(u < c, left, right) * 60.0
 
 
 def _clip_departure(world: WorldState, t: np.ndarray) -> np.ndarray:
@@ -153,7 +177,7 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
     from sim.modechoice import school_car_time_s
     from sim.world import ALL_MODES
 
-    p, hh, net = world.persons, world.households, world.net
+    p, hh = world.persons, world.households
     P = len(p)
     s = draws.demand_factor
     jit = Af("time_of_day.monte_carlo_departure_jitter_min") * 60.0
@@ -167,6 +191,8 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
     tb = _TripBuilder(S)
     bell = np.array([sc.bell_s for sc in world.schools], dtype=np.float64)
     car_to_school = school_car_time_s(world)
+    walk_curb = Af("schools.walk_from_curb_min") * 60.0
+    balk_hh = balk_threshold_s(draws.balk_u)
 
     person_mode = np.full(P, -1, dtype=np.int16)
     mode_id = {m: i for i, m in enumerate(ALL_MODES)}
@@ -176,17 +202,24 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
     student_target = np.full(P, np.nan)
     worker_depart = np.full(P, np.nan)
 
-    # ---- students: targets ----
+    # ---- students: targets (time the kid should be in class) ----
     si, sm = modes.student_idx, modes.student_mode
     st_school = p.school[si]
-    # day jitter moves the planned arrival but never past the earliest planned buffer, so
-    # lateness comes from traffic and queues, not from the jitter itself
-    target = np.minimum(bell[st_school] - (b_lo + draws.buffer_u[si] * (b_hi - b_lo)) * 60.0 + jit * draws.jitter_z[si],
+    st_hh = p.hh[si]
+    # household habit: how early before the bell (5-20 min, spec 6.2) plus the seed's day jitter, shared
+    # by the household's school trips; the jitter never moves the planned arrival past the earliest buffer,
+    # so lateness comes from traffic and queues, not from the jitter itself
+    target = np.minimum(bell[st_school] - (b_lo + draws.buffer_u[st_hh] * (b_hi - b_lo)) * 60.0 + jit * draws.hh_jitter_z[st_hh],
                         bell[st_school] - b_lo * 60.0)
     student_target[si] = target
     smode_name = np.array(["drive_dropoff", "carpool", "school_bus", "school_shuttle", "walk", "bike", "teen_drive"])[sm]
     person_mode[si] = np.array([mode_id[m] for m in smode_name], dtype=np.int16) if len(si) else person_mode[si]
-    st_home = hh.home_node[p.hh[si]]
+    st_home = hh.home_node[st_hh]
+    # initial expectation of door-to-class time (learned from experienced days inside the assignment)
+    unload = np.array([world.entrances[sc.entrances[0]].unload_s if sc.entrances else 0.0 for sc in world.schools])
+    ent0 = np.array([world.entrances[sc.entrances[0]].node if sc.entrances else 0 for sc in world.schools], dtype=np.int64)
+    exp_curb = car_to_school[st_school, st_home] + unload[st_school] + walk_curb
+    exp_park = car_to_school[st_school, st_home] + walk_curb
 
     # ---- workers: departures ----
     wi, wm = modes.worker_idx, modes.worker_mode
@@ -218,16 +251,16 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
         starts = np.flatnonzero(np.r_[True, h_o[1:] != h_o[:-1]])
         ends = np.r_[starts[1:], len(d_si_o)]
         tgt_by_person = dict(zip(si.tolist(), target.tolist(), strict=True))
-        rows_origin, rows_final, rows_target, rows_exp, rows_driver, rows_role = [], [], [], [], [], []
-        rows_wp, rows_kids = [], []
+        rows_origin, rows_final, rows_driver, rows_role, rows_hh = [], [], [], [], []
+        rows_wp, rows_kids, rows_tgt, rows_exp = [], [], [], []
         for a, b in zip(starts.tolist(), ends.tolist(), strict=True):
             h = int(h_o[a])
             kids = d_si_o[a:b]
             ksch = p.school[kids]
             uniq_s = list(dict.fromkeys(ksch.tolist()))  # already sorted by bell
             chunks = [uniq_s[i : i + max_stops] for i in range(0, len(uniq_s), max_stops)]
+            home = int(hh.home_node[h])
             for ci, chunk in enumerate(chunks):
-                home = int(hh.home_node[h])
                 drv = drv_by_hh.get(h, -1) if ci == 0 else -1
                 if drv >= 0 and draws.hh_continue_u[h] < cont_share:
                     final, role = int(p.work_node[drv]), ROLE_COMMUTE_CHAIN
@@ -235,22 +268,33 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
                 else:
                     final, role = home, ROLE_DROPOFF_HOME
                     drv = adult_by_hh.get(h, -1) if ci == 0 else -1
-                first_kids = kids[ksch == chunk[0]]
+                tg_row, ex_row = [], []
+                t_acc, at = 0.0, home
+                for sc in chunk:
+                    tg_row.append(min(tgt_by_person[int(k)] for k in kids[ksch == sc]))
+                    t_acc += float(car_to_school[sc, at]) + float(unload[sc])
+                    ex_row.append(t_acc + walk_curb)
+                    at = int(ent0[sc])
                 rows_origin.append(home)
+                rows_hh.append(h)
                 rows_final.append(final)
-                rows_target.append(min(tgt_by_person[int(k)] for k in first_kids))
-                rows_exp.append(float(car_to_school[chunk[0], home]))
                 rows_driver.append(drv)
                 rows_role.append(role)
                 rows_wp.append(chunk)
+                rows_tgt.append(tg_row)
+                rows_exp.append(ex_row)
                 rows_kids.append([(int(k), chunk.index(int(p.school[k]))) for k in kids if int(p.school[k]) in chunk])
         n = len(rows_origin)
         wps = np.full((n, S), -1, np.int32)
+        wtg = np.full((n, S), np.nan)
+        wex = np.zeros((n, S))
         for r, chunk in enumerate(rows_wp):
             wps[r, : len(chunk)] = chunk
+            wtg[r, : len(chunk)] = rows_tgt[r]
+            wex[r, : len(chunk)] = rows_exp[r]
         wp_node = np.where(wps >= 0, 0, -1)  # resolved to entrance nodes per iteration
         idx = tb.add(n, kind=KIND_DROPOFF, weight=s, origin=np.array(rows_origin), final=np.array(rows_final),
-                     target_arr=np.array(rows_target), exp_time=np.array(rows_exp), driver=np.array(rows_driver),
+                     wp_target=wtg, wp_exp=wex, driver=np.array(rows_driver), balk_s=balk_hh[np.array(rows_hh)],
                      role=np.array(rows_role), wp_node=wp_node, wp_school=wps, wp_queue=wps >= 0)
         for r, kl in enumerate(rows_kids):
             for k, w in kl:
@@ -274,23 +318,23 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
     # ---- carpool kids ----
     cm = sm == S_IDX["carpool"]
     idx = tb.add(int(cm.sum()), kind=KIND_CARPOOL, weight=s / Af("modechoice.carpool_kids_per_car"),
-                 origin=st_home[cm], final=st_home[cm], target_arr=target[cm],
-                 exp_time=car_to_school[st_school[cm], st_home[cm]], wp_node=np.zeros(int(cm.sum())),
+                 origin=st_home[cm], final=st_home[cm], wp_target=target[cm], balk_s=balk_hh[st_hh[cm]],
+                 wp_exp=exp_curb[cm], wp_node=np.zeros(int(cm.sum())),
                  wp_school=st_school[cm], wp_queue=np.ones(int(cm.sum()), bool))
     kid_trip[si[cm]] = idx
 
     # ---- teen drivers (park, no curb queue) ----
     tm = sm == S_IDX["teen_drive"]
-    idx = tb.add(int(tm.sum()), kind=KIND_CAR, weight=s, origin=st_home[tm], final=-1, target_arr=target[tm],
-                 exp_time=car_to_school[st_school[tm], st_home[tm]], driver=si[tm], role=ROLE_TEEN,
+    idx = tb.add(int(tm.sum()), kind=KIND_CAR, weight=s, origin=st_home[tm], final=-1, wp_target=target[tm],
+                 wp_exp=exp_park[tm], driver=si[tm], role=ROLE_TEEN,
                  wp_node=np.zeros(int(tm.sum())), wp_school=st_school[tm])
     kid_trip[si[tm]] = idx
 
     # ---- district school bus riders (fractional bus vehicles) ----
     bm = sm == S_IDX["school_bus"]
     bus_w = s * Af("sim_engine.bus_pce") / Af("modechoice.shuttle_capacity")
-    idx = tb.add(int(bm.sum()), kind=KIND_BUS, weight=bus_w, origin=st_home[bm], final=-1, target_arr=target[bm],
-                 exp_time=car_to_school[st_school[bm], st_home[bm]], wp_node=np.zeros(int(bm.sum())), wp_school=st_school[bm])
+    idx = tb.add(int(bm.sum()), kind=KIND_BUS, weight=bus_w, origin=st_home[bm], final=-1, wp_target=target[bm],
+                 wp_exp=exp_park[bm], wp_node=np.zeros(int(bm.sum())), wp_school=st_school[bm])
     kid_trip[si[bm]] = idx
 
     # ---- shuttle buses ----
@@ -309,9 +353,12 @@ def build_demand(world: WorldState, draws: Draws, modes: ModeResult) -> Demand:
         wpd[:, : len(rest)] = dwell
         wpn[:, len(rest)] = 0
         wps[:, len(rest)] = sh.school
+        wtg = np.full((n_runs, S), np.nan)
+        wex = np.zeros((n_runs, S))
+        wtg[:, len(rest)] = plan.run_arrivals + walk_curb  # bus at school at the run time, kids then walk in
+        wex[:, len(rest)] = plan.route_km / bus_kph * 3600.0 + walk_curb
         idx = tb.add(n_runs, kind=KIND_SHUTTLE, weight=Af("sim_engine.bus_pce"), origin=nodes[0], final=-1,
-                     target_arr=plan.run_arrivals, exp_time=plan.route_km / bus_kph * 3600.0,
-                     wp_node=wpn, wp_school=wps, wp_dwell=wpd, run_id=np.arange(n_runs), target_wp=len(rest))
+                     wp_target=wtg, wp_exp=wex, wp_node=wpn, wp_school=wps, wp_dwell=wpd, run_id=np.arange(n_runs))
         riders = si[shm & (world.shuttle_of_person[si] == j)]
         if len(riders):
             ro = riders[np.argsort(student_target[riders], kind="stable")]

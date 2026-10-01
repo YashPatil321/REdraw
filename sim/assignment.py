@@ -41,7 +41,7 @@ import numpy as np
 from sim.assumptions import A, Af
 from sim.demand import Trips
 from sim.routing import concat_paths, trees, walk_to_root
-from sim.schools import QueueOutput, run_queue, spill_effects
+from sim.schools import QueueOutput, run_queue, spill_effects, upstream_edges
 from sim.world import WorldState, node_delay
 
 
@@ -97,10 +97,34 @@ class AssignmentBackend(Protocol):
                max_traj: int | None = None) -> AssignmentResult: ...
 
 
+class _StaticTrees:
+    """Hub-to-destination trees on a fixed cost (used instead of the network's cached free-flow
+    trees when events close roads, so the last stretch of a trip also avoids closed edges)."""
+
+    def __init__(self, net: Any, cost: np.ndarray) -> None:
+        self.net = net
+        pc, best = net.graph.best_edges(cost)
+        self.fwd, _ = net.graph.matrices(pc)
+        self.best = best[None, :]
+        self.rows: dict[int, int] = {}
+        self.pred = np.zeros((0, net.n_nodes), np.int32)
+
+    def tree_rows(self, reps: np.ndarray) -> np.ndarray:
+        missing = [int(r) for r in np.unique(reps) if int(r) not in self.rows]
+        if missing:
+            _, pred = trees(self.fwd, np.array(missing))
+            start = len(self.pred)
+            self.pred = np.concatenate([self.pred, pred]) if start else pred
+            for i, r in enumerate(missing):
+                self.rows[r] = start + i
+        return np.array([self.rows[int(r)] for r in reps], dtype=np.int64)
+
+
 class _Router:
     """Shortest-path trees for one MSA iteration (one cost set per routing period)."""
 
-    def __init__(self, world: WorldState, tt: np.ndarray, period_bins: int) -> None:
+    def __init__(self, world: WorldState, tt: np.ndarray, period_bins: int, static: _StaticTrees | None = None) -> None:
+        self.static = static
         self.w = world
         self.net = world.net
         self.g = world.net.graph
@@ -145,6 +169,44 @@ class _Router:
         return np.array([self.rows[(kind, int(r), int(p))] for r, p in zip(roots, periods, strict=True)], dtype=np.int64)
 
 
+class _OwnQueue:
+    """Per-entrance spillback delay that the entrance's own drop-off cars must NOT pay.
+
+    A car heading for an entrance's curb waits in that entrance's point queue; the spillback
+    delay on the upstream edges and the congested approach edge represent the same physical
+    line for everyone else. Drop-off cars bound for entrance q therefore drive q's approach edge
+    at zero-flow time and get q's (MSA-averaged) upstream spill delay subtracted.
+    """
+
+    def __init__(self, world: WorldState, n_bins: int) -> None:
+        net = world.net
+        E = net.n_edges
+        n_ent = len(world.entrances)
+        self.E = E
+        self.app = np.array([e.approach_edge for e in world.entrances], dtype=np.int64)
+        keys = [q * E + upstream_edges(net, int(self.app[q])) for q in range(n_ent)]
+        self.keys = np.sort(np.concatenate(keys)) if keys else np.zeros(0, np.int64)
+        self.spill = np.zeros((n_ent, n_bins))
+
+    def adjust(self, dt: np.ndarray, e: np.ndarray, b: np.ndarray, q: np.ndarray, tt0: np.ndarray) -> np.ndarray:
+        m = q >= 0
+        if not m.any():
+            return dt
+        dt = dt.copy()
+        idx = np.nonzero(m)[0]
+        qq, ee, bb = q[idx], e[idx], b[idx]
+        on_app = ee == self.app[qq]
+        dt[idx[on_app]] = tt0[ee[on_app]]
+        if len(self.keys):
+            key = qq * self.E + ee
+            pos = np.clip(np.searchsorted(self.keys, key), 0, len(self.keys) - 1)
+            hit = (self.keys[pos] == key) & ~on_app
+            if hit.any():
+                h = idx[hit]
+                dt[h] = np.maximum(dt[h] - self.spill[qq[hit], bb[hit]], tt0[ee[hit]])
+        return dt
+
+
 class IncrementalMSABackend:
     name = "builtin_msa"
 
@@ -157,8 +219,6 @@ def _assign(world: WorldState, trips: Trips, traj_rng: np.random.Generator | Non
     t_start = time.perf_counter()
     net, tg = world.net, world.time
     B, E = tg.n_bins, net.n_edges
-    n = trips.n
-    S = trips.wp_node.shape[1] if trips.wp_node.ndim == 2 else 0
     cap = net.capacity_vph * world.cap_factor * world.knobs["capacity_factor"]
     tt0 = net.zero_flow_tt(world.signal_factor)
     period_bins = max(1, int(round(Af("sim_engine.routing_period_min") * 60 / tg.bin_s)))
@@ -172,17 +232,22 @@ def _assign(world: WorldState, trips: Trips, traj_rng: np.random.Generator | Non
         ev.apply(world, capf_ev, extra_ev)
 
     def edge_times(vol: np.ndarray, capf: np.ndarray, extra: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        vc = vol / (cap[None, :] * capf)
-        t = bpr(net.ff_s[None, :], vc) + node_delay(net, vc, world.signal_factor) + extra
+        """capf/extra: queue spillback effects; event closures (capf_ev/extra_ev) are applied on top."""
+        vc = vol / (cap[None, :] * capf * capf_ev)
+        t = bpr(net.ff_s[None, :], vc) + node_delay(net, vc, world.signal_factor) + extra + extra_ev
         return t, vc
 
-    TT, _ = edge_times(np.zeros((B, E)), capf_ev, extra_ev)
-    expected = trips.exp_time.astype(np.float64).copy()
+    TT, _ = edge_times(np.zeros((B, E)), np.ones((B, E)), np.zeros((B, E)))
+    # learned door-to-"ready" times per waypoint (kid in class); people learn from experienced days (MSA)
+    expected = trips.wp_exp.astype(np.float64).copy()
+    closed = (capf_ev < 1.0).any(axis=0) | (extra_ev > 0).any(axis=0)
+    static = _StaticTrees(net, tt0 + extra_ev.max(axis=0)) if closed.any() else None
     V_avg = np.zeros((B, E))
     capf_avg = np.ones((B, E))
     extra_avg = np.zeros((B, E))
     n_ent = len(world.entrances)
     ent_wait = np.zeros(n_ent)
+    own = _OwnQueue(world, B)
     sample = _traj_sample(trips, traj_rng, max_traj)
     history: list[float] = []
     prev_total = None
@@ -191,22 +256,24 @@ def _assign(world: WorldState, trips: Trips, traj_rng: np.random.Generator | Non
     k = 0
     n_dij = 0
     for k in range(1, max_it + 1):
-        router = _Router(world, TT, period_bins)
-        last = _load(world, trips, TT, tt0, expected, ent_wait, router, sample, timings)
+        router = _Router(world, TT, period_bins, static)
+        last = _load(world, trips, TT, tt0, expected, ent_wait, router, sample, timings, own)
         n_dij += router.n_dijkstra
         t0 = time.perf_counter()
         counts_vph = last["counts"].reshape(B, E) * (3600.0 / tg.bin_s)
-        capf_k = capf_ev.copy()
-        extra_k = extra_ev.copy()
+        capf_k = np.ones((B, E))
+        extra_k = np.zeros((B, E))
+        spill_k = np.zeros((n_ent, B))
         for qi, q in enumerate(last["queues"]):
-            spill_effects(net, world.entrances[qi].approach_edge, q.spill_m, capf_k, extra_k)
+            spill_k[qi] = spill_effects(net, world.entrances[qi].approach_edge, q.spill_m, capf_k, extra_k)
+        own.spill += (spill_k - own.spill) / k
         V_avg += (counts_vph - V_avg) / k
         capf_avg += (capf_k - capf_avg) / k
         extra_avg += (extra_k - extra_avg) / k
         TT, _ = edge_times(V_avg, capf_avg, extra_avg)
         exp_new = last["target_experienced"]
         upd = np.isfinite(exp_new)
-        expected[upd] += (exp_new[upd] - expected[upd]) / (k + 1)
+        expected[upd] += (exp_new[upd] - expected[upd]) / k
         for qi, q in enumerate(last["queues"]):
             tot = q.arrivals.sum()
             wmean = float(np.nansum(q.avg_wait_s * q.arrivals) / tot) if tot > 0 else 0.0
@@ -220,6 +287,8 @@ def _assign(world: WorldState, trips: Trips, traj_rng: np.random.Generator | Non
                 break
         prev_total = total
     assert last is not None
+    # reported v/c is against the road's own capacity (incl. queue spillback blocking) but not against
+    # event closures: a closed edge carries ~no volume and reports v/c ~0 instead of a huge ratio
     vc = V_avg / (cap[None, :] * capf_avg)
     speed = net.length_m[None, :] / np.maximum(TT, 1e-3) * 3.6
     timings["total"] = time.perf_counter() - t_start
@@ -253,7 +322,8 @@ def _traj_sample(trips: Trips, rng: np.random.Generator | None, max_traj: int | 
 
 
 def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expected: np.ndarray,
-          ent_wait: np.ndarray, router: _Router, sample: np.ndarray, timings: dict[str, float]) -> dict[str, Any]:
+          ent_wait: np.ndarray, router: _Router, sample: np.ndarray, timings: dict[str, float],
+          own: _OwnQueue | None = None) -> dict[str, Any]:
     """One dynamic network loading of all trips on fixed edge times TT."""
     net, tg = world.net, world.time
     B, E = TT.shape
@@ -264,13 +334,16 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
     ent_au = world.approach_u()
     ent_node = world.entrance_nodes()
     ent_edge = np.array([e.approach_edge for e in ents], dtype=np.int64)
-    ent_school = np.array([e.school for e in ents], dtype=np.int64)
     school_ents = [np.array(s.entrances, dtype=np.int64) for s in world.schools]
     au_skim = net.skim_to(ent_au) if len(ents) else np.zeros((0, net.n_nodes))
 
-    # departures
-    has_target = np.isfinite(trips.target_arr)
-    depart = np.where(has_target, trips.target_arr - expected, trips.depart)
+    # departures: fixed (workers, external) or planned backwards from the waypoint targets with the
+    # learned door-to-class times; a chain leaves early enough for its tightest school
+    has_target = np.isfinite(trips.wp_target).any(axis=1) if S else np.zeros(n, dtype=bool)
+    with np.errstate(invalid="ignore"):
+        slack = np.where(np.isfinite(trips.wp_target), trips.wp_target - expected, np.inf) if S else np.zeros((n, 0))
+    planned = slack.min(axis=1) if S else np.full(n, np.nan)
+    depart = np.where(has_target, planned, trips.depart)
     depart = np.clip(depart, tg.bin_start_s - 3600.0, tg.end_s)
 
     # resolve waypoints (entrance choice for queue stops: min skim time + learned wait)
@@ -313,7 +386,6 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
     wp_wait = np.zeros((n, S))
     wp_balk = np.zeros((n, S), dtype=bool)
     wp_ff = np.zeros((n, S))
-    balk_s = Af("sim_engine.dropoff_balk_wait_min") * 60.0
     informal_s = Af("sim_engine.informal_dropoff_stop_s")
     arrive = np.full(n, np.nan)
     counts = np.zeros(B * E)
@@ -348,8 +420,9 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
             paths, lens = concat_paths([(paths, lens), (app_m, has_app.astype(np.int32))])
         timings["routing"] += time.perf_counter() - t0
         t0 = time.perf_counter()
+        leg_q = np.where(trips.wp_queue[legs, p], wp_entr[legs, p], -1) if p < S else np.full(len(legs), -1)
         t_end, ffsum, vht_p, cnt, tp = _propagate(paths, lens, t_leg, trips.weight[legs], TTf, tt0, E, tg, rs, re_,
-                                                  sample[legs], legs, p)
+                                                  sample[legs], legs, p, leg_q, own)
         counts += cnt
         vht += vht_p
         if tp is not None:
@@ -376,7 +449,7 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
                 allr = np.concatenate([a[0] for a in queue_arr[ei]])
                 allp = np.concatenate([a[1] for a in queue_arr[ei]])
                 allt = np.concatenate([a[2] for a in queue_arr[ei]])
-                qo = run_queue(allt, trips.weight[allr], ents[ei].curb_spots, ents[ei].unload_s, tg, balk_s)
+                qo = run_queue(allt, trips.weight[allr], ents[ei].curb_spots, ents[ei].unload_s, tg, trips.balk_s[allr])
                 cur = (allp == p) & np.isin(allr, rows)
                 rr = allr[cur]
                 bk = qo.balked[cur]
@@ -399,18 +472,19 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
         if queue_arr[ei]:
             allr = np.concatenate([a[0] for a in queue_arr[ei]])
             allt = np.concatenate([a[2] for a in queue_arr[ei]])
-            queues.append(run_queue(allt, trips.weight[allr], ent.curb_spots, ent.unload_s, tg, balk_s))
+            queues.append(run_queue(allt, trips.weight[allr], ent.curb_spots, ent.unload_s, tg, trips.balk_s[allr]))
         else:
             queues.append(run_queue(np.zeros(0), np.zeros(0), ent.curb_spots, ent.unload_s, tg))
 
-    tw = trips.target_wp
-    rows = np.arange(n)
-    tw_c = np.clip(tw, 0, max(S - 1, 0))
-    target_exp = np.full(n, np.nan)
+    # experienced door-to-"ready" time at each targeted waypoint: curb line + unload (or informal stop)
+    # + walk to class; parents plan their departure on it, so the 5-20 min buffer is time in class
+    walk_curb = Af("schools.walk_from_curb_min") * 60.0
+    informal_walk = Af("sim_engine.informal_dropoff_walk_min") * 60.0
+    target_exp = np.full((n, S), np.nan)
     if S:
-        reached = np.isfinite(trips.target_arr) & ok & (tw < n_wp)
-        # experienced driving time to the school (parents budget the 5-20 min early buffer for the curb line)
-        target_exp[reached] = wp_arrive[rows[reached], tw_c[reached]] - depart[reached]
+        reached = np.isfinite(trips.wp_target) & ok[:, None] & np.isfinite(wp_leave)
+        ready = wp_leave + np.where(wp_balk, informal_walk, walk_curb)
+        target_exp[reached] = (ready - depart[:, None])[reached]
     tot_tt = float(np.nansum(trips.weight[ok] * (arrive[ok] - depart[ok])))
     return {
         "counts": counts, "depart": depart, "arrive": arrive, "ok": ok, "wp_arrive": wp_arrive, "wp_leave": wp_leave,
@@ -455,9 +529,14 @@ def _route(router: _Router, orig: np.ndarray, dest: np.ndarray, t_leg: np.ndarra
         hub = rep[dest[idx]]
         rows = router.ensure("D", hub, period[idx])
         p1, l1, ok1 = walk(rows, "D", orig[idx], hub, period[idx], True, router.pred[: router.n_rows], router.best, period[idx])
-        srows = net.static_tree_rows(hub)
-        p2, l2, ok2 = walk_to_root(net._static_pred.ravel(), N, srows, dest[idx], hub, net.graph,
-                                   net.static_best_edges(), np.zeros(len(idx), np.int64), False, max_steps)
+        if router.static is not None:
+            srows = router.static.tree_rows(hub)
+            spred, sbest = router.static.pred, router.static.best
+        else:
+            srows = net.static_tree_rows(hub)
+            spred, sbest = net._static_pred, net.static_best_edges()
+        p2, l2, ok2 = walk_to_root(spred.ravel(), N, srows, dest[idx], hub, net.graph,
+                                   sbest, np.zeros(len(idx), np.int64), False, max_steps)
         pc, lc = concat_paths([(p1, l1), (p2, l2)])
         parts_rows.append(idx)
         parts.append((pc, lc, ok1 & ok2))
@@ -474,7 +553,8 @@ def _route(router: _Router, orig: np.ndarray, dest: np.ndarray, t_leg: np.ndarra
 
 
 def _propagate(paths: np.ndarray, lens: np.ndarray, t_start: np.ndarray, w: np.ndarray, TTf: np.ndarray, tt0: np.ndarray,
-               E: int, tg: Any, rs: float, re_: float, sample: np.ndarray, legs: np.ndarray, p: int):
+               E: int, tg: Any, rs: float, re_: float, sample: np.ndarray, legs: np.ndarray, p: int,
+               leg_q: np.ndarray | None = None, own: _OwnQueue | None = None):
     n = len(lens)
     order = np.argsort(-lens, kind="stable")
     P = paths[order]
@@ -486,6 +566,7 @@ def _propagate(paths: np.ndarray, lens: np.ndarray, t_start: np.ndarray, w: np.n
     w_list: list[np.ndarray] = []
     vht = 0.0
     samp = sample[order]
+    qo = leg_q[order] if (leg_q is not None and own is not None and (leg_q >= 0).any()) else None
     traj_cols: list[tuple[np.ndarray, ...]] = []
     cut = np.searchsorted(-L, -np.arange(1, P.shape[1] + 1), side="right") if P.shape[1] else np.zeros(0, int)
     for j in range(P.shape[1]):
@@ -497,6 +578,8 @@ def _propagate(paths: np.ndarray, lens: np.ndarray, t_start: np.ndarray, w: np.n
         b = np.floor((tj - tg.bin_start_s) / tg.bin_s).astype(np.int64)
         b_c = np.clip(b, 0, tg.n_bins - 1)
         dt = TTf[b_c * E + e]
+        if qo is not None:
+            dt = own.adjust(dt, e, b_c, qo[:k], tt0)
         inwin = (b >= 0) & (b < tg.n_bins)
         keys_list.append((b_c * E + e)[inwin])
         w_list.append(ww[:k][inwin])

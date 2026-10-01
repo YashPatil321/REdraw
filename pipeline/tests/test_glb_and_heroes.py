@@ -10,7 +10,14 @@ import numpy as np
 import pytest
 from shapely.geometry import box
 
-from pipeline.build_buildings import apply_heroes, build_building_tiles, flatten_terrain_for_heroes, hero_transform, load_heroes, prepare_buildings
+from pipeline.build_buildings import (
+    apply_heroes,
+    build_building_tiles,
+    flatten_terrain_for_heroes,
+    hero_transform,
+    load_heroes,
+    prepare_buildings,
+)
 from pipeline.build_terrain import Terrain
 from pipeline.common import Extent, TileGrid
 from pipeline.geo import scene_origin, scene_to_latlon

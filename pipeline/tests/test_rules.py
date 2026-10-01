@@ -8,8 +8,21 @@ import numpy as np
 import pytest
 from shapely.geometry import Polygon, box
 
-from pipeline.build_buildings import building_height, building_mesh, building_type, parse_height_m, rectangularity, use_hip_roof
-from pipeline.build_population import allocate_households, bearing_deg, exit_for_bearing, grades_from_name, household_capacity
+from pipeline.build_buildings import (
+    building_height,
+    building_mesh,
+    building_type,
+    parse_height_m,
+    rectangularity,
+    use_hip_roof,
+)
+from pipeline.build_population import (
+    allocate_households,
+    bearing_deg,
+    exit_for_bearing,
+    grades_from_name,
+    household_capacity,
+)
 from pipeline.build_roads import (
     capacity_vph,
     densify,

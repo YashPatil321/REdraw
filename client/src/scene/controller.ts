@@ -21,6 +21,8 @@ import { applyMapClick, setParam, type MapType } from '../ui/formgen';
 import { ArterialLabels, BASELINE_COLOR, EdgeHighlight, LocationPin, PLAN_COLOR, PlanOverlay, SchoolMarkers } from './markers';
 import { QUALITY, initialQuality, saveQuality, type Quality } from './quality';
 import { SkySystem } from './sky';
+import { RoadDetails } from './roadDetails';
+import { loadStaticProps, loadVehicleProps, type StaticProps } from './props';
 import { Viewer } from './viewer';
 import { World } from './world';
 
@@ -58,6 +60,8 @@ export class SceneController {
   private photo: PhotorealManager | null = null;
   private photoLoading: Promise<void> | null = null;
   private tileSource: TileSource | null = null;
+  private roadDetails: RoadDetails | null = null;
+  private staticProps: StaticProps | null = null;
 
   constructor(container: HTMLElement) {
     this.viewer = new Viewer(container);
@@ -98,6 +102,8 @@ export class SceneController {
     this.viewer.setQuality(q);
     this.sky?.configureShadows(qs.shadows, qs.shadowMapSize);
     this.world.applyQuality(qs);
+    this.staticProps?.setDrawDistance(qs.propDrawDistance);
+    this.staticProps?.setShadows(qs.shadows);
     this.baseline?.setCastShadows(qs.carShadows && qs.shadows);
     this.plan?.setCastShadows(qs.carShadows && qs.shadows);
     this.lastQualityChange = performance.now();
@@ -240,6 +246,8 @@ export class SceneController {
     const pr = want && !!this.photo;
     // our meshes stay loaded (and raycastable for building picking) but are not drawn
     this.world.group.visible = !pr;
+    if (this.roadDetails) this.roadDetails.group.visible = !pr;
+    if (this.staticProps) this.staticProps.group.visible = !pr;
     this.viewer.directRender = pr;
     const qs = QUALITY[s.quality];
     this.viewer.renderer.shadowMap.enabled = qs.shadows && !pr;
@@ -284,6 +292,8 @@ export class SceneController {
       toast(`World assets unavailable: ${(e as Error).message}`, 'error', 9000);
     }
     this.worldLoaded = true;
+    this.buildRoadDetails();
+    void this.loadProps();
     // re-place school pins on the terrain if their y is missing
     this.openingShot();
   }
@@ -316,6 +326,49 @@ export class SceneController {
     if (s.planPlayback) this.setPlayback('plan', s.planPlayback);
     this.planOverlay.update(s.draft.tools, s.tools, s.selectedTool);
     this.photo?.setNetwork(net);
+    this.buildRoadDetails();
+  }
+
+  /** Prop library (blender/): vehicle models for traffic, trees and lamps for the open-data world. */
+  private async loadProps(): Promise<void> {
+    const meta = this.meta!;
+    const fetchAsset = (rel: string): Promise<ArrayBuffer> => api.getAsset(meta, rel);
+    try {
+      const v = await loadVehicleProps(fetchAsset);
+      if (v) {
+        this.vehicleGeoms = v;
+        const s = store.get();
+        if (s.baselinePlayback) this.setPlayback('baseline', s.baselinePlayback);
+        if (s.planPlayback) this.setPlayback('plan', s.planPlayback);
+      }
+    } catch (e) {
+      console.warn('vehicle props unavailable', e);
+    }
+    try {
+      const sp = await loadStaticProps(fetchAsset, (x, z) => this.world.fastHeightAt(x, z));
+      if (sp) {
+        this.staticProps = sp;
+        const qs = QUALITY[store.get().quality];
+        sp.setDrawDistance(qs.propDrawDistance);
+        sp.setShadows(qs.shadows);
+        sp.group.visible = !this.photoreal;
+        this.viewer.scene.add(sp.group);
+      }
+    } catch (e) {
+      console.warn('static props unavailable', e);
+    }
+  }
+
+  /** Lane markings + sidewalks (open-data mode) once both the terrain and the network are in. */
+  private buildRoadDetails(): void {
+    if (!this.net || !this.worldLoaded || this.roadDetails) return;
+    try {
+      this.roadDetails = new RoadDetails(this.net, (x, z) => this.world.fastHeightAt(x, z));
+      this.roadDetails.group.visible = !this.photoreal;
+      this.viewer.scene.add(this.roadDetails.group);
+    } catch (e) {
+      console.warn('road details unavailable', e);
+    }
   }
 
   private groundHeight(x: number, z: number): number {
@@ -436,7 +489,11 @@ export class SceneController {
       if (this.sky) this.photo.tiles.setDim(this.sky.dim);
     }
     this.autoQuality(now);
-    const scale = THREE.MathUtils.clamp(dist / 650, 1, 9);
+    if (this.staticProps?.group.visible) this.staticProps.update(this.viewer.camera.position);
+    const scale = this.viewer.walking ? 1 : THREE.MathUtils.clamp(dist / 650, 1, 9);
+    const colorMode = this.viewer.walking || dist < 320 ? 'paint' : 'speed';
+    this.baseline?.setColorMode(colorMode);
+    this.plan?.setColorMode(colorMode);
     const h = this.viewer.canvas.clientHeight;
     for (const l of [this.baseline, this.plan]) {
       if (!l || !this.trafficVisible(s)) continue;
@@ -455,6 +512,7 @@ export class SceneController {
   // ---- picking
 
   private async click(e: PointerEvent): Promise<void> {
+    this.viewer.camera.updateMatrixWorld();
     this.raycaster.setFromCamera(this.viewer.ndc(e), this.viewer.camera);
     const s = store.get();
     if (s.mapPick) {
@@ -546,7 +604,9 @@ export class SceneController {
     let px = x;
     let pz = z;
     let heading = this.viewer.walking ? this.viewer.walk.heading : 0;
-    const hit = this.net?.nearestEdge(x, z, 250);
+    // stand on a public street (not a campus driveway or freeway), like a pedestrian would
+    const street = (e: number): boolean => /^(residential|tertiary|secondary|primary|unclassified|living_street)/.test(this.net!.edges[e]?.highway ?? '');
+    const hit = this.net?.nearestEdge(x, z, 400, street) ?? this.net?.nearestEdge(x, z, 250);
     if (hit) {
       const e = this.net!.pointAt(hit.edge, hit.frac, { x: 0, y: 0, z: 0, dx: 1, dz: 0 });
       const lanes = Math.max(1, this.net!.edges[hit.edge]?.lanes ?? 1);
@@ -632,6 +692,8 @@ export class SceneController {
     this.pin.dispose();
     this.residentPin.dispose();
     this.overlayGeom?.dispose();
+    this.roadDetails?.dispose();
+    this.staticProps?.dispose();
     this.sky?.dispose();
     this.world.dispose();
     this.viewer.dispose();

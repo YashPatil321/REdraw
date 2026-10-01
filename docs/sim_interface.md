@@ -67,7 +67,7 @@ class RunResult(BaseModel):
 Residents use `person_deltas` to compute approval deterministically
 (`residents/reactions.py`); the API inserts the approval metric into the
 report (`metrics[id="resident_approval_pct"]`) and the winners/losers counts
-come from the sim (any person whose total minutes change by >= 3).
+come from the sim: a person counts as a winner (loser) when the median across seeds of their total-minute change is <= -3 (>= +3); p10/p90 count people who win (lose) on at least 90% / 10% of seeds.
 
 ## Calibration status (in `world_summary()["calibration"]`)
 

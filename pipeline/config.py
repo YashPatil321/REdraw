@@ -65,3 +65,16 @@ def assumption(path: str) -> Any:
     if isinstance(node, dict) and "value" in node:
         return node["value"]
     raise KeyError(f"assumptions.yaml '{path}' is not a leaf with a 'value' field")
+
+
+def assumption_range(path: str) -> tuple[Any, Any]:
+    """The `.range` [low, high] of a dotted assumptions.yaml leaf (KeyError if missing/null)."""
+    node: Any = assumptions()
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            raise KeyError(f"assumptions.yaml is missing '{path}' (failed at '{part}')")
+        node = node[part]
+    rng = node.get("range") if isinstance(node, dict) else None
+    if not isinstance(rng, list) or len(rng) != 2:
+        raise KeyError(f"assumptions.yaml '{path}' has no [low, high] range")
+    return rng[0], rng[1]

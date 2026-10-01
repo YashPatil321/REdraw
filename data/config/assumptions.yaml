@@ -262,3 +262,54 @@ sim_engine:
   dropoff_balk_wait_min: {value: 6.0, unit: min, range: [3.0, 12.0], source: "a parent who reaches the drop-off line when the expected wait exceeds this drops the kid off on a nearby street instead (balking); bounds the formal queue; guess", verified: false}
   informal_dropoff_stop_s: {value: 30.0, unit: s, range: [15.0, 60.0], source: "stop time for an informal (street) drop-off; guess", verified: false}
   informal_dropoff_walk_min: {value: 4.0, unit: min, range: [2.0, 8.0], source: "extra walk for a kid dropped off on a nearby street instead of the curb; guess", verified: false}
+
+# ---------------------------------------------------------------------------
+# Added by the pipeline for the real build from AWS open-data mirrors (Overture
+# Maps, 3DEP lidar, Sentinel-2) when Census ACS/LODES are unreachable. Append-only.
+footprint_population:
+  # Used only by `build_all.py --population-source footprints` (explicit, labeled fallback).
+  households_per_house: {value: 1, unit: households, range: [1, 1], source: "one household per detached single family house footprint (build rule)", verified: false}
+  townhouse_unit_footprint_m2: {value: 110.0, unit: m2, range: [80.0, 160.0], source: "OSM building=terrace rows hold several townhouse units; footprint area per unit; guess", verified: false}
+  house_min_area_m2: {value: 60.0, unit: m2, range: [40.0, 100.0], source: "generic building=yes footprints smaller than this (detached garages, casitas, sheds, pool houses) are not counted as homes; guess from 4S Ranch / Rancho Penasquitos lot layouts", verified: false}
+  commercial_landuse_classes: {value: [commercial, retail, industrial, works], unit: list, range: null, source: "generic building=yes footprints inside these OSM/Overture land_use polygons are commercial (jobs), not homes", verified: true}
+  nonhome_landuse_classes: {value: [golf_course, cemetery, park], unit: list, range: null, source: "generic building=yes footprints inside these OSM/Overture land_use polygons are 'other' (clubhouses, restrooms), not homes", verified: true}
+  internal_jobs_in_region_only: {value: true, unit: bool, range: null, source: "internal job sites are commercial/school buildings inside the region bbox (the terrain buffer is scenery only)", verified: true}
+  estate_house_max_area_m2: {value: 1000.0, unit: m2, range: [700.0, 1400.0], source: "generic building=yes footprints between pipeline.house_max_area_m2 and this size count as (estate) houses when their neighbourhood is residential (Santaluz, Crosby, Fairbanks estates have 450-1000 m2 homes); guess", verified: false}
+  estate_context_radius_m: {value: 120.0, unit: m, range: [80.0, 200.0], source: "neighbourhood radius for the estate-house context test; geometric heuristic", verified: false}
+  estate_context_min_neighbours: {value: 4, unit: buildings, range: [3, 8], source: "at least this many house-sized neighbours (house_min_area_m2..estate_house_max_area_m2) within the radius; heuristic", verified: false}
+  estate_context_min_share: {value: 0.8, unit: share, range: [0.6, 0.95], source: "and at least this share of all neighbours house-sized (commercial areas mix in big buildings); heuristic", verified: false}
+
+signal_inference:
+  # Overture transportation has no traffic signal data. When the drive graph carries no
+  # highway=traffic_signals nodes, signals are inferred with these rules (build_roads.infer_signals).
+  enabled_when_source_has_none: {value: true, unit: bool, range: null, source: "Overture Maps transportation has no traffic_signals; infer instead of modeling zero signals", verified: true}
+  road_classes: {value: [trunk, primary, secondary, tertiary], unit: list, range: null, source: "assumption: in this suburban area a junction of two or more distinct roads of class tertiary or higher is signalized (many tertiary x tertiary junctions are really all-way stops); verify against City of San Diego / Poway signal inventories", verified: false}
+  min_distinct_roads: {value: 2, unit: roads, range: [2, 3], source: "distinct roads (by name, else ref, else way id) of road_classes meeting at the node", verified: false}
+  ramp_classes: {value: [motorway_link, trunk_link], unit: list, range: null, source: "freeway on/off ramps", verified: true}
+  ramp_arterial_classes: {value: [trunk, primary, secondary, tertiary], unit: list, range: null, source: "assumption: freeway ramp terminals on I 15 / SR 56 diamond interchanges are signalized where the ramp meets an arterial", verified: false}
+
+school_entrance:
+  campus_search_m: {value: 60.0, unit: m, range: [30.0, 120.0], source: "drive nodes within this distance of a campus polygon count as candidate drop-off nodes (geometric heuristic; entrances in schools.yaml are unverified placeholders)", verified: false}
+  main_road_search_m: {value: 150.0, unit: m, range: [80.0, 300.0], source: "the highest-class road within this distance of the campus is the 'main road' whose side of the campus gets the drop-off entrance (heuristic)", verified: false}
+
+# ---------------------------------------------------------------------------
+# Added by the sim engine (sim/), second block. Append-only. Baseline mode
+# share targets: the sim calibrates alternative-specific constants (ASC) so the
+# expected baseline logit shares match these (sim/modechoice.calibrate_ascs);
+# the ASCs under `modechoice` are the starting values.
+sim_behavior:
+  asc_calibration_max_adjust: {value: 4.0, unit: utils, range: null, source: "bound on calibrated ASC adjustments (numerical sanity bound; a target that needs more is reported, not forced)", verified: true}
+  student_share_targets:
+    # share of students (among those for whom the mode is available) travelling by each car mode
+    es:
+      drive_dropoff: {value: 0.60, unit: share, range: [0.45, 0.75], source: "NHTS 2017 school travel: roughly half of K-5 trips by family vehicle nationally (a third by bus); very limited PUSD busing pushes 4S Ranch up; guess", verified: false}
+      carpool: {value: 0.08, unit: share, range: [0.04, 0.15], source: "kids riding with another household; guess consistent with modechoice.asc_student.carpool note (~10 percent)", verified: false}
+    ms:
+      drive_dropoff: {value: 0.50, unit: share, range: [0.35, 0.65], source: "NHTS 2017: family vehicle share falls with age as walking/biking rise; little busing in PUSD; guess", verified: false}
+      carpool: {value: 0.08, unit: share, range: [0.04, 0.15], source: guess, verified: false}
+    hs:
+      drive_dropoff: {value: 0.40, unit: share, range: [0.30, 0.55], source: "NHTS 2017: about 40 percent of 14-18 year olds' school trips by parent-driven car, ~15 percent drive themselves; guess", verified: false}
+      carpool: {value: 0.06, unit: share, range: [0.03, 0.12], source: guess, verified: false}
+  worker_share_targets:
+    carpool: {value: 0.08, unit: share, range: [0.05, 0.11], source: "ACS 2022 S0801 San Diego County: ~8 percent of commuters carpool (cf. modechoice.asc_worker.carpool note)", verified: false}
+  balk_threshold_spread: {value: 0.5, unit: ratio, range: [0.2, 0.8], source: "households differ in patience: curb-line balk thresholds are triangular with mode sim_engine.dropoff_balk_wait_min and half-width this share of it (e.g. 3-9 min); guess", verified: false}

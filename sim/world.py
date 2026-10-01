@@ -404,6 +404,10 @@ class WorldState:
     plan_edges: dict[str, list[int]] = field(default_factory=dict)
     knobs: dict[str, float] = field(default_factory=dict)
     demand_overrides: list[Any] = field(default_factory=list)
+    # calibrated ASC adjustments (sim.modechoice.calibrate_ascs); fixed from the baseline, shared by clones
+    asc_student_adj: np.ndarray | None = None
+    asc_worker_adj: np.ndarray | None = None
+    asc_calibration: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         P, E = len(self.persons), self.net.n_edges
@@ -652,6 +656,9 @@ def load_world(data_dir: Path | str | None = None) -> WorldState:
         schools=schools, entrances=entrances, exits=exits, data_hash=data_hash(data_dir), schools_raw=schools_raw,
     )
     world.knobs.update(load_calibration_knobs(data_dir))
+    from sim.modechoice import calibrate_ascs
+
+    world.asc_calibration = calibrate_ascs(world)
     return world
 
 

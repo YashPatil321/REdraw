@@ -9,7 +9,10 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:viewer": "tsc --noEmit && vite build --mode viewer && node scripts/snapshot-api.mjs",
+    "snapshot": "node scripts/snapshot-api.mjs",
+    "dev-tiles": "node scripts/make-dev-tileset.mjs"
   },
   "dependencies": {
     "3d-tiles-renderer": "^0.5.3",

@@ -31,7 +31,7 @@ from sim.engine import SeedResult, peak_overlap, peak_window, run_seed
 from sim.world import ALL_MODES, MODE_LABELS, WorldState
 
 log = logging.getLogger("sim.report")
-SIM_VERSION = "sim-1.0"
+SIM_VERSION = "sim-1.2"
 
 METRIC_DEFS: list[dict[str, str]] = [
     {"id": "avg_commute_min", "label": "Average commute time, all workers", "unit": "min", "better": "lower"},
@@ -166,12 +166,50 @@ def _mode_pct(r: SeedResult) -> dict[str, float]:
     return {m: (100.0 * r.mode_counts.get(m, 0.0) / tot if tot else 0.0) for m in ALL_MODES}
 
 
-def _winners_losers(base: SeedResult, plan: SeedResult) -> tuple[int, int]:
+def _person_total_deltas(base: list[SeedResult], plan: list[SeedResult]) -> np.ndarray:
+    """(n_seeds, P) per-person change in total minutes (plan - baseline, same seed); NaN = no trip in either."""
+    out = []
+    for b, p in zip(base, plan, strict=True):
+        bt, pt = b.total_min.astype(np.float64), p.total_min.astype(np.float64)
+        either = np.isfinite(bt) | np.isfinite(pt)
+        out.append(np.where(either, np.nan_to_num(pt) - np.nan_to_num(bt), np.nan))
+    return np.stack(out) if out else np.zeros((0, 0))
+
+
+def winners_losers(base: list[SeedResult], plan: list[SeedResult]) -> tuple[dict[str, float], dict[str, float]]:
+    """Residents better / worse off by >= threshold minutes, from each person's MEDIAN change across seeds.
+
+    Per-seed counts would label day-to-day noise (a different spot in the curb line, a balk on one
+    day) as winners and losers; the per-person median keeps only systematic changes. Range:
+    ``p10`` counts people who win (lose) on at least 90 percent of the simulated days (their own
+    p90 change is still past the threshold), ``p90`` those who win (lose) on at least 10 percent.
+    """
     thr = Af("report.winner_loser_threshold_min")
-    b, p = base.total_min.astype(np.float64), plan.total_min.astype(np.float64)
-    either = np.isfinite(b) | np.isfinite(p)
-    d = np.nan_to_num(p) - np.nan_to_num(b)
-    return int(np.sum(either & (d <= -thr))), int(np.sum(either & (d >= thr)))
+    d = _person_total_deltas(base, plan)
+    if d.size == 0:
+        return _const(0), _const(0)
+    lo_q, hi_q = Af("report.percentile_low"), Af("report.percentile_high")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        med = np.nanmedian(d, axis=0)
+        plo = np.nanpercentile(d, lo_q, axis=0)
+        phi = np.nanpercentile(d, hi_q, axis=0)
+    ok = np.isfinite(med)
+
+    def n(mask: np.ndarray) -> float:
+        return float(np.sum(ok & mask))
+
+    winners = {"median": n(med <= -thr), "p10": n(phi <= -thr), "p90": n(plo <= -thr)}
+    losers = {"median": n(med >= thr), "p10": n(plo >= thr), "p90": n(phi >= thr)}
+    return winners, losers
+
+
+def baseline_peak_window(world: WorldState, base: list[SeedResult]) -> tuple[int, int]:
+    """The commute peak hour, fixed from the baseline: the 60 minutes with the most commuter vehicles
+    on the road, summed over all baseline seeds. Baseline and plan overlaps are both measured in it,
+    so moving drop-offs out of the morning peak lowers the plan's overlap."""
+    hist = np.sum(np.stack([r.commute_onroad_hist for r in base]), axis=0)
+    return peak_window(hist, world.time.bin_s)
 
 
 def _school_block(world: WorldState, results: list[SeedResult]) -> list[dict[str, Any]]:
@@ -207,9 +245,8 @@ def baseline_summary(world: WorldState, base: list[SeedResult], calibration: dic
     for mid in ("cost_upfront_usd", "cost_per_year_usd"):
         metrics.append({**_DEF[mid], "value": _const(0.0)})
     pct = [_mode_pct(r) for r in base]
-    windows = [peak_window(r.commute_onroad_hist, world.time.bin_s) for r in base]
-    overlap = [peak_overlap(r.dropoff_arr_hist, w) for r, w in zip(base, windows, strict=True)]
-    w0 = windows[0]
+    w0 = baseline_peak_window(world, base)
+    overlap = [peak_overlap(r.dropoff_arr_hist, w0) for r in base]
     return {
         "metrics": metrics,
         "per_school": _school_block(world, base),
@@ -234,9 +271,7 @@ def build_report(base_world: WorldState, plan_world: WorldState, base: list[Seed
     cu, cy = float(check.cost_upfront_usd), float(check.cost_per_year_usd)
     metrics.append({**_DEF["cost_upfront_usd"], "baseline": _const(0), "plan": _const(cu), "delta": _const(cu)})
     metrics.append({**_DEF["cost_per_year_usd"], "baseline": _const(0), "plan": _const(cy), "delta": _const(cy)})
-    wl = [_winners_losers(b, p) for b, p in zip(base, plan, strict=True)]
-    winners = stats([w for w, _ in wl])
-    losers = stats([lo for _, lo in wl])
+    winners, losers = winners_losers(base, plan)
     metrics.append({**_DEF["winners"], "baseline": _const(0), "plan": winners, "delta": winners})
     metrics.append({**_DEF["losers"], "baseline": _const(0), "plan": losers, "delta": losers})
 
@@ -280,9 +315,9 @@ def build_report(base_world: WorldState, plan_world: WorldState, base: list[Seed
                      "bin_s": int(plan_world.time.bin_start_s + b * plan_world.time.bin_s),
                      "x": round(float(net.mid_x[e]), 1), "z": round(float(net.mid_z[e]), 1)})
 
-    windows = [peak_window(r.commute_onroad_hist, base_world.time.bin_s) for r in base]
-    ov_b = [peak_overlap(r.dropoff_arr_hist, w) for r, w in zip(base, windows, strict=True)]
-    ov_p = [peak_overlap(r.dropoff_arr_hist, w) for r, w in zip(plan, windows, strict=True)]
+    win = baseline_peak_window(base_world, base)
+    ov_b = [peak_overlap(r.dropoff_arr_hist, win) for r in base]
+    ov_p = [peak_overlap(r.dropoff_arr_hist, win) for r in plan]
     tg = base_world.time
     return {
         "plan_id": plan_id, "seeds": n, "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
@@ -299,9 +334,9 @@ def build_report(base_world: WorldState, plan_world: WorldState, base: list[Seed
         "side_effects": side,
         "peak_overlap": {"baseline": round(float(np.median(ov_b)), 4), "plan": round(float(np.median(ov_p)), 4),
                          "delta": stats(np.array(ov_p) - np.array(ov_b)),
-                         "peak_start_s": tg.bin_start_s + windows[0][0] * tg.bin_s,
-                         "peak_end_s": tg.bin_start_s + windows[0][1] * tg.bin_s,
-                         "note": "share of school drop-off arrivals in the commute peak hour"},
+                         "peak_start_s": tg.bin_start_s + win[0] * tg.bin_s,
+                         "peak_end_s": tg.bin_start_s + win[1] * tg.bin_s,
+                         "note": "share of school drop-off arrivals in the commute peak hour (fixed baseline peak hour)"},
         "unverified_inputs": unverified,
         "llm_estimated_tools": list(check.llm_estimated_tools),
         "calibration": {"status": calibration.get("status", "uncalibrated"), "median_error_pct": calibration.get("median_error_pct")},

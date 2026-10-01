@@ -34,6 +34,12 @@ export class SkySystem {
     private timeZone: string,
   ) {
     this.sky.scale.setScalar(100000);
+    // the analytic sun disc reaches thousands in HDR: clamp it so half-float
+    // targets do not overflow (black sun) and bloom stays a glow, not a whiteout
+    this.sky.material.fragmentShader = this.sky.material.fragmentShader.replace(
+      'gl_FragColor = vec4( texColor, 1.0 );',
+      'gl_FragColor = vec4( min( texColor, vec3( 6.0 ) ), 1.0 );',
+    );
     const u = this.sky.material.uniforms;
     u['turbidity']!.value = 6.5;
     u['rayleigh']!.value = 1.4;

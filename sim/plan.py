@@ -127,12 +127,17 @@ def _segments(world: WorldState) -> _Segments:
                 ends = (start + n_pts - 1)[n_pts > 0]
                 last_of_edge[ends] = True
                 seg = idx[~last_of_edge & (idx < len(pts) - 1)]
-                x0s.append(pts[seg, 0]); z0s.append(pts[seg, 2]); x1s.append(pts[seg + 1, 0]); z1s.append(pts[seg + 1, 2])
+                x0s.append(pts[seg, 0])
+                z0s.append(pts[seg, 2])
+                x1s.append(pts[seg + 1, 0])
+                z1s.append(pts[seg + 1, 2])
                 es.append(edge_of_pt[seg])
         missing = np.setdiff1d(np.arange(net.n_edges), np.concatenate(es) if es else np.zeros(0, int))
         if len(missing):
-            x0s.append(net.x[net.eu[missing]]); z0s.append(net.z[net.eu[missing]])
-            x1s.append(net.x[net.ev[missing]]); z1s.append(net.z[net.ev[missing]])
+            x0s.append(net.x[net.eu[missing]])
+            z0s.append(net.z[net.eu[missing]])
+            x1s.append(net.x[net.ev[missing]])
+            z1s.append(net.z[net.ev[missing]])
             es.append(missing)
         _SEG_CACHE[key] = _Segments(*(np.concatenate(a).astype(np.float64) for a in (x0s, z0s, x1s, z1s)), np.concatenate(es))
     return _SEG_CACHE[key]

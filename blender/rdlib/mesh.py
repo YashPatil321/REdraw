@@ -28,6 +28,12 @@ class Part:
     V: np.ndarray = field(default_factory=lambda: np.zeros((0, 3)))
     F: list[list[int]] = field(default_factory=list)
     M: list[str] = field(default_factory=list)
+    # Optional per-face UVs (one (u, v) per face corner) or None (palette / flat material).
+    U: list[list[tuple[float, float]] | None] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if len(self.U) < len(self.F):
+            self.U = list(self.U) + [None] * (len(self.F) - len(self.U))
 
     # ---- composition ------------------------------------------------------
     def add(self, other: Part) -> Part:
@@ -35,13 +41,14 @@ class Part:
         self.V = np.vstack([self.V, other.V]) if len(self.V) else other.V.copy()
         self.F.extend([[i + off for i in f] for f in other.F])
         self.M.extend(other.M)
+        self.U.extend(other.U if len(other.U) == len(other.F) else [None] * len(other.F))
         return self
 
     def __iadd__(self, other: Part) -> Part:
         return self.add(other)
 
     def copy(self) -> Part:
-        return Part(self.V.copy(), [list(f) for f in self.F], list(self.M))
+        return Part(self.V.copy(), [list(f) for f in self.F], list(self.M), [None if u is None else list(u) for u in self.U])
 
     # ---- transforms (return new parts) ---------------------------------------
     def moved(self, x: float = 0.0, y: float = 0.0, z: float = 0.0) -> Part:
@@ -54,6 +61,7 @@ class Part:
         p.V = p.V * np.array([sx, sx if sy is None else sy, sx if sz is None else sz])
         if (sx * (sx if sy is None else sy) * (sx if sz is None else sz)) < 0:
             p.F = [list(reversed(f)) for f in p.F]
+            p.U = [None if u is None else list(reversed(u)) for u in p.U]
         return p
 
     def rotated_z(self, deg: float) -> Part:

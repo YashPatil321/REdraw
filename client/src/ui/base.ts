@@ -181,7 +181,8 @@ export function fmtUsd(v: number): string {
 
 export function fmtNum(v: number | null | undefined, unit = ''): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return 'n/a';
-  if (unit === 'USD') return fmtUsd(v);
+  if (unit.startsWith('USD')) return fmtUsd(v);
+  if (Number.isInteger(v)) return v.toLocaleString('en-US');
   const a = Math.abs(v);
   const s = a >= 1000 ? Math.round(v).toLocaleString('en-US') : a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2);
   return s;

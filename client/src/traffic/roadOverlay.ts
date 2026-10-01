@@ -252,19 +252,23 @@ export class RoadOverlay {
     this.vcTex.needsUpdate = true;
   }
 
-  /** 'open': opaque ribbons over our roads; 'photoreal': thin, translucent, glowing, pulled toward the camera. */
+  /**
+   * Both base maps get thin, translucent, glowing ribbons that let the road
+   * underneath show through. 'photoreal' additionally skips tone mapping (exact
+   * legend colors over the photo) and pulls ribbons toward the camera so the
+   * photo mesh (which can sit a little above our DEM) never swallows them.
+   */
   setStyle(style: 'open' | 'photoreal'): void {
     const u = this.material.uniforms;
     const pr = style === 'photoreal';
-    u['uOpacity']!.value = pr ? 0.82 : 1;
-    u['uSoft']!.value = pr ? 1 : 0;
+    u['uOpacity']!.value = pr ? 0.82 : 0.9;
+    u['uSoft']!.value = 1;
     u['uPull']!.value = pr ? 2.5 : 0;
-    u['uWidthScale']!.value = pr ? 0.62 : 1;
-    // photoreal: exact ramp colors like a map overlay (no tone mapping over the photo)
-    u['uBright']!.value = pr ? 1.1 : 2.2;
-    if (this.material.transparent !== pr) {
-      this.material.transparent = pr;
-      this.material.depthWrite = !pr;
+    u['uWidthScale']!.value = pr ? 0.62 : 0.7;
+    u['uBright']!.value = pr ? 1.1 : 2.0;
+    if (!this.material.transparent || this.material.toneMapped === pr) {
+      this.material.transparent = true;
+      this.material.depthWrite = false;
       this.material.toneMapped = !pr;
       this.material.needsUpdate = true;
     }

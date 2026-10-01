@@ -98,8 +98,20 @@ def parse_levels(v: Any) -> int | None:
     return n if n > 0 else None
 
 
-def building_type(building_tag: Any, area_m2: float, in_school: bool = False, amenity: Any = None, shop: Any = None) -> str:
-    """Map OSM tags to one of house/apartments/commercial/school/other."""
+def building_type(
+    building_tag: Any,
+    area_m2: float,
+    in_school: bool = False,
+    amenity: Any = None,
+    shop: Any = None,
+    landuse: Any = None,
+    estate_context: bool = False,
+) -> str:
+    """Map OSM tags to one of house/apartments/commercial/school/other.
+
+    `landuse` is the OSM/Overture land_use class the footprint centroid lies in (real mode);
+    it only reclassifies generic building=yes footprints.
+    """
     tag = (_clean(building_tag) or "yes").lower()
     amen = (_clean(amenity) or "").lower()
     if tag in SCHOOL_TAGS or amen in {"school", "kindergarten"} or in_school:
@@ -118,9 +130,16 @@ def building_type(building_tag: Any, area_m2: float, in_school: bool = False, am
         if area_m2 >= apt_min:
             return "apartments"
         return "house"
+    lu = (_clean(landuse) or "").lower()
+    if lu and lu in set(assumption("footprint_population.commercial_landuse_classes")):
+        return "commercial" if area_m2 >= float(assumption("footprint_population.house_min_area_m2")) else "other"
+    if lu and lu in set(assumption("footprint_population.nonhome_landuse_classes")):
+        return "other"
     # building=yes and unknown values: small footprints are houses, big ones commercial.
     if area_m2 < house_max:
-        return "house" if area_m2 >= 40.0 else "other"
+        return "house" if area_m2 >= float(assumption("footprint_population.house_min_area_m2")) else "other"
+    if estate_context and area_m2 <= float(assumption("footprint_population.estate_house_max_area_m2")):
+        return "house"  # large home in a purely residential neighbourhood (estate_context_flags)
     return "commercial"
 
 
@@ -144,6 +163,47 @@ def rectangularity(poly: Polygon) -> float:
         return 0.0
     rect = poly.minimum_rotated_rectangle
     return float(poly.area / rect.area) if rect.area > 0 else 0.0
+
+
+ROOF_SHAPE_KIND = {
+    "flat": "flat",
+    "skillion": "flat",
+    "hipped": "hipped",
+    "half_hipped": "hipped",
+    "side_hipped": "hipped",
+    "pyramidal": "hipped",
+    "gabled": "gabled",
+    "side_gabled": "gabled",
+    "saltbox": "gabled",
+    "gambrel": "gabled",
+    "mansard": "hipped",
+}
+
+
+def roof_kind(btype: str, poly: Polygon, roof_shape: Any = None) -> str:
+    """'flat', 'hipped' or 'gabled'. An OSM roof:shape tag wins (gabled/hipped/flat and close
+    relatives); otherwise houses get a hip roof when roughly rectangular (spec 5.2.3)."""
+    tag = (_clean(roof_shape) or "").lower()
+    if tag in ROOF_SHAPE_KIND:
+        kind = ROOF_SHAPE_KIND[tag]
+        if kind != "flat" and len(poly.interiors) > 0:
+            return "flat"  # pitched roofs are built on the min rotated rectangle; courtyards stay flat
+        return kind
+    return "hipped" if use_hip_roof(btype, poly) else "flat"
+
+
+def parse_colour(v: Any) -> tuple[int, int, int] | None:
+    """OSM building:colour / roof:colour ('#778899', '#fff', 'white') -> RGB, None if unknown."""
+    s = _clean(v)
+    if s is None:
+        return None
+    from PIL import ImageColor
+
+    try:
+        rgb = ImageColor.getrgb(s if not re.fullmatch(r"[0-9a-fA-F]{6}", s) else "#" + s)
+    except ValueError:
+        return None
+    return int(rgb[0]), int(rgb[1]), int(rgb[2])
 
 
 def use_hip_roof(btype: str, poly: Polygon) -> bool:
@@ -219,8 +279,9 @@ def _flat_cap(poly: Polygon, y: float) -> tuple[np.ndarray, np.ndarray, np.ndarr
     return pos, nrm, _fix_winding(pos, idx, np.tile([0.0, 1.0, 0.0], (len(idx), 1)))
 
 
-def _hip_roof(rect: np.ndarray, eave: float, peak: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Hip roof on a rectangle (4,2 x,z corners in order)."""
+def _hip_roof(rect: np.ndarray, eave: float, peak: float, gabled: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Hip (or gabled) roof on a rectangle (4,2 x,z corners in order). The ridge runs along the
+    long axis; a gabled roof has vertical triangular gable ends instead of hipped ends."""
     c = rect.astype(np.float64)
     L = np.hypot(*(c[1] - c[0]))
     W = np.hypot(*(c[2] - c[1]))
@@ -229,13 +290,15 @@ def _hip_roof(rect: np.ndarray, eave: float, peak: float) -> tuple[np.ndarray, n
         L, W = W, L
     m = c.mean(axis=0)
     a = (c[1] - c[0]) / max(L, 1e-9)
-    r = max(0.0, (L - W) / 2.0)
+    r = L / 2.0 if gabled else max(0.0, (L - W) / 2.0)
     R0 = m - a * r
     R1 = m + a * r
 
     def p3(p: np.ndarray, y: float) -> list[float]:
         return [p[0], y, p[1]]
 
+    # Gabled: r = L/2 puts the ridge ends above the short-edge midpoints, so the two end
+    # triangles are vertical gable walls; hipped: they slope.
     faces = [
         [p3(c[0], eave), p3(c[1], eave), p3(R1, peak), p3(R0, peak)],
         [p3(c[1], eave), p3(c[2], eave), p3(R1, peak)],
@@ -249,9 +312,13 @@ def _hip_roof(rect: np.ndarray, eave: float, peak: float) -> tuple[np.ndarray, n
         n = np.cross(fp[1] - fp[0], fp[2] - fp[0])
         if np.linalg.norm(n) < 1e-9 and len(fp) == 4:
             n = np.cross(fp[2] - fp[0], fp[3] - fp[0])
-        if n[1] < 0:
-            n = -n
         n = n / max(np.linalg.norm(n), 1e-9)
+        if abs(n[1]) < 1e-6:  # vertical gable end: face away from the rectangle center
+            fc = fp.mean(axis=0)
+            if (fc[0] - m[0]) * n[0] + (fc[2] - m[1]) * n[2] < 0:
+                n = -n
+        elif n[1] < 0:
+            n = -n
         tris = [[0, 1, 2]] if len(fp) == 3 else [[0, 1, 2], [0, 2, 3]]
         t = np.asarray(tris) + base
         P.append(fp)
@@ -265,21 +332,26 @@ def _hip_roof(rect: np.ndarray, eave: float, peak: float) -> tuple[np.ndarray, n
     return pos, nrm, _fix_winding(pos, tri, desired)
 
 
-def building_mesh(poly_xz: Polygon, base_y: float, height: float, hip: bool, roof_h: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def building_mesh(
+    poly_xz: Polygon, base_y: float, height: float, hip: bool, roof_h: float, roof: str | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Mesh for one footprint in scene (x,z) coordinates.
 
+    `roof` ('flat', 'hipped', 'gabled') overrides the legacy `hip` flag when given.
     Returns pos (N,3), nrm (N,3), tri (M,3) and is_roof (N,) bool.
     """
+    kind = roof or ("hipped" if hip else "flat")
     # Orient CCW in (x,z) math coordinates.
     poly_xz = orient(poly_xz, sign=1.0)
     top = base_y + height
     bottom = base_y - WALL_SINK_M
-    if hip:
+    if kind in ("hipped", "gabled"):
         rect_poly = orient(poly_xz.minimum_rotated_rectangle, sign=1.0)
         rect = np.asarray(rect_poly.exterior.coords)[:4, :2]
         eave = base_y + max(height - roof_h, 2.5)
+        # walls stop at the eave; gable-end triangles above it are part of the roof faces
         wp, wn, wt = _walls([np.asarray(rect_poly.exterior.coords)[:, :2]], bottom, eave)
-        rp, rn, rt = _hip_roof(rect, eave, max(top, eave + 0.5))
+        rp, rn, rt = _hip_roof(rect, eave, max(top, eave + 0.5), gabled=kind == "gabled")
     else:
         rings = [np.asarray(poly_xz.exterior.coords)[:, :2]] + [np.asarray(r.coords)[:, :2] for r in poly_xz.interiors]  # holes are CW after orient(): normals face into the hole
         wp, wn, wt = _walls(rings, bottom, top)
@@ -287,7 +359,8 @@ def building_mesh(poly_xz: Polygon, base_y: float, height: float, hip: bool, roo
     pos = np.concatenate([wp, rp])
     nrm = np.concatenate([wn, rn])
     tri = np.concatenate([wt, rt + len(wp)])
-    is_roof = np.concatenate([np.zeros(len(wp), dtype=bool), np.ones(len(rp), dtype=bool)])
+    # vertical gable-end triangles are wall-coloured
+    is_roof = np.concatenate([np.zeros(len(wp), dtype=bool), rn[:, 1] > 1e-3])
     return pos, nrm, tri, is_roof
 
 
@@ -369,10 +442,12 @@ def prepare_buildings(
     areas = gdf.geometry.area.to_numpy()
     btag, amen, shop = _col(gdf, "building"), _col(gdf, "amenity"), _col(gdf, "shop")
     htag, ltag = _col(gdf, "height"), _col(gdf, "building:levels")
+    lu = _col(gdf, "landuse_class")
+    estate = gdf["estate_context"].fillna(False).astype(bool).to_numpy() if "estate_context" in gdf.columns else np.zeros(len(gdf), bool)
     types, heights, levels, rules = [], [], [], []
     for i in range(len(gdf)):
         in_school = _clean(gdf["school_id"].iloc[i]) is not None
-        t = building_type(btag.iloc[i], float(areas[i]), in_school, amen.iloc[i], shop.iloc[i])
+        t = building_type(btag.iloc[i], float(areas[i]), in_school, amen.iloc[i], shop.iloc[i], lu.iloc[i], bool(estate[i]))
         h, lv, rule = building_height(t, htag.iloc[i], ltag.iloc[i])
         types.append(t)
         heights.append(h)
@@ -382,6 +457,17 @@ def prepare_buildings(
     gdf["height_m"] = np.asarray(heights, dtype=np.float64)
     gdf["levels"] = levels
     gdf["height_rule"] = rules
+    # Internal (not in buildings.geojson): raw tag, levels estimate, roof shape, colours.
+    lh = float(assumption("buildings.level_height_m"))
+    gdf["building_tag"] = [(_clean(v) or "yes").lower() for v in btag]
+    gdf["levels_est"] = [
+        lv if lv is not None else (max(1, int(round(h / lh))) if rule == "height" else None)
+        for lv, h, rule in zip(levels, heights, rules, strict=True)
+    ]
+    gdf["roof_shape"] = [_clean(v) for v in _col(gdf, "roof:shape")]
+    gdf["roof_height_m"] = [parse_height_m(v) for v in _col(gdf, "roof:height")]
+    gdf["wall_rgb"] = [parse_colour(v) for v in _col(gdf, "building:colour")]
+    gdf["roof_rgb"] = [parse_colour(v) for v in _col(gdf, "roof:colour")]
     gdf["area_m2"] = areas
     gdf["centroid_x"] = cx
     gdf["centroid_z"] = cz
@@ -406,12 +492,16 @@ def prepare_buildings(
     gdf["parcel_apn"] = None
     gdf["parcel_land_use"] = None
     gdf["parcel_year_built"] = None
-    keep = ["id", "type", "height_m", "base_elev_m", "levels", "address", "name", "area_m2", "centroid_x", "centroid_z", "block_group", "school_id", "tile", "parcel_apn", "parcel_land_use", "parcel_year_built", "height_rule", "geometry"]
+    keep = ["id", "type", "height_m", "base_elev_m", "levels", "address", "name", "area_m2", "centroid_x", "centroid_z", "block_group", "school_id", "tile", "parcel_apn", "parcel_land_use", "parcel_year_built", *INTERNAL_COLUMNS, "geometry"]
     return gpd.GeoDataFrame(gdf[keep], geometry="geometry", crs="EPSG:32611")
 
 
+# prepare_buildings columns used inside the pipeline only (not part of buildings.geojson)
+INTERNAL_COLUMNS = ["height_rule", "building_tag", "levels_est", "roof_shape", "roof_height_m", "wall_rgb", "roof_rgb"]
+
+
 def write_buildings_geojson(bdf: gpd.GeoDataFrame, path: Path) -> None:
-    out = bdf.drop(columns=["height_rule"]).to_crs("EPSG:4326")
+    out = bdf.drop(columns=[c for c in INTERNAL_COLUMNS if c in bdf.columns]).to_crs("EPSG:4326")
     feats = []
     for row in out.itertuples(index=False):
         d = row._asdict()
@@ -595,29 +685,76 @@ def apply_heroes(bdf: gpd.GeoDataFrame, heroes: list[Hero], terrain: Terrain, gr
     return gpd.GeoDataFrame(bdf, geometry="geometry", crs="EPSG:32611")
 
 
+# Rendering budget (spec 10.3), not a real-world fact.
+BUILDING_TRIANGLE_BUDGET = 1_450_000
+SIMPLIFY_STEPS_M = (0.0, 0.25, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0)
+
+
+def estimate_triangles(poly: Polygon, kind: str) -> int:
+    """Triangle count building_mesh will produce for a footprint (walls + roof)."""
+    if kind in ("hipped", "gabled"):
+        return 8 + 6
+    n_ext = len(poly.exterior.coords) - 1
+    n_int = sum(len(r.coords) - 1 for r in poly.interiors)
+    n = n_ext + n_int
+    return 2 * n + (n - 2 + 2 * len(poly.interiors))
+
+
+def simplify_tolerance_for_budget(polys: list[Polygon], kinds: list[str], budget: int) -> float:
+    """Smallest SIMPLIFY_STEPS_M tolerance (m) that keeps flat-roof footprints under `budget`."""
+    import shapely
+
+    flat = [p for p, k in zip(polys, kinds, strict=True) if k == "flat"]
+    pitched = sum(estimate_triangles(p, k) for p, k in zip(polys, kinds, strict=True) if k != "flat")
+    arr = np.asarray(flat, dtype=object)
+    for tol in SIMPLIFY_STEPS_M:
+        simp = shapely.simplify(arr, tol, preserve_topology=True) if tol > 0 and len(arr) else arr
+        total = pitched + sum(estimate_triangles(p, "flat") if isinstance(p, Polygon) and not p.is_empty else 0 for p in simp)
+        if total <= budget:
+            return tol
+    return SIMPLIFY_STEPS_M[-1]
+
+
 def build_building_tiles(
-    bdf: gpd.GeoDataFrame, grid: TileGrid, out_dir: Path, heroes: list[Hero] | None = None
+    bdf: gpd.GeoDataFrame,
+    grid: TileGrid,
+    out_dir: Path,
+    heroes: list[Hero] | None = None,
+    budget: int = BUILDING_TRIANGLE_BUDGET,
 ) -> tuple[dict[str, dict[str, Any]], int, list[dict[str, Any]]]:
     """Merge buildings into one mesh per tile with `_BUILDING_ID` + `COLOR_0` (spec 5.2.4).
 
     Hero models become extra primitives in their tile (own materials/colors, `_BUILDING_ID`).
     Returns (tile id -> {path, min_y, max_y, count}, triangles, hero list for the manifest).
     """
-    roof_h = float(assumption("buildings.hip_roof_height_m"))
+    roof_h_default = float(assumption("buildings.hip_roof_height_m"))
     heroes = heroes or []
     hero_ids = {h.building_id for h in heroes}
+    work = bdf[~bdf["id"].isin(hero_ids)]
+    polys = [utm_poly_to_scene(g) for g in work.geometry]
+    shapes = work["roof_shape"] if "roof_shape" in work.columns else pd.Series([None] * len(work), index=work.index)
+    kinds = [roof_kind(t, p, rs) for t, p, rs in zip(work["type"], polys, shapes, strict=True)]
+    tol = simplify_tolerance_for_budget(polys, kinds, budget)
+    if tol > 0:
+        log(f"buildings: simplifying flat-roof footprints by {tol:.2f} m to stay under {budget:,} triangles")
     acc: dict[str, dict[str, list[np.ndarray]]] = {}
-    for row in bdf.itertuples(index=False):
-        if int(row.id) in hero_ids:
-            continue
-        poly = utm_poly_to_scene(row.geometry)
+    for row, poly, kind in zip(work.itertuples(index=False), polys, kinds, strict=True):
         if poly.area < 1.0:
             continue
-        hip = use_hip_roof(row.type, poly)
-        pos, nrm, tri, is_roof = building_mesh(poly, float(row.base_elev_m), float(row.height_m), hip, roof_h)
+        if tol > 0 and kind == "flat":
+            sp = poly.simplify(tol, preserve_topology=True)
+            if isinstance(sp, Polygon) and sp.is_valid and sp.area > 0.5 * poly.area:
+                poly = sp
+        rh = getattr(row, "roof_height_m", None)
+        roof_h = float(rh) if rh is not None and np.isfinite(rh) and 0.3 < float(rh) < float(row.height_m) else roof_h_default
+        pos, nrm, tri, is_roof = building_mesh(poly, float(row.base_elev_m), float(row.height_m), kind == "hipped", roof_h, roof=kind)
         if len(tri) == 0:
             continue
-        col = np.where(is_roof[:, None], np.array(ROOF_COLORS[row.type]), np.array(WALL_COLORS[row.type]))
+        wall = getattr(row, "wall_rgb", None)
+        roofc = getattr(row, "roof_rgb", None)
+        wall_c = np.array(wall if isinstance(wall, tuple) else WALL_COLORS[row.type])
+        roof_c = np.array(roofc if isinstance(roofc, tuple) else ROOF_COLORS[row.type])
+        col = np.where(is_roof[:, None], roof_c, wall_c)
         a = acc.setdefault(row.tile, {"pos": [], "nrm": [], "tri": [], "col": [], "bid": [], "n": [0]})
         a["tri"].append(tri + a["n"][0])
         a["n"][0] += len(pos)
@@ -676,10 +813,70 @@ def build_building_tiles(
 # ---------------------------------------------------------------------------
 
 
-def load_osm_buildings(raw_geojson: Path) -> gpd.GeoDataFrame:
-    """OSM building features (WGS84 GeoJSON from fetch_osm) -> EPSG:32611 with osm_sort_key."""
+def load_landuse(raw: Path) -> gpd.GeoDataFrame | None:
+    """OSM-derived land_use polygons (Overture base/land_use cache from fetch_aws), EPSG:32611
+    with a `class` column; None if the cache is absent (e.g. Overpass-fetched raw data)."""
+    path = raw / "overture" / "land_use.parquet"
+    if not path.exists():
+        return None
+    import pyarrow.parquet as pq
+    import shapely
+
+    tab = pq.read_table(path, columns=["geometry", "class"]).to_pandas()
+    geoms = shapely.from_wkb(tab["geometry"].to_numpy())
+    gdf = gpd.GeoDataFrame({"class": tab["class"].astype(str)}, geometry=geoms, crs="EPSG:4326").to_crs("EPSG:32611")
+    return gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].reset_index(drop=True)
+
+
+def tag_landuse(gdf: gpd.GeoDataFrame, landuse: gpd.GeoDataFrame | None) -> gpd.GeoDataFrame:
+    """Add `landuse_class`: the land_use class of the polygon containing each footprint centroid
+    (smallest polygon wins when several overlap)."""
+    gdf = gdf.copy()
+    if landuse is None or not len(landuse):
+        gdf["landuse_class"] = None
+        return gdf
+    lu = landuse.assign(_area=landuse.geometry.area).sort_values("_area")
+    pts = gpd.GeoDataFrame(geometry=gdf.geometry.representative_point(), crs=gdf.crs)
+    j = gpd.sjoin(pts, lu[["class", "_area", "geometry"]], how="left", predicate="within")
+    j = j.sort_values("_area", na_position="last")
+    j = j[~j.index.duplicated(keep="first")]
+    gdf["landuse_class"] = j["class"].reindex(gdf.index)
+    return gdf
+
+
+def estate_context_flags(gdf: gpd.GeoDataFrame) -> np.ndarray:
+    """True where a footprint's neighbourhood is purely residential-sized (EPSG:32611 input):
+    >= footprint_population.estate_context_min_neighbours neighbours within estate_context_radius_m
+    sized house_min_area_m2..estate_house_max_area_m2, and that share >= estate_context_min_share."""
+    from scipy.spatial import cKDTree
+
+    if not len(gdf):
+        return np.zeros(0, bool)
+    fp = "footprint_population"
+    lo, hi = float(assumption(f"{fp}.house_min_area_m2")), float(assumption(f"{fp}.estate_house_max_area_m2"))
+    r = float(assumption(f"{fp}.estate_context_radius_m"))
+    kmin, share = int(assumption(f"{fp}.estate_context_min_neighbours")), float(assumption(f"{fp}.estate_context_min_share"))
+    c = gdf.geometry.centroid
+    xy = np.column_stack([c.x.to_numpy(), c.y.to_numpy()])
+    area = gdf.geometry.area.to_numpy()
+    house_sized = (area >= lo) & (area <= hi)
+    out = np.zeros(len(gdf), bool)
+    for i, nb in enumerate(cKDTree(xy).query_ball_point(xy, r)):
+        nb = [j for j in nb if j != i and area[j] >= lo]  # ignore sheds
+        if not nb:
+            continue
+        n_house = int(house_sized[nb].sum())
+        out[i] = n_house >= kmin and n_house / len(nb) >= share
+    return out
+
+
+def load_osm_buildings(raw_geojson: Path, landuse: gpd.GeoDataFrame | None = None) -> gpd.GeoDataFrame:
+    """OSM building features (WGS84 GeoJSON from fetch_osm) -> EPSG:32611 with osm_sort_key
+    (and `landuse_class` when land_use polygons are given)."""
     gdf = gpd.read_file(raw_geojson)
     gdf = gdf.to_crs("EPSG:32611")
+    gdf = tag_landuse(gdf, landuse)
+    gdf["estate_context"] = estate_context_flags(gdf)
     if "element" in gdf.columns and "id" in gdf.columns:
         gdf["osm_sort_key"] = gdf["element"].astype(str) + ":" + gdf["id"].astype(str).str.zfill(12)
     elif "osmid" in gdf.columns:

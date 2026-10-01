@@ -7,6 +7,7 @@
  * without the API. Mock data is labeled as such everywhere.
  */
 
+import { BUILDINGS_FILE, STATIC_DIR, STATIC_NOTICE, staticTargetFor, type CompactBuildings } from './staticPaths';
 import type {
   BaselineResponse,
   BuildingInfo,
@@ -198,7 +199,58 @@ export function isMockMode(search: string = typeof location !== 'undefined' ? lo
   return v !== null && v !== '0' && v !== 'false';
 }
 
+/** Static viewer build (`npm run build:viewer`): reads a snapshot instead of a live API. */
+export const STATIC_VIEWER = import.meta.env.VITE_STATIC_API === '1';
+/** Optional hosted API for the static viewer (checks, saves, runs). */
+export const LIVE_API_BASE: string | null = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') || null;
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+/**
+ * Transport for the static viewer: GETs that the snapshot holds are served from
+ * `static-api/` (and `assets/`), everything else goes to `liveBase` when one is
+ * configured, or fails with a clear 501 explaining that it needs the Python API.
+ */
+export function createStaticFetch(root: string, liveBase: string | null, fetchImpl: FetchLike = (u, i) => fetch(u, i)): FetchLike {
+  const base = root.endsWith('/') ? root : `${root}/`;
+  let buildings: Promise<CompactBuildings | null> | null = null;
+  const live = (apiPath: string, init?: RequestInit): Promise<Response> =>
+    liveBase
+      ? fetchImpl(`${liveBase}${apiPath}`, { ...init, credentials: 'include' })
+      : Promise.resolve(jsonResponse({ detail: STATIC_NOTICE }, 501));
+  return async (url, init) => {
+    const apiPath = url.startsWith(API_BASE) ? url.slice(API_BASE.length) || '/' : url;
+    const t = staticTargetFor(init?.method ?? 'GET', apiPath);
+    if (!t) return live(apiPath, init);
+    if (t.kind === 'asset') return fetchImpl(`${base}assets/${t.path}`);
+    if (t.kind === 'building') {
+      buildings ??= fetchImpl(`${base}${STATIC_DIR}/${BUILDINGS_FILE}`)
+        .then((r) => (r.ok ? (r.json() as Promise<CompactBuildings>) : null))
+        .catch(() => null);
+      const all = await buildings;
+      const row = all?.rows[t.id];
+      if (!all || !row) return liveBase ? live(apiPath, init) : jsonResponse({ detail: `building ${t.id} not in the snapshot` }, 404);
+      const obj: Record<string, unknown> = { id: Number(t.id) };
+      all.fields.forEach((f, i) => {
+        if (row[i] !== null && row[i] !== undefined) obj[f] = row[i];
+      });
+      return jsonResponse(obj);
+    }
+    const res = await fetchImpl(`${base}${STATIC_DIR}/${t.path}`);
+    // plans created after the snapshot live only on the hosted API
+    if (!res.ok && liveBase) return live(apiPath, init);
+    if (!res.ok) return jsonResponse({ detail: `not in the static snapshot (${apiPath})` }, 404);
+    return res;
+  };
+}
+
 export async function initApi(): Promise<{ mock: boolean }> {
+  if (STATIC_VIEWER) {
+    api.setTransport(createStaticFetch(import.meta.env.BASE_URL ?? '/', LIVE_API_BASE));
+    return { mock: false };
+  }
   if (!isMockMode()) return { mock: false };
   const { createMockFetch } = await import('./mock/server');
   api.setTransport(await createMockFetch());

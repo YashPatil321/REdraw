@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError, RedrawApi, assetUrl, buildUrl, isMockMode, with503Retry } from './api';
+import { ApiError, RedrawApi, assetUrl, buildUrl, createStaticFetch, isMockMode, with503Retry } from './api';
+import { staticTargetFor } from './staticPaths';
 import type { WorldMeta } from './types';
 
 interface Call {
@@ -130,5 +131,57 @@ describe('isMockMode', () => {
     expect(isMockMode('?mock=1')).toBe(true);
     expect(isMockMode('?mock=0')).toBe(false);
     expect(isMockMode('')).toBe(false);
+  });
+});
+
+describe('static viewer transport', () => {
+  const files: Record<string, unknown> = {
+    '/v/static-api/world/meta.json': { region: 'm' },
+    '/v/static-api/plans/index-votes.json': { plans: [] },
+    '/v/static-api/plans/p1.json': { id: 'p1' },
+    '/v/static-api/world/buildings.json': { fields: ['type', 'height_m', 'name'], rows: { '7': ['house', 6.5, null] } },
+    '/v/assets/manifest.json': { tiles: [] },
+  };
+  const seen: string[] = [];
+  const host = async (url: string): Promise<Response> => {
+    seen.push(url);
+    return url in files ? new Response(JSON.stringify(files[url]), { status: 200 }) : new Response('nope', { status: 404 });
+  };
+
+  it('serves snapshot files for GETs', async () => {
+    const a = new RedrawApi(createStaticFetch('/v/', null, host));
+    expect(await a.getMeta()).toEqual({ region: 'm' });
+    expect(await a.listPlans({ sort: 'votes' })).toEqual({ plans: [] });
+    expect(await a.getPlan('p1')).toEqual({ id: 'p1' });
+    expect(await a.getBuilding(7)).toEqual({ id: 7, type: 'house', height_m: 6.5 });
+    const m = await a.getManifest({ assets: { base_url: '/assets/', manifest: '/assets/manifest.json' } } as WorldMeta);
+    expect(m).toEqual({ tiles: [] });
+  });
+
+  it('explains that writes need the Python API (no hosted API configured)', async () => {
+    const a = new RedrawApi(createStaticFetch('/v/', null, host));
+    await expect(a.checkPlan({ mission: 'm', title: 't', pitch: '', tools: [] })).rejects.toMatchObject({ status: 501 });
+    await expect(a.runPlan('p1')).rejects.toMatchObject({ status: 501 });
+    await expect(a.getPlan('unknown')).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('forwards writes and unknown plans to VITE_API_BASE when set', async () => {
+    const r = recorder({ ok: true });
+    const both = (url: string, init?: RequestInit) => (url.startsWith('https://api.example') ? r.f(url, init) : host(url));
+    const a = new RedrawApi(createStaticFetch('/v/', 'https://api.example', both));
+    await a.checkPlan({ mission: 'm', title: 't', pitch: '', tools: [] });
+    await a.getPlan('fresh');
+    expect(r.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST https://api.example/plans/check', 'GET https://api.example/plans/fresh']);
+  });
+});
+
+describe('staticTargetFor', () => {
+  it('maps API paths to snapshot files', () => {
+    expect(staticTargetFor('GET', '/baseline/playback')).toEqual({ kind: 'file', path: 'baseline/playback.bin', binary: true });
+    expect(staticTargetFor('GET', '/plans?mission=morning_crunch&sort=avg_commute_min')).toEqual({ kind: 'file', path: 'plans/index-avg_commute_min.json', binary: false });
+    expect(staticTargetFor('GET', '/plans')).toMatchObject({ path: 'plans/index-new.json' });
+    expect(staticTargetFor('GET', '/plans/abc/residents')).toMatchObject({ path: 'plans/abc/residents.json' });
+    expect(staticTargetFor('GET', '/jobs/1')).toBeNull();
+    expect(staticTargetFor('POST', '/plans')).toBeNull();
   });
 });
