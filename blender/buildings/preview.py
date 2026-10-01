@@ -342,9 +342,15 @@ def roads_and_driveways(T: Terrain, data: dict[str, Any], builders: list[model.B
     return A
 
 
-def import_proto(path: Path) -> bpy.types.Object:
+def import_proto(path: Path) -> bpy.types.Object | None:
     before = set(bpy.data.objects)
-    bpy.ops.import_scene.gltf(filepath=str(path))
+    try:
+        bpy.ops.import_scene.gltf(filepath=str(path))
+    except (RuntimeError, ValueError) as e:
+        log(f"cannot import {path.name}: {str(e).splitlines()[-1][:120]}")
+        for o in [o for o in bpy.data.objects if o not in before]:
+            bpy.data.objects.remove(o)
+        return None
     new = [o for o in bpy.data.objects if o not in before]
     meshes = [o for o in new if o.type == "MESH"]
     for o in new:
@@ -378,6 +384,8 @@ def place_props(T: Terrain, center: tuple[float, float], radius: float, building
         if int(pi) not in protos:
             protos[int(pi)] = import_proto(f)
         proto = protos[int(pi)]
+        if proto is None:
+            continue
         data = proto.data
         if pr.get("kind") == "vehicle" or pr["id"].startswith("car_"):
             cols = pm.get(pr["id"], {}).get("paint_colors") or []
@@ -411,14 +419,16 @@ def place_props(T: Terrain, center: tuple[float, float], radius: float, building
 _PROTO_CACHE: dict[str, bpy.types.Object] = {}
 
 
-def proto_of(file_rel: str) -> bpy.types.Object:
-    if file_rel not in _PROTO_CACHE or _PROTO_CACHE[file_rel].name not in bpy.data.objects:
+def proto_of(file_rel: str) -> bpy.types.Object | None:
+    if file_rel not in _PROTO_CACHE:
         _PROTO_CACHE[file_rel] = import_proto(PROPS_DIR / file_rel)
     return _PROTO_CACHE[file_rel]
 
 
 def instance(file_rel: str, x: float, z: float, y: float, rot: float, s: float = 1.0, data: Any = None) -> None:
     pr = proto_of(file_rel)
+    if pr is None:
+        return
     ob = bpy.data.objects.new(Path(file_rel).stem, data or pr.data)
     ob.location = (x, -z, y)
     ob.rotation_euler = (0.0, 0.0, rot)
@@ -463,6 +473,8 @@ def decorate_lots(T: Terrain, builders: list[model.Builder], asphalt: Any) -> in
             if asphalt is not None and asphalt.contains(Point(x, z)):
                 continue
             cf = cars[int(rng.integers(len(cars)))]
+            if proto_of(cf) is None:
+                continue
             cid = Path(cf).stem
             cols = pm.get(cid, {}).get("paint_colors") or []
             data = None

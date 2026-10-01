@@ -1158,6 +1158,45 @@ def process_roofs(job: TileJob) -> dict[str, Any]:
     return {"tile": (job.ckm, job.rkm), "cached": False, "buildings": len(recs), "seconds": time.time() - t0}
 
 
+def process_tree_qa(job: TileJob) -> dict[str, Any]:
+    """Per-tree return density in the upper crown: lidar returns higher than half the tree height
+    within the crown radius, per m2 of crown. Real canopy is dense (several returns / m2);
+    power-line wires and lone poles, which the CHM turns into tall narrow 'trees', are sparse."""
+    import pandas as pd
+    from scipy.spatial import cKDTree
+
+    out = work_dir() / f"treeqa_{job.ckm}_{job.rkm}.parquet"
+    if not job.force and out.exists():
+        return {"tile": (job.ckm, job.rkm), "cached": True}
+    t0 = time.time()
+    t = pd.read_parquet(work_dir() / f"trees_{job.ckm}_{job.rkm}.parquet")
+    dens = np.zeros(len(t))
+    nup = np.zeros(len(t), dtype=np.int64)
+    if len(t):
+        res = float(assumption("lidar.raster_res_m"))
+        b = job.core.buffered(20.0)
+        P = load_points(Box(b.minx - job.shift[0], b.miny - job.shift[1], b.maxx - job.shift[0], b.maxy - job.shift[1]))
+        P["x"] = P["x"] + job.shift[0]
+        P["y"] = P["y"] + job.shift[1]
+        grid = Grid.from_box(b, res)
+        dtm = fill_nan(_read_mosaic("dtm_0p5m.tif", grid))
+        ph = P["z"] - sample_bilinear(grid, dtm, P["x"], P["y"])
+        hi = ph > 2.0
+        tree = cKDTree(np.column_stack([P["x"][hi], P["y"][hi]]))
+        hh = ph[hi]
+        e, n = t["easting"].to_numpy(), t["northing"].to_numpy()
+        h, r = t["height_m"].to_numpy(), np.maximum(t["crown_radius_m"].to_numpy(), 1.0)
+        for i, ix in enumerate(tree.query_ball_point(np.column_stack([e, n]), r)):
+            k = int(np.count_nonzero(hh[ix] >= 0.5 * h[i])) if ix else 0
+            nup[i] = k
+            dens[i] = k / (math.pi * r[i] ** 2)
+    df = pd.DataFrame({"upper_returns": nup, "upper_return_density_m2": dens})
+    tmp = out.with_suffix(".part")
+    df.to_parquet(tmp, index=False)
+    tmp.replace(out)
+    return {"tile": (job.ckm, job.rkm), "cached": False, "trees": len(t), "seconds": time.time() - t0}
+
+
 def _poly_window_values(grid: Grid, poly: Any, arrays: list[np.ndarray], p90: int | None = None) -> list[float]:
     """Median of each array over the cells covered by `poly` (centroid cell if none); the
     array at index `p90` gets its 90th percentile instead."""
@@ -1416,6 +1455,11 @@ def write_trees(jobs: list[TileJob]) -> Any:
     parts = []
     for j in jobs:
         t = pd.read_parquet(work_dir() / f"trees_{j.ckm}_{j.rkm}.parquet")
+        qa = work_dir() / f"treeqa_{j.ckm}_{j.rkm}.parquet"
+        if qa.exists():
+            q = pd.read_parquet(qa)
+            if len(q) == len(t):
+                t = pd.concat([t.reset_index(drop=True), q], axis=1)
         if len(t):
             z = np.load(work_dir() / f"tile_{j.ckm}_{j.rkm}.npz")
             t["canopy_cover_20m"] = canopy_cover_at(z["chm"], z["core"], float(assumption("lidar.raster_res_m")),
@@ -1473,13 +1517,10 @@ def main(argv: list[str] | None = None) -> int:
     timings["load_roads_s"] = time.time() - t
     jobs = build_jobs(fp, roads, shift, args.force, fp_all=load_footprints(clip=False))
 
-    # 1. per-tile rasters, trees, lidar-only buildings
+    # 1. per-tile rasters, tree candidates, lidar-only buildings
     t = time.time()
     stats = run_parallel(process_tile, jobs, args.workers, "tile")
     timings["tiles_s"] = time.time() - t
-    trees = write_trees(jobs)
-    mg = write_missing(jobs)
-    log(f"lidar_features: {len(trees):,} trees, {len(mg):,} lidar-only buildings written")
 
     # 2. rasters
     t = time.time()
@@ -1489,11 +1530,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.force or any(s.get("cached") is False for s in stats) or not all((lidar_dir() / v).exists() for v in rasters.values()):
         mosaic(npzs, raster_extent(), res, rasters)
     timings["mosaic_s"] = time.time() - t
+
+    # 3. tree QA (upper-crown return density, needs the DTM mosaic), then trees + lidar-only buildings
+    t = time.time()
+    qjobs = [TileJob(j.ckm, j.rkm, j.core, [], [], [], j.shift, args.force) for j in jobs]
+    run_parallel(process_tree_qa, qjobs, args.workers, "tree QA")
+    trees = write_trees(jobs)
+    mg = write_missing(jobs)
+    timings["trees_s"] = time.time() - t
+    log(f"lidar_features: {len(trees):,} trees, {len(mg):,} lidar-only buildings written")
     if args.tiles_only:
         log(f"lidar_features: tiles done in {time.time() - t0:.0f}s (--tiles-only)")
         return 0
 
-    # 3. roofs (need the mosaicked DTM)
+    # 4. roofs (need the mosaicked DTM)
     t = time.time()
     rjobs = [TileJob(j.ckm, j.rkm, j.core, j.footprints, [], [], j.shift, args.force or args.force_roofs) for j in jobs]
     rstats = run_parallel(process_roofs, rjobs, args.workers, "roofs")
