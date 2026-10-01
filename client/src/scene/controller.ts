@@ -9,7 +9,8 @@ import { api } from '../api';
 import { originFromLatLon, sceneToLatLon, type Origin } from '../geo';
 import { store, toast, type AppState, type RenderMode } from '../state';
 import { advanceClock } from '../time';
-import { TrafficLayer, vehicleLightUniforms, vehicleMaterial, type VehicleGeometries } from '../traffic/layer';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { TrafficLayer, setVehicleEnvMap, vehicleLightUniforms, vehicleMaterial, type VehicleGeometries } from '../traffic/layer';
 import type { RoadNetwork } from '../traffic/network';
 import type { Playback } from '../traffic/playback';
 import { adjTexture, buildRoadOverlayGeometry } from '../traffic/roadOverlay';
@@ -90,6 +91,15 @@ export class SceneController {
       },
       after: () => this.applyVisibility(store.get()),
     };
+    // reflections for clear-coated car paint and glass (vehicles only; buildings stay matte)
+    try {
+      const pmrem = new THREE.PMREMGenerator(this.viewer.renderer);
+      const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      setVehicleEnvMap(env);
+      pmrem.dispose();
+    } catch (e) {
+      console.warn('environment map unavailable', e);
+    }
     const iq = initialQuality(this.viewer.renderer.getContext());
     this.qualityPinned = iq.pinned;
     store.set({ quality: iq.q });

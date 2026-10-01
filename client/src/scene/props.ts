@@ -112,6 +112,8 @@ export async function loadPropGeometry(buf: ArrayBuffer, forwardToX: boolean): P
     const color = new Float32Array(n * 3).fill(1);
     const light = new Float32Array(n);
     const tint = new Float32Array(n);
+    const rough = new Float32Array(n);
+    const metal = new Float32Array(n);
     const groups = src.groups.length ? src.groups : [{ start: 0, count: n, materialIndex: 0 }];
     const vc = src.getAttribute('color');
     const la = src.getAttribute('_light');
@@ -128,6 +130,10 @@ export async function loadPropGeometry(buf: ArrayBuffer, forwardToX: boolean): P
         color[i * 3 + 2] = c.b * (vc ? vc.getZ(i) : 1);
         light[i] = la ? Math.round(la.getX(i)) : guessLight;
         tint[i] = ta ? ta.getX(i) : guessTint;
+        // clearcoat paint reads glossier than its base roughness
+        const cc = (mat as THREE.MeshPhysicalMaterial | undefined)?.clearcoat ?? 0;
+        rough[i] = Math.max(0.04, (mat?.roughness ?? 0.6) * (cc > 0 ? 0.6 : 1));
+        metal[i] = mat?.metalness ?? 0;
       }
     }
     const g = new THREE.BufferGeometry();
@@ -136,6 +142,8 @@ export async function loadPropGeometry(buf: ArrayBuffer, forwardToX: boolean): P
     g.setAttribute('color', new THREE.BufferAttribute(color, 3));
     g.setAttribute('aLight', new THREE.BufferAttribute(light, 1));
     g.setAttribute('aTint', new THREE.BufferAttribute(tint, 1));
+    g.setAttribute('aRough', new THREE.BufferAttribute(rough, 1));
+    g.setAttribute('aMetal', new THREE.BufferAttribute(metal, 1));
     parts.push(g);
   });
   if (!parts.length) return null;
@@ -197,6 +205,8 @@ export interface Placement {
   z: number;
   rot: number;
   scale: number;
+  /** record index in placements.bin (stable seed, e.g. parked-car paint) */
+  i: number;
 }
 
 /**
@@ -225,7 +235,7 @@ export function parsePlacements(meta: Record<string, unknown>, bin: ArrayBuffer)
       if (!id) continue;
       let arr = out.get(id);
       if (!arr) out.set(id, (arr = []));
-      arr.push({ x: f(ix), y: iy >= 0 ? f(iy) : NaN, z: f(iz), rot: f(ir), scale: is >= 0 ? f(is) || 1 : 1 });
+      arr.push({ x: f(ix), y: iy >= 0 ? f(iy) : NaN, z: f(iz), rot: f(ir), scale: is >= 0 ? f(is) || 1 : 1, i: Math.round(o / stride) });
     }
   };
   const sections = (meta['sections'] ?? (Array.isArray(meta['props']) && (meta['props'] as unknown[]).some((p) => typeof p === 'object') ? meta['props'] : null)) as
@@ -266,7 +276,7 @@ export function propClass(id: string, kind?: string): PropClass {
 }
 
 /** Draw distances (m) per class at draw-distance 1.0; scaled by the quality preset. */
-const NEAR: Record<PropClass, number> = { tree: 170, palm: 220, shrub: 90, grass: 55, lamp: 350, vehicle: 260, other: 150 };
+const NEAR: Record<PropClass, number> = { tree: 220, palm: 260, shrub: 100, grass: 60, lamp: 380, vehicle: 300, other: 150 };
 const FAR: Record<PropClass, number> = { tree: 1300, palm: 1300, shrub: 260, grass: 0, lamp: 0, vehicle: 0, other: 0 };
 
 /**
@@ -458,8 +468,8 @@ export class StaticProps {
               this.mat4.compose(this.pv, this.q, this.sv);
               L.mesh.setMatrixAt(n, this.mat4);
               if (k.paint && L.mesh.instanceColor) {
-                // stable per record: hash the position
-                const h = Math.abs(Math.sin(p.x * 12.9898 + p.z * 78.233) * 43758.5453) % 1;
+                // stable per record: seeded by the record index (palette is already weighted by share)
+                const h = Math.abs(Math.sin(p.i * 12.9898 + 4.1) * 43758.5453) % 1;
                 const c = k.paint[Math.floor(h * k.paint.length) % k.paint.length]!;
                 this.color.setRGB(c[0], c[1], c[2]);
                 L.mesh.setColorAt(n, this.color);

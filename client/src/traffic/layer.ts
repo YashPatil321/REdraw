@@ -34,6 +34,10 @@ function part(w: number, h: number, d: number, x: number, y: number, z: number, 
   g.setAttribute('aLight', new THREE.BufferAttribute(new Float32Array(n).fill(light), 1));
   g.setAttribute('aTint', new THREE.BufferAttribute(new Float32Array(n).fill(light === 0 ? 1 : 0), 1));
   g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
+  // PBR per vertex: metallic clear-coated paint, glossy glass, matte trim
+  const [rough, metal] = light === 0 ? [0.35, 0.5] : light === 3 ? [0.06, 0.0] : light === 4 ? [0.85, 0.0] : [0.2, 0.0];
+  g.setAttribute('aRough', new THREE.BufferAttribute(new Float32Array(n).fill(rough), 1));
+  g.setAttribute('aMetal', new THREE.BufferAttribute(new Float32Array(n).fill(metal), 1));
   return g;
 }
 
@@ -73,13 +77,34 @@ export const vehicleLightUniforms = {
   uTail: { value: 1.6 },
 };
 
-export function vehicleMaterial(): THREE.MeshLambertMaterial {
-  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true });
+/** Environment map for vehicle paint / glass reflections (set once by the scene; PMREM). */
+let vehicleEnv: THREE.Texture | null = null;
+const vehicleMats = new Set<THREE.MeshStandardMaterial>();
+export function setVehicleEnvMap(tex: THREE.Texture | null): void {
+  vehicleEnv = tex;
+  for (const m of vehicleMats) {
+    m.envMap = tex;
+    m.needsUpdate = true;
+  }
+}
+
+/**
+ * Vehicles: PBR with per-vertex roughness / metalness (`aRough`, `aMetal`),
+ * baked albedo (COLOR_0), instance color multiplied into the tintable paint
+ * only (`aTint`), emissive head / tail lights (`aLight`) that bloom at dawn.
+ */
+export function vehicleMaterial(): THREE.MeshStandardMaterial {
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 1, metalness: 1, envMap: vehicleEnv, envMapIntensity: 0.9 });
+  vehicleMats.add(mat);
+  mat.addEventListener('dispose', () => vehicleMats.delete(mat));
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, vehicleLightUniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aLight;\nattribute float aTint;\nvarying float vLight;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLight = aLight;')
+      .replace(
+        '#include <common>',
+        '#include <common>\nattribute float aLight;\nattribute float aTint;\nattribute float aRough;\nattribute float aMetal;\nvarying float vLight;\nvarying float vRough;\nvarying float vMetal;',
+      )
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLight = aLight;\nvRough = aRough;\nvMetal = aMetal;')
       // instance color (speed or paint) only on the tintable body panels
       .replace(
         '#include <color_vertex>',
@@ -92,11 +117,9 @@ export function vehicleMaterial(): THREE.MeshLambertMaterial {
         #endif`,
       );
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vLight;\nuniform float uHead;\nuniform float uTail;')
-      .replace(
-        '#include <color_fragment>',
-        '#include <color_fragment>\nif (vLight > 2.5 && vLight < 3.5) diffuseColor.rgb = diffuseColor.rgb * 0.25 + vec3(0.04, 0.05, 0.07);',
-      )
+      .replace('#include <common>', '#include <common>\nvarying float vLight;\nvarying float vRough;\nvarying float vMetal;\nuniform float uHead;\nuniform float uTail;')
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(vRough, 0.04, 1.0);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = clamp(vMetal, 0.0, 1.0);')
       .replace(
         '#include <opaque_fragment>',
         `if (vLight > 0.5 && vLight < 1.5) outgoingLight = vec3(1.0, 0.93, 0.78) * uHead;
@@ -104,7 +127,7 @@ export function vehicleMaterial(): THREE.MeshLambertMaterial {
         #include <opaque_fragment>`,
       );
   };
-  mat.customProgramCacheKey = () => 'redraw-vehicle';
+  mat.customProgramCacheKey = () => 'redraw-vehicle-pbr';
   return mat;
 }
 
