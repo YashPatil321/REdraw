@@ -293,7 +293,10 @@ def build_tiles(nodes: dict[str, int], cube: list[float], aoi_utm: Box, force: b
         jobs.append((ckm, rkm, files, str(out_dir), force))
     counts: dict[str, int] = {}
     t0 = time.time()
-    with ProcessPoolExecutor(workers) as ex:
+    import multiprocessing as mp
+
+    # spawn, not fork: forking after the download thread pool has run can deadlock the workers
+    with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as ex:
         for i, (name, n) in enumerate(ex.map(_write_tile, jobs), 1):
             counts[name] = n
             if n >= 0:
@@ -335,7 +338,13 @@ def main(argv: list[str] | None = None) -> int:
     t2 = time.time()
     counts = build_tiles(nodes, cube, aoi_utm, force=args.force)
     log(f"lidar: tiles ready in {time.time() - t2:.0f}s")
-    write_json(d / "lidar.source.json", {
+    tile_points: dict[str, int] = {k: v for k, v in counts.items() if v >= 0}
+    src_path = d / "lidar.source.json"
+    if src_path.exists():  # keep the counts of tiles written by an earlier run
+        old = json.loads(src_path.read_text()).get("tile_points")
+        if isinstance(old, dict):
+            tile_points = {**old, **tile_points}
+    write_json(src_path, {
         "name": f"USGS 3DEP lidar point cloud, project {EPT_PROJECT} (Entwine EPT)",
         "url": f"{project_url()}/ept.json",
         "license": EPT_LICENSE,
@@ -345,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         "aoi_utm": aoi_utm.__dict__,
         "nodes": len(nodes),
         "points": int(sum(nodes.values())),
-        "tile_points": {k: v for k, v in counts.items() if v >= 0} or "unchanged",
+        "tile_points": tile_points,
         "note": "2014 flight: buildings and trees newer than 2014 are absent from this point cloud.",
     })
     log(f"lidar: done in {time.time() - t0:.0f}s")

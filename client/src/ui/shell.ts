@@ -331,6 +331,11 @@ export class RdInfoPanel extends LitElement {
       ['Address', b.address],
       ['Height', typeof b.height_m === 'number' ? `${b.height_m.toFixed(1)} m` : undefined],
       ['Levels', b.levels],
+      // lidar roof model, when the API provides it
+      ['Roof', typeof (b['roof_type'] ?? b['roof_shape']) === 'string' ? humanize(String(b['roof_type'] ?? b['roof_shape'])) : undefined],
+      ['Eave height', num(b['eave_h_m'] ?? b['eave_h'])],
+      ['Ridge height', num(b['ridge_h_m'] ?? b['ridge_h'])],
+      ['Height source', typeof (b['height_source'] ?? b['roof_source']) === 'string' ? humanize(String(b['height_source'] ?? b['roof_source'])) : undefined],
       ['Footprint', typeof b.area_m2 === 'number' ? `${Math.round(b.area_m2)} m²` : undefined],
       ['Households', b.households],
       ['Block', b.block],
@@ -418,6 +423,11 @@ export class RdToasts extends LitElement {
   }
 }
 customElements.define('rd-toasts', RdToasts);
+
+/** meters with one decimal, or undefined */
+function num(v: unknown): string | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? `${v.toFixed(1)} m` : undefined;
+}
 
 /** Required on-screen credits: Google logo + data providers when Google tiles are drawn, open-data sources otherwise. */
 export class RdAttribution extends LitElement {

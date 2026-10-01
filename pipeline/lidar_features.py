@@ -704,19 +704,24 @@ def species_guess(
     height: np.ndarray, radius: np.ndarray, mean_ratio: np.ndarray, *, palm_min_h: float = 7.0,
     palm_max_r: float = 2.4, palm_max_rh: float = 0.2, conifer_max_fill: float = 0.62, conifer_min_h: float = 6.0,
     canopy_cover: np.ndarray | None = None, palm_max_cover: float = 0.35,
+    mid_frac: np.ndarray | None = None, palm_max_mid_frac: float = 0.25,
 ) -> np.ndarray:
     """CRUDE GUESS from crown geometry only (no spectral data): 'palm' = tall with a small
     crown (fan / queen palms), 'conifer' = conical crown (mean/top < conifer_max_fill, narrow),
     'broadleaf' = everything else (oaks, sycamores, eucalyptus, pepper trees). With
     `canopy_cover` (share of canopy within 20 m), palms must also stand fairly isolated
     (cover < palm_max_cover): tall narrow crowns inside continuous groves are eucalyptus /
-    riparian trees split by the watershed. Defaults mirror lidar.* in assumptions.yaml."""
+    riparian trees split by the watershed. With `mid_frac` (share of the crown-radius returns
+    above 2 m that lie below half the height), palms must show a bare-trunk profile
+    (mid_frac < palm_max_mid_frac). Defaults mirror lidar.* in assumptions.yaml."""
     h, r, q = (np.asarray(a, dtype=np.float64) for a in (height, radius, mean_ratio))
     out = np.full(h.shape, "broadleaf", dtype=object)
     conifer = (q < conifer_max_fill) & (r / np.maximum(h, 1e-6) < 0.35) & (h >= conifer_min_h)
     palm = (h >= palm_min_h) & (r <= palm_max_r) & (r / np.maximum(h, 1e-6) <= palm_max_rh)
     if canopy_cover is not None:
         palm &= np.nan_to_num(np.asarray(canopy_cover, dtype=np.float64), nan=0.0) < palm_max_cover
+    if mid_frac is not None:  # trunk-like profile: few returns between 2 m and the crown
+        palm &= np.nan_to_num(np.asarray(mid_frac, dtype=np.float64), nan=1.0) < palm_max_mid_frac
     out[conifer] = "conifer"
     out[palm] = "palm"
     return out
@@ -830,8 +835,54 @@ def _polygonal(geom: Any) -> Any:
 
 
 def load_road_lines() -> list[Any]:
-    """Drive-graph edge polylines (EPSG:32611) for masking bridges/overpasses from the
-    missing-building search."""
+    """Drive-graph edge polylines [(highway, LineString)] (EPSG:32611) for masking bridges /
+    overpasses from the missing-building search."""
+    return [(hw, ls) for hw, ls, _ in _road_lines_with_bridge()]
+
+
+def rect_dims(geoms: list[Any]) -> tuple[np.ndarray, np.ndarray]:
+    """(width, length) in m of each geometry's minimum rotated rectangle."""
+    w, ln = np.zeros(len(geoms)), np.zeros(len(geoms))
+    for i, g in enumerate(geoms):
+        xy = np.asarray(g.minimum_rotated_rectangle.exterior.coords)[:4]
+        a, b = np.hypot(*(xy[1] - xy[0])), np.hypot(*(xy[2] - xy[1]))
+        w[i], ln[i] = min(a, b), max(a, b)
+    return w, ln
+
+
+def load_bridge_lines() -> list[Any]:
+    """Road bridges (EPSG:32611): drive-graph edges tagged bridge plus the is_bridge stretches of
+    Overture segments (data/raw/overture/segment.parquet), to drop bridges from lidar-only
+    buildings."""
+    lines = [ls for _, ls, br in _road_lines_with_bridge() if br]
+    f = raw_dir() / "overture" / "segment.parquet"
+    if f.exists():
+        import pyarrow.parquet as pq
+        import shapely
+        from pyproj import Transformer
+        from shapely.ops import substring
+
+        t = pq.read_table(f, columns=["geometry", "road_flags"]).to_pandas()
+        tr = Transformer.from_crs("EPSG:4326", PROJECTION, always_xy=True)
+        for wkb, flags in zip(t["geometry"], t["road_flags"], strict=True):
+            if flags is None:
+                continue
+            spans = [x.get("between") for x in flags if "is_bridge" in list(x.get("values") or [])]
+            if not spans:
+                continue
+            g = shapely.from_wkb(wkb)
+            if g.geom_type != "LineString":
+                continue
+            xy = np.asarray(g.coords)
+            ex, ny = tr.transform(xy[:, 0], xy[:, 1])
+            ls = shapely.LineString(np.column_stack([ex, ny]))
+            for sp in spans:
+                a, b = (float(sp[0]), float(sp[1])) if sp is not None and len(sp) == 2 else (0.0, 1.0)
+                lines.append(substring(ls, a, b, normalized=True))
+    return lines
+
+
+def _road_lines_with_bridge() -> list[tuple[str, Any, bool]]:
     import networkx as nx
     from pyproj import Transformer
     from shapely import wkt
@@ -842,18 +893,17 @@ def load_road_lines() -> list[Any]:
         return []
     g = nx.read_graphml(f)
     t = Transformer.from_crs("EPSG:4326", PROJECTION, always_xy=True)
-    lines = []
+    out = []
     for u, v, data in g.edges(data=True):
-        hw = str(data.get("highway", ""))
+        br = str(data.get("bridge", "")).lower() not in ("", "no", "none", "nan", "false")
         if "geometry" in data:
-            ls = wkt.loads(data["geometry"])
-            xy = np.asarray(ls.coords)
+            xy = np.asarray(wkt.loads(data["geometry"]).coords)
         else:
             nu, nv = g.nodes[u], g.nodes[v]
             xy = np.array([[float(nu["x"]), float(nu["y"])], [float(nv["x"]), float(nv["y"])]])
         ex, ny = t.transform(xy[:, 0], xy[:, 1])
-        lines.append((hw, LineString(np.column_stack([ex, ny]))))
-    return lines
+        out.append((str(data.get("highway", "")), LineString(np.column_stack([ex, ny])), br))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1159,9 +1209,10 @@ def process_roofs(job: TileJob) -> dict[str, Any]:
 
 
 def process_tree_qa(job: TileJob) -> dict[str, Any]:
-    """Per-tree return density in the upper crown: lidar returns higher than half the tree height
-    within the crown radius, per m2 of crown. Real canopy is dense (several returns / m2);
-    power-line wires and lone poles, which the CHM turns into tall narrow 'trees', are sparse."""
+    """Per-tree vertical return profile inside the crown radius: `upper_returns` (>= half the
+    tree height), `mid_returns` (2 m .. half the height) and the upper-crown return density.
+    Real crowns are dense; lone poles / wires that the CHM turns into tall narrow 'trees' are
+    sparse; palms (a dense head on a bare trunk) have few mid returns."""
     import pandas as pd
     from scipy.spatial import cKDTree
 
@@ -1172,6 +1223,7 @@ def process_tree_qa(job: TileJob) -> dict[str, Any]:
     t = pd.read_parquet(work_dir() / f"trees_{job.ckm}_{job.rkm}.parquet")
     dens = np.zeros(len(t))
     nup = np.zeros(len(t), dtype=np.int64)
+    nmid = np.zeros(len(t), dtype=np.int64)
     if len(t):
         res = float(assumption("lidar.raster_res_m"))
         b = job.core.buffered(20.0)
@@ -1187,10 +1239,12 @@ def process_tree_qa(job: TileJob) -> dict[str, Any]:
         e, n = t["easting"].to_numpy(), t["northing"].to_numpy()
         h, r = t["height_m"].to_numpy(), np.maximum(t["crown_radius_m"].to_numpy(), 1.0)
         for i, ix in enumerate(tree.query_ball_point(np.column_stack([e, n]), r)):
-            k = int(np.count_nonzero(hh[ix] >= 0.5 * h[i])) if ix else 0
+            v = hh[ix]
+            k = int(np.count_nonzero(v >= 0.5 * h[i]))
             nup[i] = k
+            nmid[i] = int(np.count_nonzero(v < 0.5 * h[i]))
             dens[i] = k / (math.pi * r[i] ** 2)
-    df = pd.DataFrame({"upper_returns": nup, "upper_return_density_m2": dens})
+    df = pd.DataFrame({"upper_returns": nup, "mid_returns": nmid, "upper_return_density_m2": dens})
     tmp = out.with_suffix(".part")
     df.to_parquet(tmp, index=False)
     tmp.replace(out)
@@ -1426,12 +1480,28 @@ def write_missing(jobs: list[TileJob]) -> Any:
     if len(miss):
         geoms = [swkt.loads(w) for w in miss["wkt"]]
         mg = gpd.GeoDataFrame(miss.drop(columns=["wkt"]), geometry=geoms, crs=PROJECTION)
+        n0 = len(mg)
         mg = mg[mg["roof_type"] != "unknown"].reset_index(drop=True)
+        dropped = {"no_roof_model": n0 - len(mg)}
+        w, ln = rect_dims(list(mg.geometry))
+        thin = (w < float(assumption("lidar.missing_building_min_width_m"))) | (ln / np.maximum(w, 1e-6) > float(assumption("lidar.missing_building_max_elongation")))
+        dropped["thin_or_elongated_wall_gantry_carport"] = int(thin.sum())
+        bridges = load_bridge_lines()
+        on_bridge = np.zeros(len(mg), dtype=bool)
+        if bridges:
+            from shapely import STRtree
+
+            bt = STRtree([b.buffer(10.0) for b in bridges])
+            on_bridge = np.array([len(bt.query(g, predicate="intersects")) > 0 for g in mg.geometry], dtype=bool)
+        dropped["on_osm_bridge"] = int((on_bridge & ~thin).sum())
+        mg = mg[~thin & ~on_bridge].reset_index(drop=True)
         c = mg.geometry.centroid
         mg["centroid_x"], mg["centroid_z"] = utm_to_scene_arrays(c.x.to_numpy(), c.y.to_numpy())
         lon, lat = utm_to_lonlat_arrays(c.x.to_numpy(), c.y.to_numpy())
         mg["centroid_lat"], mg["centroid_lon"] = lat, lon
-        mg = mg[in_bbox(lon, lat)].reset_index(drop=True)
+        inside = in_bbox(lon, lat)
+        dropped["outside_bbox"] = int((~inside).sum())
+        mg = mg[inside].reset_index(drop=True)
         mg.insert(0, "lidar_id", [f"lidar_{i:05d}" for i in range(len(mg))])
         mg["height_m"] = mg["ridge_height_m"].round(2)
         mg["quality"] = np.where(mg["n_roof_points"] >= 40, "good", np.where(mg["n_roof_points"] >= 12, "fair", "poor"))
@@ -1439,13 +1509,16 @@ def write_missing(jobs: list[TileJob]) -> Any:
         mg = gpd.GeoDataFrame(add_spec_aliases(mg), geometry="geometry", crs=PROJECTION)
         mg["planes"] = [json.dumps(v) for v in mg["planes"]]  # GeoJSON properties: JSON string
         mg = mg.to_crs("EPSG:4326")
+        mg.attrs["dropped"] = dropped
     else:
         mg = gpd.GeoDataFrame({"lidar_id": []}, geometry=[], crs="EPSG:4326")
+    dropped_attrs = dict(mg.attrs.get("dropped", {}))
     p = lidar_dir() / "missing_buildings.geojson"
     tmp = p.with_suffix(".part")
     tmp.unlink(missing_ok=True)
     mg.to_file(tmp, driver="GeoJSON")
     tmp.replace(p)
+    mg.attrs["dropped"] = dropped_attrs
     return mg
 
 
@@ -1482,6 +1555,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--force", action="store_true", help="recompute every tile and every roof")
     ap.add_argument("--force-roofs", action="store_true", help="recompute roofs only (tiles stay cached)")
+    ap.add_argument("--force-trees", action="store_true", help="recompute the tree QA pass only (tiles stay cached)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--tiles-only", action="store_true", help="stop after rasters, trees and lidar-only buildings")
     ap.add_argument("--no-shift", action="store_true", help="do not apply the measured registration shift")
@@ -1533,7 +1607,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # 3. tree QA (upper-crown return density, needs the DTM mosaic), then trees + lidar-only buildings
     t = time.time()
-    qjobs = [TileJob(j.ckm, j.rkm, j.core, [], [], [], j.shift, args.force) for j in jobs]
+    qjobs = [TileJob(j.ckm, j.rkm, j.core, [], [], [], j.shift, args.force or args.force_trees) for j in jobs]
     run_parallel(process_tree_qa, qjobs, args.workers, "tree QA")
     trees = write_trees(jobs)
     mg = write_missing(jobs)
@@ -1631,14 +1705,79 @@ def add_spec_aliases(df: Any) -> Any:
     return df
 
 
+def wire_line_mask(
+    e: np.ndarray, n: np.ndarray, h: np.ndarray, r: np.ndarray, *, min_h: float = 12.0, max_rh: float = 0.08,
+    band_m: float = 12.0, min_pts: int = 80, min_len_m: float = 400.0, max_gap_m: float = 60.0, max_lines: int = 30,
+    n_hyp: int = 2000, seed: int = SEED,
+) -> np.ndarray:
+    """Power-line corridors: 'trees' that are tall and extremely narrow (radius / height <
+    max_rh: wire spans and towers) and line up along straight runs >= min_len_m with >= min_pts
+    candidates (gaps < max_gap_m), found by sequential 2-point RANSAC. Returns a mask of the
+    candidates on such runs."""
+    e, n, h, r = (np.asarray(v, dtype=np.float64) for v in (e, n, h, r))
+    cand = np.nonzero((h >= min_h) & (r / np.maximum(h, 1e-6) < max_rh))[0]
+    out = np.zeros(len(e), dtype=bool)
+    if len(cand) < min_pts:
+        return out
+    P = np.column_stack([e[cand], n[cand]])
+    rem = np.arange(len(P))
+    rng = np.random.default_rng(seed)
+    for _ in range(max_lines):
+        if len(rem) < min_pts:
+            break
+        q = P[rem]
+        ij = rng.integers(0, len(q), size=(n_hyp, 2))
+        d = q[ij[:, 1]] - q[ij[:, 0]]
+        length = np.hypot(d[:, 0], d[:, 1])
+        ok = length > 50.0
+        if not ok.any():
+            break
+        u = d[ok] / length[ok, None]
+        p0 = q[ij[ok, 0]]
+        nrm = np.column_stack([-u[:, 1], u[:, 0]])
+        sub = q if len(q) <= 3000 else q[rng.choice(len(q), 3000, replace=False)]
+        cnt = (np.abs(((sub[:, None, :] - p0[None, :, :]) * nrm[None, :, :]).sum(axis=2)) < band_m).sum(axis=0)
+        k = int(np.argmax(cnt))
+        dist = np.abs((q - p0[k]) @ nrm[k])
+        inl = dist < band_m
+        sv = (q[inl] - p0[k]) @ u[k]
+        ss = np.sort(sv)
+        runs = np.split(ss, np.nonzero(np.diff(ss) > max_gap_m)[0] + 1)
+        run = max(runs, key=len)
+        if len(run) < min_pts or run[-1] - run[0] < min_len_m:
+            break
+        s_all = (q - p0[k]) @ u[k]
+        on = inl & (s_all >= run[0] - 1e-6) & (s_all <= run[-1] + 1e-6)
+        out[cand[rem[on]]] = True
+        rem = rem[~on]
+    return out
+
+
 def assemble_trees(t: Any) -> Any:
+    """Tile tree candidates -> trees.parquet rows (inside the bbox, QA-filtered). Dropped
+    candidate counts are in `out.attrs["dropped"]`."""
     import pandas as pd
 
     if not len(t):
         return t
     lon, lat = utm_to_lonlat_arrays(t["easting"].to_numpy(), t["northing"].to_numpy())
     inside = in_bbox(lon, lat)
+    dropped = {"outside_bbox": int((~inside).sum())}
     t, lon, lat = t[inside].reset_index(drop=True), lon[inside], lat[inside]
+    keep = np.ones(len(t), dtype=bool)
+    if "upper_returns" in t:
+        sparse = t["upper_returns"].to_numpy() < int(assumption("lidar.tree_min_upper_returns"))
+        dropped["sparse_returns_pole_or_wire"] = int(sparse.sum())
+        keep &= ~sparse
+    too_tall = t["height_m"].to_numpy() > float(assumption("lidar.tree_max_height_m"))
+    dropped["taller_than_max_tower_or_wire"] = int((too_tall & keep).sum())
+    keep &= ~too_tall
+    wire = wire_line_mask(t["easting"].to_numpy(), t["northing"].to_numpy(), t["height_m"].to_numpy(),
+                          t["crown_radius_m"].to_numpy(), max_rh=float(assumption("lidar.wire_max_radius_height_ratio")))
+    dropped["power_line_corridor"] = int((wire & keep).sum())
+    keep &= ~wire
+    t, lon, lat = t[keep].reset_index(drop=True), lon[keep], lat[keep]
+    mid_frac = (t["mid_returns"] / np.maximum(t["mid_returns"] + t["upper_returns"], 1)).to_numpy() if "mid_returns" in t else None
     x, z = utm_to_scene_arrays(t["easting"].to_numpy(), t["northing"].to_numpy())
     out = pd.DataFrame({
         "tree_id": np.arange(len(t), dtype=np.int64),
@@ -1654,14 +1793,19 @@ def assemble_trees(t: Any) -> Any:
             conifer_min_h=float(assumption("lidar.conifer_min_height_m")),
             canopy_cover=t["canopy_cover_20m"].to_numpy() if "canopy_cover_20m" in t else None,
             palm_max_cover=float(assumption("lidar.palm_max_canopy_cover")),
+            mid_frac=mid_frac, palm_max_mid_frac=float(assumption("lidar.palm_max_mid_return_frac")),
         ).astype(str),
         "canopy_cover_20m": t["canopy_cover_20m"].to_numpy() if "canopy_cover_20m" in t else np.nan,
         "crown_mean_ratio": t["crown_mean_ratio"].to_numpy(),
+        "upper_returns": t["upper_returns"].to_numpy() if "upper_returns" in t else -1,
+        "mid_return_frac": mid_frac if mid_frac is not None else np.nan,
         "ground_lidar_m": t["ground_lidar_m"].to_numpy(),
         "easting": t["easting"].to_numpy(), "northing": t["northing"].to_numpy(),
     })
-    for c in ("x", "z", "ground_y", "height_m", "crown_radius_m", "crown_mean_ratio", "ground_lidar_m", "canopy_cover_20m"):
+    for c in ("x", "z", "ground_y", "height_m", "crown_radius_m", "crown_mean_ratio", "ground_lidar_m", "canopy_cover_20m",
+              "mid_return_frac"):
         out[c] = out[c].round(2)
+    out.attrs["dropped"] = dropped
     return out
 
 
@@ -1700,6 +1844,7 @@ def validation(b: Any, mg: Any, trees: Any, reg: dict[str, Any], shift: tuple[fl
         "missing_buildings": int(len(mg)),
         "trees": int(len(trees)),
         "trees_by_species_guess": {str(k): int(v) for k, v in trees["species_guess"].value_counts().items()} if len(trees) else {},
+        "tree_candidates_dropped": dict(trees.attrs.get("dropped", {})),
         "overture_minus_lidar_ridge_m": ridge_vs,
         "overture_vs_ridge_corr": corr,
         "overture_minus_lidar_other_m": other_vs,
@@ -1708,6 +1853,7 @@ def validation(b: Any, mg: Any, trees: Any, reg: dict[str, Any], shift: tuple[fl
         "pitch_deg_percentiles_sloped": {str(q): float(np.nanpercentile(pres.loc[pres["roof_type"] != "flat", "roof_pitch_deg"], q)) for q in (5, 25, 50, 75, 95)} if len(pres) else {},
         "tree_height_m_percentiles": {str(q): float(np.percentile(trees["height_m"], q)) for q in (5, 25, 50, 75, 95)} if len(trees) else {},
         "tree_crown_radius_m_percentiles": {str(q): float(np.percentile(trees["crown_radius_m"], q)) for q in (5, 25, 50, 75, 95)} if len(trees) else {},
+        "missing_building_candidates_dropped": dict(mg.attrs.get("dropped", {})),
         "missing_buildings_by_roof_type": {str(k): int(v) for k, v in mg["roof_type"].value_counts().items()} if len(mg) and "roof_type" in mg else {},
         "missing_buildings_area_m2_total": float(mg["area_m2"].sum()) if len(mg) and "area_m2" in mg else 0.0,
         "registration_shift_applied_m": list(shift),

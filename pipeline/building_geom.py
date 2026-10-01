@@ -128,16 +128,19 @@ def _slabs(pr: Polygon, axis: int, tol: float, min_w: float) -> list[tuple[float
     cuts = _cluster(coords[:, axis], tol)
     lo_all, hi_all = coords[:, axis].min(), coords[:, axis].max()
     cuts[0], cuts[-1] = float(lo_all), float(hi_all)
-    big = 1e5
+    bx0, bz0, bx1, bz1 = pr.bounds
     raw: list[list[float]] = []
     for a, b in zip(cuts[:-1], cuts[1:], strict=True):
         if b - a < 0.05:
             continue
-        slab = box(a, -big, b, big) if axis == 0 else box(-big, a, big, b)
+        slab = box(a, bz0 - 1.0, b, bz1 + 1.0) if axis == 0 else box(bx0 - 1.0, a, bx1 + 1.0, b)
         inter = pr.intersection(slab)
-        if inter.is_empty or inter.area < 0.05 * (b - a):
+        # polygonal parts only: edges lying on the slab boundary come back as zero-area lines
+        # whose bounds would stretch the slab across the neighbouring wing
+        parts = [g for g in getattr(inter, "geoms", [inter]) if g.geom_type == "Polygon" and g.area > 1e-6]
+        if not parts or sum(g.area for g in parts) < 0.05 * (b - a):
             continue
-        x0, z0, x1, z1 = inter.bounds
+        x0, z0, x1, z1 = unary_union(parts).bounds
         lo, hi = (z0, z1) if axis == 0 else (x0, x1)
         raw.append([a, b, lo, hi])
     if not raw:
@@ -192,6 +195,14 @@ def roof_plan(poly: Polygon, max_rects: int = 4, tol: float = 1.0, min_w: float 
     the footprint is not well approximated (caller falls back to a flat roof)."""
     if poly.is_empty or poly.area < 12.0:
         return None
+    c0 = poly.centroid
+    if abs(c0.x) > 1e4 or abs(c0.y) > 1e4:  # work near the origin (float precision), shift back
+        from shapely.affinity import translate
+
+        plan = roof_plan(translate(poly, -c0.x, -c0.y), max_rects, tol, min_w, min_iou)
+        if plan is None:
+            return None
+        return RoofPlan(walls=translate(plan.walls, c0.x, c0.y), rects=[r + np.array([c0.x, c0.y]) for r in plan.rects], iou=plan.iou)
     ang = dominant_angle(poly)
     c = poly.centroid
     pr = rotate(poly, -ang, origin=c, use_radians=True)

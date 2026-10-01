@@ -138,11 +138,13 @@ export function prepareBuildingGeometry(g: THREE.BufferGeometry, opts: PrepOptio
     key: number;
     street: boolean;
   }
-  const planes = new Map<string, Plane>();
+  const planes = new Map<number, Plane>();
+  // numeric plane key: building id, normal angle (deg), plane offset (0.25 m)
+  const pkey = (b: number, ang: number, d: number): number => (b * 361 + (ang + 180)) * 262144 + (d + 131072);
   const planeOf = new Int32Array(n).fill(-1);
   const planeList: Plane[] = [];
   // roof planes (eave alignment of S tiles)
-  const roofPlanes = new Map<string, { vMin: number }>();
+  const roofPlanes = new Map<number, { vMin: number }>();
   const roofOf: Array<{ vMin: number } | null> = new Array(n).fill(null);
   for (let i = 0; i < n; i++) {
     const m = mat[i]!;
@@ -158,7 +160,7 @@ export function prepareBuildingGeometry(g: THREE.BufferGeometry, opts: PrepOptio
     const ang = Math.round((Math.atan2(uz, ux) * 180) / Math.PI);
     if (m === MAT_WALL || m === MAT_GLASS || m === MAT_TRIM || m === MAT_GARAGE) {
       const d = Math.round((x * ux + z * uz) * 4);
-      const k = `${bid[i]}|${ang}|${d}`;
+      const k = pkey(bid[i]!, ang, d);
       let p = planes.get(k);
       if (!p) {
         p = { b: bid[i]!, tx: -uz, tz: ux, nx: ux, nz: uz, sMin: Infinity, sMax: -Infinity, yMin: Infinity, key: 0, street: false };
@@ -168,9 +170,8 @@ export function prepareBuildingGeometry(g: THREE.BufferGeometry, opts: PrepOptio
       const s = x * p.tx + z * p.tz;
       if (s < p.sMin) p.sMin = s;
       if (s > p.sMax) p.sMax = s;
-      planeOf[i] = planeList.indexOf(p) >= 0 ? planeList.length - 1 : -1;
     } else if (m === MAT_TILE_ROOF && ny > 0.05) {
-      const k = `${bid[i]}|${ang}`;
+      const k = bid[i]! * 361 + (ang + 180);
       let rp = roofPlanes.get(k);
       if (!rp) roofPlanes.set(k, (rp = { vMin: Infinity }));
       // up-slope distance in the roof plane (horizontal distance / cos(slope))
@@ -179,7 +180,7 @@ export function prepareBuildingGeometry(g: THREE.BufferGeometry, opts: PrepOptio
       roofOf[i] = rp;
     }
   }
-  // planeOf via map lookup (indexOf above is wrong for existing planes: redo properly)
+  // plane index per vertex
   const planeIdx = new Map<Plane, number>();
   planeList.forEach((p, k) => planeIdx.set(p, k));
   for (let i = 0; i < n; i++) {
@@ -199,7 +200,7 @@ export function prepareBuildingGeometry(g: THREE.BufferGeometry, opts: PrepOptio
     const uz = nz / hl;
     const ang = Math.round((Math.atan2(uz, ux) * 180) / Math.PI);
     const d = Math.round((pos.getX(i) * ux + pos.getZ(i) * uz) * 4);
-    const p = planes.get(`${bid[i]}|${ang}|${d}`);
+    const p = planes.get(pkey(bid[i]!, ang, d));
     planeOf[i] = p ? planeIdx.get(p)! : -1;
   }
   // street-facing wall per building: best aligned with the direction to the nearest street, long enough

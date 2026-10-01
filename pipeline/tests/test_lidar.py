@@ -244,3 +244,33 @@ def test_canopy_cover_at() -> None:
     core = np.array([0.0, 0.0, 50.0, 50.0])
     cov = canopy_cover_at(chm, core, 0.5, np.array([5.0, 45.0]), np.array([25.0, 25.0]), window_m=10.0)
     assert cov[0] == pytest.approx(1.0) and cov[1] == pytest.approx(0.0)
+
+
+def test_wire_line_mask_finds_corridor_not_scattered_palms() -> None:
+    from pipeline.lidar_features import wire_line_mask
+
+    rng = np.random.default_rng(0)
+    s = np.linspace(0, 1500, 200)  # a 1.5 km straight corridor of tall, very narrow 'trees'
+    we, wn = 1000 + 0.6 * s + rng.normal(0, 3, 200), 5000 + 0.8 * s + rng.normal(0, 3, 200)
+    pe, pn = rng.uniform(0, 3000, 300), rng.uniform(4000, 7000, 300)  # scattered tall narrow palms
+    e, n = np.concatenate([we, pe]), np.concatenate([wn, pn])
+    h = np.concatenate([np.full(200, 25.0), np.full(300, 14.0)])
+    r = np.concatenate([np.full(200, 0.9), np.full(300, 1.0)])
+    m = wire_line_mask(e, n, h, r)
+    assert m[:200].mean() > 0.95
+    assert m[200:].mean() < 0.05
+
+
+def test_species_guess_trunk_profile_rule() -> None:
+    g = species_guess(np.array([12.0, 12.0]), np.array([1.5, 1.5]), np.array([0.9, 0.9]), mid_frac=np.array([0.05, 0.6]))
+    assert list(g) == ["palm", "broadleaf"]
+
+
+def test_rect_dims() -> None:
+    from shapely.affinity import rotate
+    from shapely.geometry import box
+
+    from pipeline.lidar_features import rect_dims
+
+    w, ln = rect_dims([rotate(box(0, 0, 30, 3), 37), box(0, 0, 10, 12)])
+    assert w == pytest.approx([3.0, 10.0]) and ln == pytest.approx([30.0, 12.0])

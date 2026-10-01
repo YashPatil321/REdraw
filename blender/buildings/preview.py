@@ -208,7 +208,7 @@ def mesh_object(name: str, V: np.ndarray, F: np.ndarray, uv: np.ndarray | None, 
     return ob
 
 
-def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1, yards: Any = None) -> None:
+def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1, yards: Any = None, paved: Any = None) -> None:
     h = T.h[::stride, ::stride]
     nimg = T.naip[::stride, ::stride].astype(np.float32) / 255.0
     n = h.shape[0]
@@ -216,6 +216,9 @@ def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1, yards: Any 
     zs = T.z0 + T.step * stride * np.arange(n)
     X, Z = np.meshgrid(xs, zs)
     V = np.column_stack([X.ravel(), -Z.ravel(), h.ravel() - 0.04])
+    if paved is not None and not paved.is_empty:  # keep the terrain under the draped paving
+        shapely.prepare(paved)
+        V[shapely.contains_xy(paved, X.ravel(), Z.ravel()), 2] -= 0.2
     idx = np.arange(n * n).reshape(n, n)
     # rows go south (-Y): (i, j) -> (i, j+1) -> (i+1, j+1) is clockwise seen from above; flip
     F = np.column_stack([idx[:-1, :-1].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel(), idx[:-1, 1:].ravel()])
@@ -241,7 +244,7 @@ def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1, yards: Any 
              + g[i0 + 1][:, i0 + 1] * np.outer(f, f)).ravel()
         dry = np.array([0.62, 0.55, 0.40])
         yard_col = lawn_srgb[None, :] * (0.85 + 0.3 * G[:, None])
-        yard_col = np.where((G > 0.78)[:, None], dry[None, :] * (0.9 + 0.2 * G[:, None]), yard_col)
+        yard_col = np.where((G > 0.9)[:, None], dry[None, :] * (0.9 + 0.2 * G[:, None]), yard_col)
         col[m] = yard_col[m]
     mesh_object("terrain", V, F, uv, ground_material(man, "grass_lawn", "Col"), col)
 
@@ -279,7 +282,7 @@ def drape_polys(g: Any, T: Terrain, dz: float, cell: float = 6.0) -> tuple[np.nd
     return V, F
 
 
-def roads_and_driveways(T: Terrain, data: dict[str, Any], builders: list[model.Builder], man: dict[str, Any]) -> Any:
+def roads_and_driveways(T: Terrain, data: dict[str, Any], builders: list[model.Builder], man: dict[str, Any]) -> tuple[Any, Any]:
     asph, gutter, walk, park, drive, paths = [], [], [], [], [], []
     for r in data["roads"]:
         ln = LineString(r["pts"])
@@ -333,13 +336,13 @@ def roads_and_driveways(T: Terrain, data: dict[str, Any], builders: list[model.B
     Wk = shapely.union_all([Wk, *paths]).difference(A).difference(G)
     D = D.difference(G)
     Wk = Wk.difference(D)
-    for name, g, cell, dz in (("asphalt", A, "asphalt_worn", 0.03), ("gutter", G, "concrete_sidewalk", 0.06),
-                              ("sidewalk", Wk, "concrete_sidewalk", 0.09), ("driveway", D, "concrete_driveway", 0.08)):
+    for name, g, cell, dz in (("asphalt", A, "asphalt_worn", 0.02), ("gutter", G, "concrete_sidewalk", 0.05),
+                              ("sidewalk", Wk, "concrete_sidewalk", 0.12), ("driveway", D, "concrete_driveway", 0.1)):
         V, F = drape_polys(g, T, dz)
         if len(F):
             size = cell_size(man, cell)
             mesh_object(name, V, F, V[:, :2] / size, ground_material(man, cell))
-    return A
+    return A, shapely.union_all([A, G, Wk, D]).buffer(0.6)
 
 
 def import_proto(path: Path) -> bpy.types.Object | None:
@@ -533,10 +536,10 @@ def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, di
                 log(f"building {sp['id']}: {e}")
     log(f"{len(builders)} buildings, {soup.ntris:,} tris ({time.time() - t0:.0f}s)")
     soup_object("buildings", soup, man)
-    asphalt = roads_and_driveways(T, data, builders, man)
+    asphalt, paved = roads_and_driveways(T, data, builders, man)
     corridor = shapely.union_all([LineString(r["pts"]).buffer(ROAD_W.get(r["cls"], 9.0) / 2 + 5.0) for r in data["roads"]])
     yards = shapely.union_all([p.buffer(16.0) for p in polys] + [corridor]) if polys else corridor
-    terrain_object(T, man, yards=yards)
+    terrain_object(T, man, yards=yards, paved=paved)
     ndeco = decorate_lots(T, builders, asphalt)
     log(f"{ndeco} yard plants / driveway cars")
     bp = shapely.union_all(polys) if polys else None

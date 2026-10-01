@@ -846,7 +846,11 @@ def building_shapes(bdf: gpd.GeoDataFrame, terrain: Terrain, heroes: list[Hero] 
         rects: list[np.ndarray] = []
         walls = poly
         if btype in PITCHED_TYPES and kind != "flat" or (btype in PITCHED_TYPES and getattr(row, "roof_shape", None) is None):
-            plan = roof_plan(poly)
+            plan = (
+                roof_plan(poly)
+                or roof_plan(poly, max_rects=6, tol=1.5, min_iou=0.72)
+                or roof_plan(orient(poly.simplify(1.0, preserve_topology=True), 1.0), max_rects=6, tol=2.0, min_iou=0.7)
+            )
             if plan is None and btype == "house" and rectangularity(poly) >= 0.7:
                 rr = orient(poly.minimum_rotated_rectangle, 1.0)
                 plan_rects = [np.asarray(rr.exterior.coords)[:4, :2]]
@@ -874,13 +878,9 @@ def building_shapes(bdf: gpd.GeoDataFrame, terrain: Terrain, heroes: list[Hero] 
         if kind != "flat":
             w_max = max(min(np.hypot(*(r[1] - r[0])), np.hypot(*(r[2] - r[1]))) for r in rects)
             rise = (w_max / 2.0) * t
-            eave = getattr(row, "lidar_eave_height_m", None)
-            eave = float(eave) if eave is not None and np.isfinite(pd.to_numeric(eave, errors="coerce")) else None
-            if rule == "lidar" and eave is not None and 2.2 <= eave < h_tag:
-                # measured eave line (lidar heights are above the bare-earth ground under the roof)
-                wall_top = base_y - slab + eave
-                levels = max(1, int(round(eave / story)))
-            elif rule in ("height", "lidar"):
+            # lidar: match the measured ridge (the lidar "eave" is the LOWEST eave, often a porch
+            # or garage wing, so it is not used for the main wall height)
+            if rule in ("height", "lidar"):
                 levels = max(1, int(round((h_tag - rise) / story)))
                 wall_top = base_y + max(2.6, h_tag - rise)
             else:
@@ -1184,6 +1184,12 @@ def add_lidar_missing_buildings(gdf: gpd.GeoDataFrame, raw: Path) -> gpd.GeoData
     if not p.exists():
         return gdf
     extra = gpd.read_file(p)
+    if not len(extra):
+        return gdf
+    if "quality" in extra.columns:  # keep confident roof detections only
+        extra = extra[extra["quality"].astype(str).isin(LIDAR_USABLE_QUALITY)].reset_index(drop=True)
+    if "lidar_status" in extra.columns:
+        extra = extra[extra["lidar_status"].astype(str) == "present"].reset_index(drop=True)
     if not len(extra):
         return gdf
     extra = extra.to_crs("EPSG:32611")

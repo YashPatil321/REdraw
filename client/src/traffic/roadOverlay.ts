@@ -268,7 +268,8 @@ export class RoadOverlay {
   setStyle(style: 'open' | 'photoreal'): void {
     const u = this.material.uniforms;
     const pr = style === 'photoreal';
-    u['uOpacity']!.value = pr ? 0.82 : 0.9;
+    this.baseOpacity = pr ? 0.82 : 0.9;
+    u['uOpacity']!.value = this.baseOpacity * (1 - 0.8 * this.street);
     u['uSoft']!.value = 1;
     u['uPull']!.value = pr ? 2.5 : 0;
     u['uWidthScale']!.value = pr ? 0.62 : 0.7;
@@ -279,6 +280,16 @@ export class RoadOverlay {
       this.material.toneMapped = !pr;
       this.material.needsUpdate = true;
     }
+  }
+
+  private baseOpacity = 0.9;
+  private street = 0;
+
+  /** 0 = map view .. 1 = street level: ribbons fade to a faint tint so the road itself reads. */
+  setStreetLevel(f: number): void {
+    if (Math.abs(f - this.street) < 0.01) return;
+    this.street = f;
+    this.material.uniforms['uOpacity']!.value = this.baseOpacity * (1 - 0.8 * f);
   }
 
   setHighlight(edge: number | null): void {

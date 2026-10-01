@@ -512,11 +512,12 @@ export class World {
     for (let i = list.length - 1; i >= 0; i--) if (set.has(list[i]!)) list.splice(i, 1);
     for (const m of set) {
       m.geometry.dispose();
-      const mat = m.material as THREE.Material;
       // shared atlas materials are kept
-      if (mat !== this.atlasWall && mat !== this.atlasRoof && mat !== this.groundMat && mat !== this.markMat) {
-        (mat as THREE.MeshStandardMaterial).map?.dispose();
-        mat.dispose();
+      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+        if (mat !== this.atlasWall && mat !== this.atlasRoof && mat !== this.groundMat && mat !== this.markMat) {
+          (mat as THREE.MeshStandardMaterial).map?.dispose();
+          mat.dispose();
+        }
       }
       const map = m.userData.map as THREE.Texture | undefined;
       map?.dispose();
@@ -596,6 +597,17 @@ export class World {
   /** Decide LODs from the camera position: load what is needed, evict what is far. */
   private stream(cam: THREE.Vector3): void {
     for (const t of this.tiles) {
+      try {
+        this.streamTile(t, cam);
+      } catch (e) {
+        console.warn(`world streaming ${t.id}:`, e);
+      }
+    }
+    this.pump();
+  }
+
+  private streamTile(t: Tile, cam: THREE.Vector3): void {
+    {
       t.dist = t.box.distanceToPoint(cam);
       const want = this.wantTerrainLod(t);
       const wantL = t.lods.find((l) => l.lod === want) ?? null;
@@ -634,7 +646,6 @@ export class World {
       this.showBestTerrain(t, want);
       this.showBestBuildings(t);
     }
-    this.pump();
   }
 
   /** Per-tile LOD streaming + frustum culling (plus hiding far building tiles). */
@@ -947,9 +958,10 @@ export class World {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
       m.geometry.dispose();
-      const mat = m.material as THREE.MeshLambertMaterial;
-      mat.map?.dispose();
-      mat.dispose();
+      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) {
+        (mat as THREE.MeshLambertMaterial).map?.dispose();
+        mat.dispose();
+      }
     });
     for (const t of this.tiles) t.splat?.forEach((s) => s.dispose());
     this.group.clear();

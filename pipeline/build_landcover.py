@@ -137,8 +137,8 @@ def write_splat_masks(
     """Write splat_{tid}_a.png / _b.png for every tile. `paved` is a (multi)polygon (scene),
     `water` a list of polygons, `landuse` (polygon, class) pairs, `landcover` Overture
     land_cover (polygon, subtype) pairs (weak 10 m prior), `lidar` optional paths of the lidar
-    canopy-height / nDSM rasters ({"chm": ..., "ndsm": ...}, 0.5 m) that sharpen tree canopy and
-    shrub vs lawn. Returns tile id -> paths."""
+    canopy-height / nDSM / ground-change rasters ({"chm", "ndsm", "change"}, 0.5 m) that sharpen
+    tree canopy and shrub vs lawn (ignored where the ground was regraded after the 2014 flight). Returns tile id -> paths."""
     import shapely
 
     out: dict[str, list[str]] = {}
@@ -148,6 +148,7 @@ def write_splat_masks(
     lidar = {k: v for k, v in (lidar or {}).items() if v is not None and Path(v).exists()}
     shrub_max = float(assumption("hd_world.ndsm_shrub_max_m"))
     canopy_min = float(assumption("hd_world.ndsm_canopy_min_m"))
+    chg_thr = float(assumption("lidar.ground_change_m"))
     lu_geoms = [g for g, _ in landuse]
     lu_tree = shapely.STRtree(lu_geoms) if lu_geoms else None
     w_tree = shapely.STRtree(water) if water else None
@@ -198,6 +199,12 @@ def write_splat_masks(
             # lawn / bare ground is flat. Buildings are removed by the paved override below.
             chm = _raster_band(lidar["chm"], b, size) if "chm" in lidar else None
             ndsm = _raster_band(lidar["ndsm"], b, size) if "ndsm" in lidar else chm
+            # land regraded after the 2014 flight (new tracts): the lidar vegetation is stale there
+            fresh = 1 - _smooth(np.abs(_raster_band(lidar["change"], b, size)), chg_thr * 0.6, chg_thr) if "change" in lidar else 1.0
+            if chm is not None:
+                chm = chm * fresh
+            if ndsm is not None:
+                ndsm = ndsm * fresh
             if chm is not None:
                 tree = _smooth(chm, canopy_min * 0.8, canopy_min * 1.2)
                 wts[..., 5] = np.maximum(wts[..., 5], 1.5 * tree)

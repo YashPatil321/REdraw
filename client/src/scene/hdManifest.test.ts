@@ -42,3 +42,13 @@ describe('placementsStale', () => {
     expect(placementsStale({ cells: { min_x: 1, min_z: 1 } }, null)).toBe(false);
   });
 });
+
+describe('asphaltGain', () => {
+  it('lifts dark asphalt cells only', async () => {
+    const { asphaltGain } = await import('./groundMaterial');
+    expect(asphaltGain('asphalt_worn', 0.067)).toBeCloseTo(0.125 / 0.067, 3);
+    expect(asphaltGain('asphalt_fresh', 0.024)).toBeCloseTo(0.075 / 0.024, 3);
+    expect(asphaltGain('concrete_sidewalk', 0.42)).toBe(1);
+    expect(asphaltGain('asphalt_worn', 0.3)).toBe(1);
+  });
+});

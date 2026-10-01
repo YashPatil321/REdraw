@@ -433,6 +433,8 @@ lidar:
   ransac_threshold_m: {value: 0.18, unit: m, range: [0.10, 0.30], source: "plane inlier distance; QL2 vertical accuracy is <= 10 cm RMSE (USGS LBS v1.2) plus roof texture", verified: false}
   flat_roof_max_slope_deg: {value: 8.0, unit: deg, range: [5.0, 12.0], source: "roof planes flatter than this count as flat (low-slope commercial roofs are 1/4 in per ft, ~1.2 deg)", verified: false}
   missing_building_min_height_m: {value: 2.5, unit: m, range: [2.0, 3.5], source: "task spec: unmatched lidar objects taller than this can be buildings", verified: true}
+  missing_building_min_width_m: {value: 4.0, unit: m, range: [3.0, 6.0], source: "lidar-only buildings narrower than this (minimum rotated rectangle) are walls / sign gantries / hedges; guess", verified: false}
+  missing_building_max_elongation: {value: 5.0, unit: ratio, range: [4.0, 8.0], source: "lidar-only buildings longer than this many widths are sound walls / bridges / carport rows; guess", verified: false}
   missing_building_min_area_m2: {value: 40.0, unit: m2, range: [25.0, 60.0], source: "task spec: smallest lidar-only building kept (a one-car garage is ~25 m2)", verified: true}
   tree_min_height_m: {value: 4.0, unit: m, range: [3.0, 5.0], source: "below this, canopy is chaparral/sage scrub shrubland on the open-space slopes rather than trees", verified: false}
   ground_change_m: {value: 1.5, unit: m, range: [1.0, 3.0], source: "|3DEP 2024 DEM - lidar 2014 ground| above this marks land regraded after 2014 (lidar objects there are stale)", verified: false}
@@ -440,6 +442,10 @@ lidar:
   palm_max_crown_radius_m: {value: 2.4, unit: m, range: [1.5, 3.0], source: "species_guess: widest crown radius still called a palm (lidar crown incl. smoothing); guess", verified: false}
   palm_max_radius_height_ratio: {value: 0.2, unit: ratio, range: [0.15, 0.3], source: "species_guess: crown radius / height of palms (broadleaf street trees are ~0.3-0.5); guess", verified: false}
   palm_max_canopy_cover: {value: 0.35, unit: share, range: [0.25, 0.5], source: "species_guess: palms stand fairly isolated (street / yard); share of canopy within 20 m above this = grove tree (eucalyptus / riparian) even with a narrow crown; guess", verified: false}
+  palm_max_mid_return_frac: {value: 0.25, unit: share, range: [0.15, 0.4], source: "species_guess: palms are a dense head on a bare trunk, so few crown-radius returns fall between 2 m and half the height; guess, calibrated on the 2014 point cloud", verified: false}
+  tree_min_upper_returns: {value: 5, unit: count, range: [3, 10], source: "tree QA: fewer upper-crown returns than this = pole / wire / noise, not a crown (QL2 ~4.6 pts/m2 gives ~14 returns on a 1 m-radius crown)", verified: false}
+  wire_max_radius_height_ratio: {value: 0.08, unit: ratio, range: [0.05, 0.12], source: "tree QA: crown radius / height below this (and >= 12 m tall) marks a wire / tower candidate; candidates on straight >= 400 m runs are power-line corridors (SDG&E transmission lines cross the bbox)", verified: false}
+  tree_max_height_m: {value: 40.0, unit: m, range: [35.0, 50.0], source: "tree QA: taller 'trees' are transmission towers / wires (the tallest eucalyptus in coastal San Diego County are ~35-45 m); guess", verified: false}
   conifer_max_crown_fill: {value: 0.62, unit: ratio, range: [0.5, 0.7], source: "species_guess: mean crown CHM / top height below this = conical crown (cone 0.33, paraboloid 0.5, dome 0.67+); guess", verified: false}
   conifer_min_height_m: {value: 6.0, unit: m, range: [4.0, 10.0], source: "species_guess: shortest tree called a conifer (Canary Island / Aleppo pines); guess", verified: false}
   hip_min_eave_frac: {value: 0.75, unit: share, range: [0.65, 0.9], source: "roof typing: share of the footprint outline that must be eaves for a >= 3-facing roof to be a hip (a gable rectangle is L/(L+W) ~0.6-0.7); calibrated by eye on 4S Ranch tracts", verified: false}

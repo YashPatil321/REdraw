@@ -15,7 +15,11 @@ import shapely
 from PIL import Image
 from shapely.geometry import LineString, box
 
-from pipeline.build_buildings import add_lidar_missing_buildings, lidar_roof_join, write_buildings_geojson
+from pipeline.build_buildings import (
+    add_lidar_missing_buildings,
+    lidar_roof_join,
+    write_buildings_geojson,
+)
 from pipeline.build_roads import route_unreachable_exits
 from pipeline.common import Extent, TileGrid
 from pipeline.geo import scene_origin, utm_to_lonlat
@@ -197,3 +201,15 @@ def test_raw_edge_shapes_survive_simplification() -> None:
     e = next(iter(d.values()))
     assert any(abs(x + 117.10) < 1e-9 and abs(y - 33.01) < 1e-9 for x, y in e["geometry"].coords)  # corner kept
     assert all(n < 8_000_000_000 for n in S.nodes)
+
+
+def test_roof_plan_l_shape_and_utm_coordinates() -> None:
+    from shapely.affinity import rotate, translate
+    from shapely.geometry import Polygon
+
+    from pipeline.building_geom import roof_plan
+
+    L = Polygon([(0, 0), (20, 0), (20, 8), (10, 8), (10, 15), (0, 15)])
+    for p in (L, rotate(L, 23), translate(rotate(L, 23), 488000, 3650000)):
+        plan = roof_plan(p)
+        assert plan is not None and len(plan.rects) == 2 and plan.iou > 0.99

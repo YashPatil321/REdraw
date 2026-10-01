@@ -644,6 +644,7 @@ export class SceneController {
       // queue labels are HTML (not occluded): hide them at street level and in split view
       l.setLabelsVisible(!this.viewer.walking && !this.viewer.split.enabled);
       l.overlay.setViewport(this.viewer.camera, h);
+      l.overlay.setStreetLevel(this.viewer.walking ? 1 : 1 - THREE.MathUtils.smoothstep(dist, 120, 400));
       l.update(this.clockT, scale);
     }
     const walking = this.viewer.walking;

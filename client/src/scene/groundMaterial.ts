@@ -14,6 +14,7 @@ const MAX_CELLS = 24;
 const MAX_COLS = 12;
 
 const GROUND_VERT_PARS = /* glsl */ `
+uniform float uPull;
 attribute float aVariant;
 flat varying float vVar;
 varying vec2 vGUv;
@@ -23,6 +24,21 @@ const GROUND_VERT = /* glsl */ `
 vVar = aVariant;
 vGUv = uv;
 vGW = (modelMatrix * vec4(transformed, 1.0)).xyz;
+`;
+
+/**
+ * Depth pull: the street meshes are draped a few cm over the pipeline's
+ * render surface, but the drawn terrain (RTIN, ~0.3 m max error) can poke
+ * through. Moving vertices along the view ray changes only their depth (not
+ * their screen position), so the road always wins against nearby terrain.
+ */
+const PULL_VERT = /* glsl */ `
+#include <project_vertex>
+{
+  float rdD = length(mvPosition.xyz);
+  mvPosition.xyz -= normalize(mvPosition.xyz) * min(uPull * (1.0 + rdD * 0.02), rdD * 0.5);
+  gl_Position = projectionMatrix * mvPosition;
+}
 `;
 
 const GROUND_FRAG_PARS = /* glsl */ `
@@ -116,13 +132,15 @@ export function groundMaterial(lib: MaterialLibrary, opts: { polygonOffset: numb
     uCR: { value: cr },
     uCMean: { value: cm },
     uCGain: { value: gain },
+    uPull: { value: 0.12 },
     uGPx: { value: g.info.size_px?.[0] ?? 2048 },
   };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${GROUND_VERT_PARS}`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${GROUND_VERT}`);
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${GROUND_VERT}`)
+      .replace('#include <project_vertex>', PULL_VERT);
     let fs = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${GROUND_FRAG_PARS}`)
       .replace('#include <color_fragment>', GROUND_FRAG_MAIN)
@@ -182,12 +200,13 @@ export function markingsMaterial(lib: MaterialLibrary): THREE.Material | null {
     polygonOffsetFactor: -6,
     polygonOffsetUnits: -12,
   });
-  const uniforms = { tMark: { value: mk.tex }, uMC: { value: mc } };
+  const uniforms = { tMark: { value: mk.tex }, uMC: { value: mc }, uPull: { value: 0.16 } };
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>\n${GROUND_VERT_PARS}`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${GROUND_VERT}`);
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${GROUND_VERT}`)
+      .replace('#include <project_vertex>', PULL_VERT);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${MARK_FRAG_PARS}`)
       .replace('#include <color_fragment>', MARK_FRAG_MAIN);

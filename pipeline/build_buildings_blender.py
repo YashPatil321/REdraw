@@ -172,8 +172,9 @@ def load_lidar(bdf: gpd.GeoDataFrame) -> tuple[dict[int, dict[str, Any]], gpd.Ge
         df = df[df["lidar_status"].astype(str) == "present"].reset_index(drop=True)
     rows = df.to_dict("records")
     n_cent = n_sp = 0
-    if {"centroid_x", "centroid_z"} <= set(df.columns) and len(df):
-        tree = cKDTree(np.column_stack([df["centroid_x"].to_numpy(), df["centroid_z"].to_numpy()]))
+    cx_col, cz_col = ("scene_x", "scene_z") if "scene_x" in df.columns else ("centroid_x", "centroid_z")
+    if {cx_col, cz_col} <= set(df.columns) and len(df):
+        tree = cKDTree(np.column_stack([df[cx_col].to_numpy(), df[cz_col].to_numpy()]))
         d, k = tree.query(np.column_stack([bdf["centroid_x"].to_numpy(), bdf["centroid_z"].to_numpy()]), distance_upper_bound=1.0)
         for bid, dd, kk in zip(bdf["id"].to_numpy(), d, k, strict=True):
             if np.isfinite(dd):

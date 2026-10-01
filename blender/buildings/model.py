@@ -318,7 +318,7 @@ def lidar_end_is_hip(spec: dict[str, Any], fp: geom.Footprint, r: tuple[float, f
         for pl in planes:
             try:
                 nrm = pl["normal"]
-                d = float(pl["d"])
+                d = float(pl["offset"] if "offset" in pl else pl["d"])
                 slope = float(pl.get("slope_deg", 0.0))
             except (KeyError, TypeError):
                 continue
@@ -331,6 +331,20 @@ def lidar_end_is_hip(spec: dict[str, Any], fp: geom.Footprint, r: tuple[float, f
                 break
         votes += hit
     return votes >= 1
+
+
+def hgrid_points(spec: dict[str, Any], fp: geom.Footprint) -> tuple[np.ndarray, np.ndarray]:
+    """All valid nDSM cells of the spec's height grid: (local xy (k, 2), heights (k,))."""
+    g = spec.get("hgrid")
+    if not g:
+        return np.zeros((0, 2)), np.zeros(0)
+    h = np.asarray(g["h"], float).reshape(g["ny"], g["nx"]) / 10.0
+    xs = g["x0"] + g["step"] * np.arange(g["nx"])
+    ys = g["y0"] + g["step"] * np.arange(g["ny"])
+    X, Y = np.meshgrid(xs, ys)
+    ok = h.ravel() >= 0
+    loc = fp.to_local(np.column_stack([X.ravel(), Y.ravel()]))[ok]
+    return loc, h.ravel()[ok]
 
 
 def hgrid_values(spec: dict[str, Any], fp: geom.Footprint, region: Polygon) -> np.ndarray:
@@ -385,7 +399,7 @@ def plan_roof(spec: dict[str, Any], fp: geom.Footprint, lod: int, P: dict[str, A
     # ---------------- rect pieces ----------------
     rects: list[tuple[float, float, float, float]] = []
     if fp.rect:
-        rects = geom.max_rectangles(poly, max_n=12 if lod == 0 else 4)
+        rects = geom.max_rectangles(poly, max_n=12 if lod == 0 else 3)
     ridge_axis = _az_to_axis(spec.get("ridge_az_deg"), fp.theta)
 
     def kinds_for(rs: list[tuple[float, float, float, float]], z_wall: float) -> list[tuple[str, int | None]]:
@@ -427,9 +441,13 @@ def plan_roof(spec: dict[str, Any], fp: geom.Footprint, lod: int, P: dict[str, A
         # ---- two-level massing ----
         high_rects: list[tuple[float, float, float, float]] = []
         E_low = E
-        if not flat and btype == "house" and len(rects) >= 2 and lod == 0 or (not flat and btype == "house" and len(rects) >= 2 and lod > 0):
+        if not flat and btype == "house" and (len(rects) >= 2 or spec.get("hgrid")):
             high_rects, E_low, E_high = _split_levels(spec, fp, rects, E, R, tanp, P, rng)
             two = bool(high_rects)
+            if not two:
+                E = E_low
+            elif lod > 0:  # LOD1 is a box + roof: one level at the two-storey eave
+                two, high_rects, E = False, [], E_high
         if two:
             high_core = shapely.union_all([box(*r) for r in high_rects])
             z_low, z_high = floor + E_low, floor + E_high
@@ -500,26 +518,45 @@ def _split_levels(spec: dict[str, Any], fp: geom.Footprint, rects: list[tuple[fl
     fp_area = fp.local_poly.area
     story = float(P["story_m"]["house"])
     if spec.get("hgrid"):
-        # lidar heights per rectangle: p90 of the nDSM inside the rectangle (shrunk 0.6 m)
-        tops = []
+        # lidar: roof height in a 1.3 m band inside each rectangle's outline walls ~ that wing's eave
+        band = fp.local_poly.boundary.buffer(1.3)
+        eaves = []
         for r in rects:
-            reg = box(r[0] + 0.6, r[1] + 0.6, r[2] - 0.6, r[3] - 0.6)
-            v = hgrid_values(spec, fp, reg) if not reg.is_empty and reg.area > 1.0 else np.zeros(0)
-            tops.append(float(np.percentile(v, 90)) if len(v) >= 4 else np.nan)
-        tops = np.array(tops)
-        if np.isfinite(tops).sum() >= 2:
-            hi = np.nanmax(tops)
-            lo = np.nanmin(tops)
-            if hi - lo > 1.8 and lo < 5.6:
-                thr = (hi + lo) / 2
-                high = [r for r, t in zip(rects, tops, strict=True) if np.isfinite(t) and t >= thr]
-                hcore = shapely.union_all([box(*r) for r in high])
-                lowv = hgrid_values(spec, fp, fp.local_poly.difference(hcore.buffer(0.6)))
-                highv = hgrid_values(spec, fp, hcore.buffer(-0.6))
-                e_low = float(np.clip(np.percentile(lowv, 8) if len(lowv) >= 4 else 2.9, 2.4, 4.2))
-                e_high = float(np.clip(np.percentile(highv, 8) if len(highv) >= 4 else e_low + story, e_low + 2.0, 12.0))
-                return high, e_low, e_high
+            rb = box(*r)
+            reg = rb.intersection(band).intersection(rb.buffer(-0.25))
+            v = hgrid_values(spec, fp, reg) if (not reg.is_empty and reg.area > 1.0) else np.zeros(0)
+            eaves.append(float(np.percentile(v, 30)) - 0.3 if len(v) >= 3 else np.nan)
+        ev = np.array(eaves)
+        if not np.isfinite(ev).any():
             return [], E, E
+        e_min = float(np.nanmin(ev))
+        hi = np.isfinite(ev) & (ev > max(e_min + 1.6, 4.4))
+        if not hi.any():
+            # upper storey set back from every outline wall: find it as the tall part of the height grid
+            loc, hv = hgrid_points(spec, fp)
+            thr = max(5.3, e_min + 2.3)
+            m = hv >= thr
+            if m.sum() >= 12 and float(np.percentile(hv, 97)) > e_min + 3.0:
+                x0, x1 = np.percentile(loc[m, 0], [2, 98])
+                y0, y1 = np.percentile(loc[m, 1], [2, 98])
+                hr = box(x0 - 0.5, y0 - 0.5, x1 + 0.5, y1 + 0.5).intersection(fp.local_poly)
+                if hr.area > 30.0:
+                    hb = hr.envelope.bounds
+                    e_high = float(np.clip(np.percentile(hv[m], 15), max(4.6, e_min + 2.0), 14.0))
+                    if hr.area >= 0.85 * fp_area:
+                        return [], e_high, e_high
+                    return [tuple(float(c) for c in hb)], float(np.clip(e_min, 2.4, 4.2)), e_high
+            return [], float(np.clip(min(E, e_min + 0.3) if e_min < 4.4 else E, 2.4, 12.0)), E
+        high = [r for r, h in zip(rects, hi, strict=True) if h]
+        hcore = shapely.union_all([box(*r) for r in high])
+        e_high = float(np.clip(np.nanmedian(ev[hi]), 4.6, 14.0))
+        low = fp.local_poly.difference(hcore)
+        if low.area < 0.08 * fp_area:
+            return [], e_high, e_high  # the whole house is two-storey (small porch / bay roofs only)
+        e_low = float(np.clip(np.nanmin(ev[~hi]) if (~hi & np.isfinite(ev)).any() else 2.9, 2.4, 4.2))
+        return high, e_low, e_high
+    if spec.get("roof_source") == "lidar" and R - E > 3.2 and int(spec.get("levels") or 1) >= 2:
+        return [], max(E, R - 2.6), max(E, R - 2.6)  # lidar eave is a low wing; no height grid to place it
     if int(spec.get("levels") or 1) < 2 or E < 4.6:
         return [], E, E
     if rng.random() > float(P["two_level_share"]):
@@ -562,7 +599,7 @@ class Builder:
         pr = orient(Polygon(ring), 1.0)
         ring = np.asarray(pr.exterior.coords)[:-1]
         holes = [np.asarray(orient(Polygon(h), 1.0).exterior.coords)[:-1] for h in holes if len(h) >= 3]
-        step = (0.9 if spec["type"] == "house" else 0.6) if lod == 0 else 1.6
+        step = (0.9 if spec["type"] == "house" else 0.6) if lod == 0 else 2.0
         self.fp = geom.regularize(ring, holes, step_m=step, min_iou=0.86 if lod == 0 else 0.8)
         self.floor = float(spec["floor_y"]) + (float(P["slab_m"]) if spec["type"] == "house" else 0.0)
         self.spec_floor = float(spec["floor_y"])
@@ -669,6 +706,9 @@ class Builder:
                 if clip is not None:
                     g = safe_diff(g, clip)
                 g = _clean(g, 0.01)
+                if g is None:
+                    continue
+                g = _clean(g.simplify(0.02, preserve_topology=True), 0.01)  # drop collinear / sliver vertices
                 if g is None:
                     continue
                 pl = planes[key]
@@ -1265,7 +1305,7 @@ class Builder:
         lvls = self.plan.levels
         tops = [self.core_profile(a, b) for a, b in walls]
         flat_top = lvls[-1].flat
-        par = float(self.P["parapet_m"].get(self.btype, 0.5)) if flat_top else 0.0
+        par = float(self.P["parapet_m"].get(self.btype, 0.5)) if (flat_top and self.lod == 0) else 0.0
         reserved = self.plan_openings(walls, tops) if self.lod == 0 else {}
         for i, (a, b) in enumerate(walls):
             T, Z = tops[i]
@@ -1307,7 +1347,7 @@ class Builder:
                         if self.lod == 0:
                             self.windows_on_wall(1000 + i, a, b, T, Zt, [], zbase=zb, step=True)
         self.emit_roofs()
-        if flat_top:
+        if flat_top and self.lod == 0:
             self.emit_parapets(lvls[-1])
             if self.lod == 0 and self.btype in ("commercial", "school", "apartments", "other") and lvls[-1].core.area > 300:
                 self.emit_hvac(lvls[-1])
