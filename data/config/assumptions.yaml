@@ -459,3 +459,24 @@ hd_world:
   ndsm_canopy_min_m: {value: 3.0, unit: m, range: [2.0, 5.0], source: "height above ground above which vegetation counts as tree canopy (lidar nDSM, 2014)", verified: false}
   paseo_width_m: {value: 2.4, unit: m, range: [1.5, 3.6], source: "concrete paseo / park path / bike path width in 4S Ranch and Del Sur (8 ft); guess from imagery", verified: false}
   trail_width_m: {value: 1.8, unit: m, range: [0.8, 4.0], source: "dirt trail / fire road tread width in the open-space preserves (single track ~1 m, fire roads ~4 m); guess", verified: false}
+
+# HD Blender buildings (pipeline/build_buildings_blender.py -> blender/buildings/model.py). Geometry
+# conventions of SoCal 1998-2015 stucco tract homes; all guesses from street imagery unless noted.
+buildings_hd:
+  seed: {value: 20261003, unit: seed, range: null, source: "fixed RNG seed for HD building styling (rule 14.5)", verified: true}
+  tag_ridge_offset_m: {value: 2.5, unit: m, range: [1.5, 3.5], source: "Overture/OSM height tags read ~2.5 m below the 2014 lidar ridge (lidar_validation.json); a tag is treated as a mid-roof height", verified: false}
+  overhang_m: {value: {house: 0.55, apartments: 0.6, other: 0.3, commercial: 0.6, school: 0.6}, unit: m, range: [0.3, 0.8], source: "eave overhang from wall to fascia (12-24 in on tile-roof tract homes)", verified: false}
+  fascia_m: {value: 0.2, unit: m, range: [0.15, 0.3], source: "boxed-eave fascia depth (2x8 + tile edge)", verified: false}
+  story_m: {value: {house: 2.95, apartments: 3.0, commercial: 4.2, school: 4.0, other: 3.0}, unit: m, range: [2.7, 4.5], source: "floor-to-floor heights (9 ft plate + framing for homes)", verified: false}
+  slab_m: {value: 0.15, unit: m, range: [0.1, 0.3], source: "finished floor above the graded pad", verified: false}
+  parapet_m: {value: {commercial: 1.0, school: 0.6, apartments: 0.5, house: 0.4, other: 0.3}, unit: m, range: [0.3, 1.5], source: "parapet above flat roofs", verified: false}
+  garage_single_w_m: {value: 2.44, unit: m, range: [2.44, 2.74], source: "8 ft single garage door (third bay of 3-car garages)", verified: false}
+  garage_recess_m: {value: 0.15, unit: m, range: [0.1, 0.3], source: "garage door set back from the stucco face", verified: false}
+  entry_door_w_m: {value: 0.95, unit: m, range: [0.9, 1.1], source: "3 ft entry door slab + frame", verified: false}
+  entry_door_h_m: {value: 2.13, unit: m, range: [2.03, 2.44], source: "7 ft door", verified: false}
+  two_level_share: {value: 0.8, unit: share, range: [0.5, 0.95], source: "share of two-storey houses WITHOUT lidar that get a one-storey garage wing (with lidar the nDSM decides)", verified: false}
+  solar_share: {value: 0.18, unit: share, range: [0.08, 0.3], source: "share of pitched-roof homes with rooftop PV (San Diego County residential PV adoption ~15-20 %); guess", verified: false}
+  stone_wainscot_share: {value: 0.3, unit: share, range: [0.1, 0.5], source: "share of homes with ledgestone wainscot on the street walls; guess", verified: false}
+  hvac_m2_per_unit: {value: 220.0, unit: m2, range: [120.0, 400.0], source: "flat-roof area per rooftop HVAC unit on retail / office; guess", verified: false}
+  wall_palette: {value: [{rgb: [226, 212, 184], share: 0.2}, {rgb: [212, 190, 154], share: 0.2}, {rgb: [236, 230, 216], share: 0.1}, {rgb: [222, 204, 172], share: 0.15}, {rgb: [196, 188, 172], share: 0.1}, {rgb: [204, 178, 140], share: 0.1}, {rgb: [186, 166, 136], share: 0.07}, {rgb: [214, 196, 170], share: 0.08}], unit: sRGB, range: null, source: "stucco colors of 4S Ranch / Del Sur homes (tan, beige, greige, warm white); guess from street imagery", verified: false}
+  trim_palette: {value: [{rgb: [242, 240, 233], share: 0.55}, {rgb: [232, 222, 200], share: 0.2}, {rgb: [92, 78, 66], share: 0.15}, {rgb: [60, 58, 56], share: 0.1}], unit: sRGB, range: null, source: "foam trim / fascia colors (white, cream, dark bronze, charcoal); guess", verified: false}

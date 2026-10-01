@@ -45,7 +45,7 @@ if str(REPO) not in sys.path:
 
 from pipeline import build_buildings as bb  # noqa: E402
 from pipeline.common import log, tile_grid  # noqa: E402
-from pipeline.config import load_yaml, processed_dir, raw_dir, region  # noqa: E402
+from pipeline.config import assumption, load_yaml, processed_dir, raw_dir, region  # noqa: E402
 from pipeline.geo import scene_origin  # noqa: E402
 
 SPEC_DIR = REPO / "blender" / "build" / "buildings_hd" / "specs"
@@ -55,6 +55,7 @@ FRONT_CLASSES = {"residential", "living_street", "unclassified", "tertiary", "se
 ARTERIAL = {"primary", "secondary", "trunk", "motorway"}
 SERVICE_SKIP_SUBCLASS = {"parking_aisle"}
 STREET_SEARCH_M = 60.0
+TAG_RIDGE_OFFSET_M = float(assumption("buildings_hd.tag_ridge_offset_m"))
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +170,10 @@ def load_lidar(bdf: gpd.GeoDataFrame) -> tuple[dict[int, dict[str, Any]], gpd.Ge
         return out, None, "lidar: buildings_roofs.parquet not available (tag / heuristic roofs)"
     df = pd.read_parquet(roofs_p)
     if "lidar_status" in df.columns:
-        df = df[df["lidar_status"].astype(str) == "present"].reset_index(drop=True)
+        df = df[df["lidar_status"].astype(str) == "present"]
+    if "quality" in df.columns:  # poor = a handful of points (RVs, sheds, noise): tags / heuristics instead
+        df = df[df["quality"].astype(str).isin(["good", "fair"])]
+    df = df.reset_index(drop=True)
     rows = df.to_dict("records")
     n_cent = n_sp = 0
     cx_col, cz_col = ("scene_x", "scene_z") if "scene_x" in df.columns else ("centroid_x", "centroid_z")
@@ -432,10 +436,14 @@ def heuristic_roof(btype: str, poly: Polygon, height_m: float, rule: str, roof_s
         eave_default = 3.0
     eave = eave_default
     if rule in ("height", "levels") and height_m > 0:
-        e2 = height_m - rise if rule == "height" else height_m
+        # Overture / OSM height tags here read ~TAG_RIDGE_OFFSET_M below the lidar ridge (lidar_validation.json):
+        # treat a tag as a mid-roof height, ridge = tag + offset, eave = ridge - rise
+        e2 = height_m + TAG_RIDGE_OFFSET_M - rise if rule == "height" else height_m
         # tags that put a house eave under 2.4 m are total heights of the wrong thing; keep the default
         if e2 >= 2.4:
             eave = e2
+            if btype == "house" and rule == "height":
+                lv = 1 if eave < 4.4 else (2 if eave < 7.5 else 3)
     return {"eave_h": round(eave, 2), "ridge_h": round(eave + rise, 2), "roof_type": rtype, "pitch_deg": pitch, "levels": lv, "rect": rect}
 
 
@@ -445,6 +453,20 @@ def _min_width(poly: Polygon) -> float:
     a = float(np.hypot(*(c[1] - c[0])))
     b = float(np.hypot(*(c[2] - c[1])))
     return min(a, b)
+
+
+def model_params() -> dict[str, Any]:
+    """assumptions.yaml values for blender/buildings/model.py (DEFAULT_PARAMS keys)."""
+    a = "buildings_hd."
+    keys = ["seed", "overhang_m", "fascia_m", "story_m", "slab_m", "parapet_m", "garage_single_w_m", "garage_recess_m",
+            "entry_door_w_m", "entry_door_h_m", "two_level_share", "solar_share", "stone_wainscot_share", "hvac_m2_per_unit"]
+    p: dict[str, Any] = {k: assumption(a + k) for k in keys}
+    p["garage_door_w_m"] = float(assumption("streets.garage_door_width_m"))
+    p["garage_door_h_m"] = float(assumption("streets.garage_door_height_m"))
+    p["wall_palette"] = [[c["rgb"], c["share"]] for c in assumption(a + "wall_palette")]
+    p["trim_palette"] = [[c["rgb"], c["share"]] for c in assumption(a + "trim_palette")]
+    p["tile_variants"] = dict(assumption("building_style.tile_roof_variants"))
+    return p
 
 
 def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
@@ -461,6 +483,8 @@ def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
     rows["source_kind"] = "osm"
     if missing is not None and len(missing):
         miss = missing[missing.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].explode(index_parts=False)
+        if "quality" in miss.columns:  # poor lidar-only objects are RVs, sheds, carports
+            miss = miss[miss["quality"].astype(str).isin(["good", "fair"])]
         # drop lidar-only footprints overlapping ours (already modeled) or inside hero radii
         ov = gpd.sjoin(miss, rows[["geometry"]], predicate="intersects", how="left")
         miss = miss.loc[~miss.index.isin(ov.index[ov["index_right"].notna()])]
@@ -579,6 +603,7 @@ def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
         "tiles": {t: len(v) for t, v in sorted(tiles.items())},
         "count": int(sum(len(v) for v in tiles.values())),
         "roof_source_counts": counts,
+        "params": model_params(),
         "hero_ids": sorted(hero_ids),
         "heroes": [{"id": h.key, "x": h.x, "z": h.z, "radius": h.radius, "building_id": h.building_id} for h in heroes],
         "notes": {"ids": id_note, "lidar": lidar_note},

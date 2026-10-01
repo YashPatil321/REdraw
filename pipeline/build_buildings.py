@@ -486,8 +486,9 @@ def prepare_buildings(
     gdf["school_id"] = [_clean(v) for v in gdf["school_id"]]
     # provenance: footprint dataset + its own id (Overture GERS id / OSM id / lidar_id)
     gdf["source"] = [_clean(v) for v in _col(gdf, "source")]
-    sid = _col(gdf, "source_id") if "source_id" in gdf.columns else (_col(gdf, "id") if "element" in gdf.columns else _col(gdf, "osmid"))
-    gdf["source_id"] = [_clean(v) for v in sid]
+    sid_map = _col(gdf, "id") if "element" in gdf.columns else _col(gdf, "osmid")
+    sid_own = _col(gdf, "source_id")  # lidar-only rows (and pre-labelled inputs) carry their own
+    gdf["source_id"] = [_clean(a) or _clean(b) for a, b in zip(sid_own, sid_map, strict=True)]
 
     # Stable ids: by OSM id when present (real), else input order (synthetic).
     if "osm_sort_key" in gdf.columns:
@@ -845,7 +846,7 @@ def building_shapes(bdf: gpd.GeoDataFrame, terrain: Terrain, heroes: list[Hero] 
         kind = roof_kind(btype, poly, getattr(row, "roof_shape", None))
         rects: list[np.ndarray] = []
         walls = poly
-        if btype in PITCHED_TYPES and kind != "flat" or (btype in PITCHED_TYPES and getattr(row, "roof_shape", None) is None):
+        if btype in PITCHED_TYPES and (kind != "flat" or _clean(getattr(row, "roof_shape", None)) is None):
             plan = (
                 roof_plan(poly)
                 or roof_plan(poly, max_rects=6, tol=1.5, min_iou=0.72)
