@@ -145,6 +145,21 @@ JSON.stringify(manifest, (k, v) => {
   return v;
 });
 await pool([...files], 6, (f) => asset(f, true));
+// sub-manifests: PBR material atlases and Blender HD buildings (paths relative to their folder)
+for (const [rel, dir] of [[manifest.materials ?? 'materials/materials_manifest.json', 'materials/'], [manifest.buildings_hd ?? 'buildings_hd/manifest_buildings.json', 'buildings_hd/']]) {
+  const sub = await asset(rel, true);
+  if (!sub) continue;
+  const sf = new Set();
+  JSON.stringify(JSON.parse(Buffer.from(sub).toString('utf8')), (k, v) => {
+    if (typeof v === 'string' && /\.(glb|png|jpg|jpeg|webp|ktx2|bin)$/i.test(v) && !/^https?:/.test(v)) {
+      const f = v.replace(/^\/+/, '').replace(/^(.*\/)?assets\//, '');
+      sf.add(f.startsWith(dir) ? f : dir + f);
+    }
+    return v;
+  });
+  await pool([...sf], 6, (f) => asset(f, true));
+  for (const f of sf) files.add(f);
+}
 // props library (optional: written by blender/)
 const propsManifest = await asset('props/props_manifest.json', true);
 if (propsManifest) {

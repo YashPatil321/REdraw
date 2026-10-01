@@ -118,8 +118,12 @@ def building_material(man: dict[str, Any], mat: int, var: int) -> bpy.types.Mate
     name = f"hd_{mat}_{var}"
     if name in bl.ATLAS_MATS:
         return bl.ATLAS_MATS[name]
+    def tintable(atlas: str, cell: str) -> bool:
+        return bool(next(c for c in man["atlases"][atlas]["cells"] if c["name"] == cell).get("tintable"))
+
     if mat == model.MAT_WALL:
-        m = bl.atlas_material(name, man, "facade_walls", model.WALL_VARIANTS[var], MAT_DIR, tint_attr="Col")
+        cell = model.WALL_VARIANTS[var]
+        m = bl.atlas_material(name, man, "facade_walls", cell, MAT_DIR, tint_attr="Col" if tintable("facade_walls", cell) else None)
     elif mat == model.MAT_TILE:
         m = bl.atlas_material(name, man, "roofs", model.TILE_VARIANTS[var], MAT_DIR, normal_strength=1.2)
     elif mat == model.MAT_FLAT:
@@ -132,9 +136,12 @@ def building_material(man: dict[str, Any], mat: int, var: int) -> bpy.types.Mate
         b.inputs["Roughness"].default_value = 0.04
         b.inputs["Specular IOR Level"].default_value = 0.6
     elif mat == model.MAT_TRIM:
-        m = bl.atlas_material(name, man, "facade_walls", model.TRIM_VARIANTS[var], MAT_DIR, tint_attr="Col", normal_strength=0.4)
+        cell = model.TRIM_VARIANTS[var]
+        m = bl.atlas_material(name, man, "facade_walls", cell, MAT_DIR, tint_attr="Col" if tintable("facade_walls", cell) else None,
+                              normal_strength=0.4)
     else:
-        m = span_material(name, man, "facade_openings", model.GARAGE_VARIANTS[var], tint_attr="Col")
+        cell = model.GARAGE_VARIANTS[var]
+        m = span_material(name, man, "facade_openings", cell, tint_attr="Col" if tintable("facade_openings", cell) else None)
     bl.ATLAS_MATS[name] = m
     return m
 
@@ -201,7 +208,7 @@ def mesh_object(name: str, V: np.ndarray, F: np.ndarray, uv: np.ndarray | None, 
     return ob
 
 
-def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1) -> None:
+def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1, yards: Any = None) -> None:
     h = T.h[::stride, ::stride]
     nimg = T.naip[::stride, ::stride].astype(np.float32) / 255.0
     n = h.shape[0]
@@ -218,6 +225,24 @@ def terrain_object(T: Terrain, man: dict[str, Any], stride: int = 1) -> None:
     c = nimg.reshape(-1, 3)
     gray = c.mean(axis=1, keepdims=True)
     col = np.clip((gray + (c - gray) * 0.55) * 1.05, 0, 1)
+    if yards is not None and not yards.is_empty:
+        # irrigated yards around the houses: the lawn texture's own color with patchy variation
+        lawn = next(x for x in man["atlases"]["ground"]["cells"] if x["name"] == "grass_lawn")["mean_albedo_linear"]
+        lawn_srgb = np.array([(1.055 * v ** (1 / 2.4) - 0.055) if v > 0.0031308 else 12.92 * v for v in lawn])
+        shapely.prepare(yards)
+        m = shapely.contains_xy(yards, X.ravel(), Z.ravel())
+        rng = np.random.default_rng(3)
+        k = 8
+        g = rng.uniform(0.0, 1.0, size=(n // k + 2, n // k + 2))
+        gi = np.arange(n) / k
+        i0 = np.floor(gi).astype(int)
+        f = gi - i0
+        G = (g[i0][:, i0] * np.outer(1 - f, 1 - f) + g[i0 + 1][:, i0] * np.outer(f, 1 - f) + g[i0][:, i0 + 1] * np.outer(1 - f, f)
+             + g[i0 + 1][:, i0 + 1] * np.outer(f, f)).ravel()
+        dry = np.array([0.62, 0.55, 0.40])
+        yard_col = lawn_srgb[None, :] * (0.85 + 0.3 * G[:, None])
+        yard_col = np.where((G > 0.78)[:, None], dry[None, :] * (0.9 + 0.2 * G[:, None]), yard_col)
+        col[m] = yard_col[m]
     mesh_object("terrain", V, F, uv, ground_material(man, "grass_lawn", "Col"), col)
 
 
@@ -414,7 +439,8 @@ def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, di
                 log(f"building {sp['id']}: {e}")
     log(f"{len(builders)} buildings, {soup.ntris:,} tris ({time.time() - t0:.0f}s)")
     soup_object("buildings", soup, man)
-    terrain_object(T, man)
+    yards = shapely.union_all([p.buffer(16.0) for p in polys]) if polys else None
+    terrain_object(T, man, yards=yards)
     asphalt = roads_and_driveways(T, data, builders, man)
     bp = shapely.union_all(polys) if polys else None
     if bp is not None and asphalt is not None and not asphalt.is_empty:
@@ -431,13 +457,18 @@ def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, di
         bl.add_camera(cam, tgt, lens=24.0)
     elif kind == "closeup":
         hs = sorted([b for b in builders if b.garages], key=lambda b: np.hypot(*(np.array(b.fp.plan_poly.centroid.coords[0]) - [cx, -cz])))
-        p0, p1, n = hs[0].garages[0]
-        m = (p0 + p1) / 2
-        c = m + n * 15 + np.array([-n[1], n[0]]) * 5.0
-        log(f"closeup cam {c} target {m} floor {hs[0].floor}")
+        allp = shapely.union_all([b.fp.plan_poly.buffer(1.5) for b in builders])
+        pick = None
+        for hb in hs:
+            p0, p1, n = hb.garages[0]
+            m = (p0 + p1) / 2
+            c = m + n * 15 + np.array([-n[1], n[0]]) * 5.0
+            if not allp.intersects(LineString([c, m + n * 2.0])):
+                pick = (hb, m, c)
+                break
+        hb, m, c = pick if pick else (hs[0], (hs[0].garages[0][0] + hs[0].garages[0][1]) / 2, hs[0].garages[0][0])
         gz = float(T.sample(c[0], -c[1]))
-        log(f"closeup ground {gz}")
-        bl.add_camera((float(c[0]), float(c[1]), gz + 2.4), (float(m[0]), float(m[1]), hs[0].floor + 2.2), lens=30.0)
+        bl.add_camera((float(c[0]), float(c[1]), gz + 1.8), (float(m[0]), float(m[1]), hb.floor + 2.4), lens=30.0)
     else:
         gz = float(T.sample(cx, cz))
         cam = (cx - 95.0, -(cz + 70.0), gz + 85.0)

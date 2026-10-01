@@ -86,10 +86,14 @@ const FRAG_MAIN = /* glsl */ `
     }
     // macro noise varies the species of each class
     float mn = rdN2(vTW.xz * 0.013) * 0.6 + rdN2(vTW.xz * 0.051) * 0.4;
+    // built-up surroundings (blurred paved share): "scrub" and "bare" there are
+    // landscaping (bark mulch, decomposed granite, patchy turf), not wild chaparral
+    float urban = 0.0;
+    if (uHasSplat > 0.5) urban = smoothstep(0.12, 0.3, texture2D(tSplatB, vMapUv, 4.5).r) + (rdN2(vTW.xz * 0.08) - 0.5) * 0.3;
     int li[6];
     li[0] = mn > 0.62 ? 1 : 0;
-    li[1] = mn > 0.5 ? 3 : 2;
-    li[2] = mn > 0.55 ? 5 : 4;
+    li[1] = urban > 0.5 ? (mn > 0.45 ? 7 : 1) : (mn > 0.5 ? 3 : 2);
+    li[2] = urban > 0.5 ? 5 : (mn > 0.55 ? 5 : 4);
     li[3] = 6;
     li[4] = 8;
     li[5] = 7;

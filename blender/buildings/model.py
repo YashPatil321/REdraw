@@ -78,6 +78,7 @@ FLAT_RGB = {"flat_tpo": (214, 212, 204), "flat_tpo_grime": (196, 194, 186), "fla
 GLASS_RGB = (52, 64, 76)
 DOOR_RGB = [(92, 62, 44), (70, 50, 38), (120, 84, 56), (48, 52, 58), (142, 54, 40)]
 GARAGE_RGB = (236, 232, 222)
+STONE_RGB = (126, 111, 92)  # sRGB of the stone_veneer cell mean (not tintable: COLOR_0 is only a fallback)
 
 
 def _hash(*parts: Any) -> int:
@@ -143,6 +144,27 @@ def facade_uv(P: np.ndarray, a: np.ndarray, t: np.ndarray, floor: float) -> np.n
     P = np.asarray(P, float)
     u = ((P[..., 0] - a[0]) * t[0] + (P[..., 1] - a[1]) * t[1]) / 3.0
     v = (P[..., 2] - floor) / 3.0
+    return np.stack([u, v], axis=-1)
+
+
+# glass_curtain cell (facade_walls): vertical mullions at u = 0, 0.5, 1; vision lites for v in [0.27, 0.98]
+GLASS_U = (0.02, 0.48)
+GLASS_V = (0.27, 0.98)
+
+
+def glass_uv(P: np.ndarray, a: np.ndarray, t: np.ndarray, z0: float, w: float, h: float, panes: int = 1,
+             bay_m: float | None = None) -> np.ndarray:
+    """Window glass UVs: each pane maps onto one vision lite of the glass_curtain cell (frame-free
+    reflections, the center mullion = slider meeting rail). bay_m: storefront / ribbon glazing, one
+    lite pair per bay_m meters along the wall."""
+    P = np.asarray(P, float)
+    s = (P[..., 0] - a[0]) * t[0] + (P[..., 1] - a[1]) * t[1]
+    if bay_m:
+        u = s / bay_m
+    else:
+        f = np.clip(s / max(w, 1e-6), 0, 1)
+        u = GLASS_U[0] + f * ((GLASS_U[1] - GLASS_U[0]) if panes == 1 else (1.0 - 2 * GLASS_U[0]))
+    v = GLASS_V[0] + np.clip((P[..., 2] - z0) / max(h, 1e-6), 0, 1) * (GLASS_V[1] - GLASS_V[0])
     return np.stack([u, v], axis=-1)
 
 
@@ -938,7 +960,7 @@ class Builder:
             scale = 2.44 / w
         loc_s = ((door[..., 0] - q0[0]) * t[0] + (door[..., 1] - q0[1]) * t[1]) * scale
         uv = np.stack([uo + loc_s / 3.0, (door[..., 2] - z0) * (2.13 / max(z1 - z0, 1e-3)) / 3.0], axis=-1)
-        self.soup.add(door, uv, MAT_GARAGE, var, st.wall_rgb, self.bid)
+        self.soup.add(door, uv, MAT_GARAGE, var, GARAGE_RGB, self.bid)
         # reveals + head (stucco) + threshold
         rev = [quad_tris(np.r_[p0, z0], np.r_[q0, z0], np.r_[q0, z1], np.r_[p0, z1]),
                quad_tris(np.r_[q0, z0], np.r_[p0, z0], np.r_[p1, z0], np.r_[q1, z0]),
@@ -1023,7 +1045,8 @@ class Builder:
         gl = quad_tris(np.r_[p0 + t * vf + n * ofs_g, z0 + vf], np.r_[p1 - t * vf + n * ofs_g, z0 + vf],
                        np.r_[p1 - t * vf + n * ofs_g, z1 - vf], np.r_[p0 + t * vf + n * ofs_g, z1 - vf])
         self.soup.add(fr, facade_uv(fr, a, t, self.floor), MAT_TRIM, 0, st.trim_rgb, self.bid)
-        self.soup.add(gl, facade_uv(gl, a, t, self.floor), MAT_GLASS, 0, GLASS_RGB, self.bid)
+        self.soup.add(gl, glass_uv(gl, a + t * (s0 + vf), t, z0 + vf, (s1 - s0) - 2 * vf, (z1 - z0) - 2 * vf, panes=2 if s1 - s0 > 1.1 else 1),
+                      MAT_GLASS, 0, GLASS_RGB, self.bid)
         parts = []
         if mullion and (s1 - s0) > 1.1:
             m = (s0 + s1) / 2
@@ -1129,7 +1152,8 @@ class Builder:
                 return
             s0, s1 = 0.6, L - 0.6
             gl = quad_tris(np.r_[a + t * s0 + n * 0.03, z0], np.r_[a + t * s1 + n * 0.03, z0], np.r_[a + t * s1 + n * 0.03, z1], np.r_[a + t * s0 + n * 0.03, z1])
-            self.soup.add(gl, facade_uv(gl, a, t, self.floor), MAT_GLASS, 0, GLASS_RGB, self.bid)
+            nb_ = max(1, int(round((s1 - s0) / 3.0)))
+            self.soup.add(gl, glass_uv(gl, a + t * s0, t, z0, s1 - s0, z1 - z0, bay_m=(s1 - s0) / nb_ / 1.0), MAT_GLASS, 0, GLASS_RGB, self.bid)
             parts = []
             nb = max(1, int(round((s1 - s0) / 3.0)))
             for j in range(nb + 1):
@@ -1233,7 +1257,7 @@ class Builder:
             tris.append(quad_tris(np.r_[a + t * s0, z1], np.r_[a + t * s0 + o, z1], np.r_[a + t * s1 + o, z1], np.r_[a + t * s1, z1])[:, ::-1][:, ::-1])
         if tris:
             Pt = np.concatenate(tris)
-            self.soup.add(Pt, facade_uv(Pt, a, t, self.floor), MAT_WALL, 6, (255, 255, 255), self.bid)
+            self.soup.add(Pt, facade_uv(Pt, a, t, self.floor), MAT_WALL, 6, STONE_RGB, self.bid)
 
     # ---- main ----
     def build(self) -> Soup:
