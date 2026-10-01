@@ -1,0 +1,38 @@
+name: 4s_ranch_del_sur
+display_name: 4S Ranch and Del Sur, San Diego
+# Starting bbox. Verify against OSM place boundaries for "4S Ranch" and
+# "Del Sur, San Diego" and expand so I 15 (east), SR 56 (south),
+# Black Mountain Open Space (west), and the San Dieguito River (north) are included.
+bbox:
+  south: 32.965
+  north: 33.045
+  west: -117.175
+  east: -117.075
+bbox_verified: false
+projection: EPSG:32611        # UTM 11N, meters, for all processing
+scene_origin: center_of_bbox  # client uses local meters relative to this point
+terrain_buffer_m: 500
+tiles: [4, 4]                 # rows x cols for terrain/building tiling
+timezone: America/Los_Angeles
+
+# Key arterials to label in the client. Names must match OSM `name` tags
+# (case-insensitive prefix match). verified: false until checked against OSM.
+arterial_labels:
+  - {name: Camino Del Norte, verified: false}
+  - {name: Camino Del Sur, verified: false}
+  - {name: Dove Canyon Road, verified: false}
+  - {name: 4S Ranch Parkway, verified: false}
+  - {name: Bernardo Center Drive, verified: false}
+  - {name: Carmel Valley Road, verified: false}
+  - {name: Black Mountain Road, verified: false}
+  - {name: Escondido Freeway, ref: I 15, verified: false}
+  - {name: Ted Williams Parkway, ref: SR 56, verified: false}
+
+# Where trips with destinations outside the bbox leave the network.
+# Pipeline snaps each to the nearest drive-graph node of a matching road near the bbox edge.
+# Bearing is the compass direction (deg) of jobs that use this exit.
+exits:
+  - {id: i15_north, label: I 15 north, lat: 33.0440, lon: -117.0830, bearing_deg: 0,   verified: false}
+  - {id: i15_south, label: I 15 south, lat: 32.9660, lon: -117.0960, bearing_deg: 180, verified: false}
+  - {id: sr56_west, label: SR 56 west, lat: 32.9680, lon: -117.1700, bearing_deg: 260, verified: false}
+  - {id: cdn_east,  label: Camino Del Norte east, lat: 33.0180, lon: -117.0780, bearing_deg: 90, verified: false}

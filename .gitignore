@@ -1,0 +1,29 @@
+# data and built assets (never commit)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+client/public/assets/*
+!client/public/assets/.gitkeep
+data/cache/
+
+# secrets
+.env
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.mypy_cache/
+
+# node
+node_modules/
+client/dist/
+coverage/
+
+# misc
+.DS_Store
+*.log

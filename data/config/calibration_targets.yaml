@@ -1,0 +1,43 @@
+# Real typical weekday travel times for calibration (spec 6.7).
+# Fill `observed_minutes` from Google Maps "typical traffic" or field timing on
+# school days. Leave null until measured; calibrate.py skips null targets and
+# reports calibration status "uncalibrated" if fewer than 6 targets have values.
+# Endpoints are lat/lon; the sim snaps them to the nearest drive node.
+depart: "07:45"   # typical departure time used for all routes unless overridden
+targets:
+  - id: dsur_to_i15
+    label: Del Sur (Camino Del Sur at Dove Canyon) to I 15 at Camino Del Norte
+    from: {lat: 33.0150, lon: -117.1450}
+    to:   {lat: 33.0180, lon: -117.0790}
+    observed_minutes: null
+    verified: false
+  - id: 4s_to_delnorte
+    label: 4S Ranch Pkwy at Dove Canyon to Del Norte High
+    from: {lat: 33.0230, lon: -117.1300}
+    to:   {lat: 33.0205, lon: -117.1022}
+    observed_minutes: null
+    verified: false
+  - id: dsur_to_design39
+    label: Southern Del Sur to Design39 Campus
+    from: {lat: 33.0050, lon: -117.1400}
+    to:   {lat: 33.0290, lon: -117.1408}
+    observed_minutes: null
+    verified: false
+  - id: cdn_to_sr56
+    label: Camino Del Norte at 4S Ranch Pkwy to SR 56 at Camino Del Sur
+    from: {lat: 33.0160, lon: -117.1150}
+    to:   {lat: 32.9700, lon: -117.1350}
+    observed_minutes: null
+    verified: false
+  - id: oakvalley_to_i15s
+    label: Oak Valley Middle to I 15 south on-ramp
+    from: {lat: 33.0152, lon: -117.1090}
+    to:   {lat: 32.9700, lon: -117.0960}
+    observed_minutes: null
+    verified: false
+  - id: bernardo_center
+    label: Bernardo Center Dr, Camino Del Norte to Rancho Bernardo Rd
+    from: {lat: 33.0150, lon: -117.0850}
+    to:   {lat: 33.0300, lon: -117.0830}
+    observed_minutes: null
+    verified: false

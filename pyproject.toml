@@ -1,0 +1,62 @@
+[project]
+name = "redraw"
+version = "0.1.0"
+description = "Redraw: a 3D simulation of 4S Ranch and Del Sur where players fix neighborhood problems"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+  "numpy>=1.26",
+  "scipy>=1.11",
+  "pandas>=2.1",
+  "pyarrow>=14",
+  "networkx>=3.2",
+  "pydantic>=2.5",
+  "pydantic-settings>=2.1",
+  "pyyaml>=6",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "sqlalchemy>=2.0",
+  "psycopg[binary]>=3.1",
+  "httpx>=0.27",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+pipeline = [
+  "osmnx>=1.9",
+  "geopandas>=0.14",
+  "shapely>=2.0",
+  "pyproj>=3.6",
+  "rasterio>=1.3",
+  "trimesh>=4.0",
+  "py3dep>=0.16",
+  "pystac-client>=0.7",
+  "planetary-computer>=1.0",
+  "pillow>=10",
+  "mapbox-earcut>=1.0",
+]
+dev = [
+  "pytest>=8",
+  "pytest-timeout>=2.2",
+  "ruff>=0.4",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pipeline*", "sim*", "residents*", "api*"]
+
+[tool.pytest.ini_options]
+testpaths = ["pipeline/tests", "sim/tests", "residents/tests", "api/tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["client", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]

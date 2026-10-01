@@ -1,0 +1,104 @@
+# Schools in the Redraw region. EVERY value below is a placeholder until a
+# person verifies it (bell schedules, curb layouts, coordinates). The report
+# card footer lists every field with verified: false.
+# The pipeline also adds any amenity=school found in OSM that is not listed
+# here, using defaults from assumptions.yaml (schools.defaults).
+schools:
+  - id: del_norte_hs
+    name: Del Norte High School
+    grades: [9, 12]
+    bell_start: "08:30"
+    lat: 33.0215
+    lon: -117.1010
+    verified: false
+    entrances:
+      - id: main_dropoff
+        lat: 33.0205
+        lon: -117.1022
+        curb_spots: 10
+        unload_seconds: 45
+        verified: false
+  - id: oak_valley_ms
+    name: Oak Valley Middle School
+    grades: [6, 8]
+    bell_start: "08:00"
+    lat: 33.0158
+    lon: -117.1081
+    verified: false
+    entrances:
+      - id: main_dropoff
+        lat: 33.0152
+        lon: -117.1090
+        curb_spots: 8
+        unload_seconds: 40
+        verified: false
+  - id: design39
+    name: Design39 Campus
+    grades: [0, 8]
+    bell_start: "08:15"
+    lat: 33.0296
+    lon: -117.1415
+    verified: false
+    entrances:
+      - id: main_dropoff
+        lat: 33.0290
+        lon: -117.1408
+        curb_spots: 8
+        unload_seconds: 40
+        verified: false
+  - id: stone_ranch_es
+    name: Stone Ranch Elementary School
+    grades: [0, 5]
+    bell_start: "08:40"
+    lat: 33.0175
+    lon: -117.1170
+    verified: false
+    entrances:
+      - id: main_dropoff
+        lat: 33.0170
+        lon: -117.1176
+        curb_spots: 6
+        unload_seconds: 35
+        verified: false
+  - id: monterey_ridge_es
+    name: Monterey Ridge Elementary School
+    grades: [0, 5]
+    bell_start: "08:40"
+    lat: 33.0280
+    lon: -117.1250
+    verified: false
+    entrances:
+      - id: main_dropoff
+        lat: 33.0275
+        lon: -117.1256
+        curb_spots: 6
+        unload_seconds: 35
+        verified: false
+  - id: del_sur_es
+    name: Del Sur Elementary School
+    grades: [0, 5]
+    bell_start: "08:40"
+    lat: 33.0135
+    lon: -117.1430
+    verified: false
+    entrances:
+      - id: main_dropoff
+        lat: 33.0130
+        lon: -117.1424
+        curb_spots: 6
+        unload_seconds: 35
+        verified: false
+  - id: willow_grove_es
+    name: Willow Grove Elementary School
+    grades: [0, 5]
+    bell_start: "08:40"
+    lat: 33.0005
+    lon: -117.1150
+    verified: false
+    entrances:
+      - id: main_dropoff
+        lat: 33.0000
+        lon: -117.1156
+        curb_spots: 6
+        unload_seconds: 35
+        verified: false

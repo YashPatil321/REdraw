@@ -1,0 +1,216 @@
+# Every number that models the real world lives here (spec rule 14.3).
+#
+# Leaf schema (every leaf that is a modeling number):
+#   value:    the number used by default
+#   unit:     unit string
+#   range:    [low, high] plausible range (used for sensitivity / Monte Carlo where noted)
+#   source:   where the number comes from, in plain words
+#   verified: true only after a person confirmed it for this region
+#
+# Code loads this with sim/assumptions.py (or pipeline/assumptions.py) and must
+# read `.value`. Do not hardcode any of these numbers elsewhere.
+
+time:
+  sim_start: {value: "06:00", unit: clock, range: null, source: spec 6.1, verified: true}
+  sim_end: {value: "10:00", unit: clock, range: null, source: spec 6.1, verified: true}
+  bin_minutes: {value: 5, unit: min, range: null, source: spec 6.1, verified: true}
+  report_start: {value: "06:30", unit: clock, range: null, source: spec 6.1, verified: true}
+  report_end: {value: "09:30", unit: clock, range: null, source: spec 6.1, verified: true}
+
+buildings:
+  level_height_m: {value: 3.2, unit: m, range: [2.8, 3.6], source: spec 5.2, verified: true}
+  default_height_m:
+    house: {value: 7.0, unit: m, range: [5.0, 9.0], source: spec 5.2 (typical 2-story SFH), verified: false}
+    commercial: {value: 8.0, unit: m, range: [5.0, 14.0], source: spec 5.2, verified: false}
+    school: {value: 9.0, unit: m, range: [6.0, 12.0], source: spec 5.2, verified: false}
+    apartments: {value: 11.0, unit: m, range: [8.0, 16.0], source: typical 3-story garden apartments, verified: false}
+    other: {value: 5.0, unit: m, range: [3.0, 8.0], source: guess for sheds/garages/other, verified: false}
+  hip_roof_rectangularity: {value: 0.85, unit: ratio, range: [0.75, 0.95], source: "footprint area / min rotated rect area; above this a house gets a hip roof", verified: true}
+  hip_roof_height_m: {value: 2.2, unit: m, range: [1.5, 3.0], source: typical 5:12 roof pitch on a 10 m wide house, verified: false}
+
+roads:
+  lane_width_m: {value: 3.6, unit: m, range: [3.0, 3.7], source: spec 5.3 / FHWA typical lane width, verified: true}
+  # Defaults by OSM highway class, used when OSM tags are missing.
+  # capacity_vphpl = vehicles per hour per lane at v/c = 1 (HCM-style planning capacities).
+  defaults_by_class:
+    motorway:      {lanes: {value: 4, unit: lanes, range: [3, 6], source: I 15 typical per direction, verified: false}, maxspeed_kph: {value: 105, unit: kph, range: [88, 113], source: CA freeway 65 mph, verified: false}, capacity_vphpl: {value: 2000, unit: vphpl, range: [1800, 2200], source: HCM freeway basic segment, verified: false}}
+    motorway_link: {lanes: {value: 1, unit: lanes, range: [1, 2], source: typical ramp, verified: false}, maxspeed_kph: {value: 60, unit: kph, range: [40, 72], source: typical ramp advisory, verified: false}, capacity_vphpl: {value: 1500, unit: vphpl, range: [1200, 1800], source: HCM ramp, verified: false}}
+    trunk:         {lanes: {value: 2, unit: lanes, range: [2, 3], source: SR 56 typical per direction, verified: false}, maxspeed_kph: {value: 105, unit: kph, range: [88, 113], source: CA freeway 65 mph, verified: false}, capacity_vphpl: {value: 1900, unit: vphpl, range: [1700, 2100], source: HCM multilane, verified: false}}
+    trunk_link:    {lanes: {value: 1, unit: lanes, range: [1, 2], source: typical ramp, verified: false}, maxspeed_kph: {value: 60, unit: kph, range: [40, 72], source: typical ramp, verified: false}, capacity_vphpl: {value: 1400, unit: vphpl, range: [1200, 1800], source: HCM ramp, verified: false}}
+    primary:       {lanes: {value: 3, unit: lanes, range: [2, 3], source: suburban 6-lane arterial (Camino Del Sur), verified: false}, maxspeed_kph: {value: 72, unit: kph, range: [56, 80], source: 45 mph posted typical, verified: false}, capacity_vphpl: {value: 900, unit: vphpl, range: [750, 1100], source: HCM signalized arterial planning capacity, verified: false}}
+    primary_link:  {lanes: {value: 1, unit: lanes, range: [1, 2], source: guess, verified: false}, maxspeed_kph: {value: 48, unit: kph, range: [32, 56], source: guess, verified: false}, capacity_vphpl: {value: 800, unit: vphpl, range: [600, 1000], source: guess, verified: false}}
+    secondary:     {lanes: {value: 2, unit: lanes, range: [1, 3], source: suburban 4-lane arterial, verified: false}, maxspeed_kph: {value: 64, unit: kph, range: [48, 72], source: 40 mph posted typical, verified: false}, capacity_vphpl: {value: 850, unit: vphpl, range: [700, 1000], source: HCM signalized arterial planning capacity, verified: false}}
+    secondary_link: {lanes: {value: 1, unit: lanes, range: [1, 2], source: guess, verified: false}, maxspeed_kph: {value: 48, unit: kph, range: [32, 56], source: guess, verified: false}, capacity_vphpl: {value: 750, unit: vphpl, range: [600, 900], source: guess, verified: false}}
+    tertiary:      {lanes: {value: 1, unit: lanes, range: [1, 2], source: collector, verified: false}, maxspeed_kph: {value: 56, unit: kph, range: [40, 64], source: 35 mph posted typical, verified: false}, capacity_vphpl: {value: 750, unit: vphpl, range: [600, 900], source: HCM collector, verified: false}}
+    tertiary_link: {lanes: {value: 1, unit: lanes, range: [1, 1], source: guess, verified: false}, maxspeed_kph: {value: 40, unit: kph, range: [32, 48], source: guess, verified: false}, capacity_vphpl: {value: 700, unit: vphpl, range: [500, 800], source: guess, verified: false}}
+    residential:   {lanes: {value: 1, unit: lanes, range: [1, 1], source: local street, verified: false}, maxspeed_kph: {value: 40, unit: kph, range: [32, 48], source: 25 mph prima facie, verified: false}, capacity_vphpl: {value: 600, unit: vphpl, range: [400, 800], source: local street planning capacity, verified: false}}
+    living_street: {lanes: {value: 1, unit: lanes, range: [1, 1], source: local street, verified: false}, maxspeed_kph: {value: 24, unit: kph, range: [16, 32], source: guess, verified: false}, capacity_vphpl: {value: 400, unit: vphpl, range: [300, 600], source: guess, verified: false}}
+    unclassified:  {lanes: {value: 1, unit: lanes, range: [1, 1], source: local street, verified: false}, maxspeed_kph: {value: 40, unit: kph, range: [32, 56], source: guess, verified: false}, capacity_vphpl: {value: 600, unit: vphpl, range: [400, 800], source: guess, verified: false}}
+    service:       {lanes: {value: 1, unit: lanes, range: [1, 1], source: driveway/parking aisle, verified: false}, maxspeed_kph: {value: 24, unit: kph, range: [16, 32], source: guess, verified: false}, capacity_vphpl: {value: 400, unit: vphpl, range: [300, 600], source: guess, verified: false}}
+  # Classes whose OSM edges count as "through lanes" for the no_new_through_lanes constraint.
+  through_lane_classes: {value: [motorway, trunk, primary, secondary, tertiary], unit: list, range: null, source: mission constraint interpretation, verified: false}
+
+assignment:
+  bpr_alpha: {value: 0.15, unit: ratio, range: [0.10, 0.20], source: spec 6.4 / BPR 1964 default, verified: true}
+  bpr_beta: {value: 4.0, unit: ratio, range: [4.0, 5.0], source: spec 6.4 / BPR 1964 default, verified: true}
+  msa_min_iterations: {value: 5, unit: count, range: null, source: spec 6.4, verified: true}
+  msa_max_iterations: {value: 8, unit: count, range: null, source: spec 6.4, verified: true}
+  msa_convergence: {value: 0.01, unit: ratio, range: null, source: "spec 6.4: stop when total travel time changes < 1 percent", verified: true}
+  signal_fixed_delay_s: {value: 12.0, unit: s, range: [8.0, 20.0], source: "HCM average control delay at an uncongested suburban signal (LOS B)", verified: false}
+  signal_vc_delay_s: {value: 30.0, unit: s, range: [20.0, 45.0], source: "extra delay at v/c = 1, scaled by (v/c)^2; simple documented approximation", verified: false}
+  unsignalized_delay_s: {value: 2.0, unit: s, range: [0.0, 6.0], source: stop/yield control average, verified: false}
+  max_vc_for_bpr: {value: 3.0, unit: ratio, range: null, source: "numerical cap on v/c inside BPR to avoid runaway times", verified: true}
+  demand_capacity_factor: {value: 1.0, unit: ratio, range: [0.8, 1.2], source: calibration knob (capacity scale), verified: false}
+
+time_of_day:
+  # Worker departure times: normal distribution clipped to sim window.
+  worker_departure_mean: {value: "07:30", unit: clock, range: ["07:10", "07:50"], source: "spec 6.2 peak around 07:30; ACS B08302 time leaving home peaks 7:00-7:59", verified: false}
+  worker_departure_sd_min: {value: 35.0, unit: min, range: [25.0, 45.0], source: ACS B08302 spread, calibration knob, verified: false}
+  student_arrive_before_bell_min: {value: [5, 20], unit: min, range: null, source: "spec 6.2: arrive 5 to 20 minutes before bell", verified: true}
+  monte_carlo_departure_jitter_min: {value: 5.0, unit: min, range: [0.0, 10.0], source: "spec 6.6: vary departure times across seeds", verified: true}
+
+demand:
+  demand_scale: {value: 1.0, unit: ratio, range: [0.8, 1.2], source: calibration knob, verified: false}
+  monte_carlo_demand_variation: {value: 0.10, unit: ratio, range: null, source: "spec 6.6: vary demand +/- 10 percent", verified: true}
+  work_from_home_share: {value: 0.18, unit: share, range: [0.10, 0.30], source: "ACS 2022 B08301 WFH share, San Diego County approx", verified: false}
+  worker_not_commuting_today_share: {value: 0.05, unit: share, range: [0.02, 0.10], source: "sick/vacation/off-schedule on a given weekday", verified: false}
+  external_job_share: {value: 0.80, unit: share, range: [0.70, 0.90], source: "LODES: most residents work outside 4S/Del Sur; used only when LODES unavailable (synthetic)", verified: false}
+  external_through_trips_per_hour: {value: 1200, unit: veh/h, range: [600, 2500], source: "freeway through traffic not generated by residents (I 15, SR 56); added as exit-to-exit trips", verified: false}
+  inbound_workers: {value: 6000, unit: persons, range: [3000, 10000], source: "LODES jobs inside bbox held by non-residents (schools, retail, offices); used when LODES unavailable", verified: false}
+  min_driving_age: {value: 16, unit: years, range: null, source: CA provisional license, verified: true}
+  hs_self_drive_share: {value: 0.30, unit: share, range: [0.15, 0.45], source: "share of licensed HS students (16+) who drive themselves; guess", verified: false}
+  dropoff_parent_continues_to_work_share: {value: 0.70, unit: share, range: [0.5, 0.85], source: "share of drop-off drivers who are workers continuing to work (others return home)", verified: false}
+
+modechoice:
+  # Multinomial logit. Utility U_m = ASC_m + b_time*time_min + b_cost*cost_usd + b_habit*habit_m + tool shifts.
+  beta_time_per_min: {value: -0.06, unit: 1/min, range: [-0.10, -0.03], source: "typical commute MNL VOT ~ $12/h with b_cost -0.3", verified: false}
+  beta_cost_per_usd: {value: -0.30, unit: 1/USD, range: [-0.6, -0.15], source: literature range for commute MNL, verified: false}
+  beta_habit: {value: 1.2, unit: utils, range: [0.5, 2.0], source: "inertia toward current (baseline) mode; guess", verified: false}
+  vehicle_cost_per_km: {value: 0.22, unit: USD/km, range: [0.15, 0.35], source: AAA marginal operating cost approx, verified: false}
+  speeds_kph:
+    walk_child: {value: 4.0, unit: kph, range: [3.0, 5.0], source: typical child walking speed, verified: false}
+    walk_adult: {value: 4.8, unit: kph, range: [4.0, 5.5], source: typical adult walking speed, verified: false}
+    bike: {value: 14.0, unit: kph, range: [10.0, 18.0], source: casual cycling with hills, verified: false}
+    bus_avg: {value: 25.0, unit: kph, range: [18.0, 32.0], source: school bus/shuttle average incl. stops, verified: false}
+  # Alternative specific constants for STUDENT school trips (relative to drive_dropoff = 0).
+  asc_student:
+    drive_dropoff: {value: 0.0, unit: utils, range: null, source: reference alternative, verified: true}
+    carpool: {value: -1.2, unit: utils, range: [-2.0, -0.5], source: "calibrated so baseline carpool share ~10 percent; guess", verified: false}
+    school_bus: {value: -1.8, unit: utils, range: [-3.0, -1.0], source: "PUSD offers very limited busing; guess", verified: false}
+    school_shuttle: {value: -0.8, unit: utils, range: [-1.5, -0.3], source: "new service; similar to bus but closer stops; guess", verified: false}
+    walk: {value: -0.4, unit: utils, range: [-1.0, 0.0], source: guess, verified: false}
+    bike: {value: -0.9, unit: utils, range: [-1.5, -0.3], source: guess, verified: false}
+    self_drive: {value: 0.3, unit: utils, range: [-0.5, 1.0], source: "teens prefer driving; gated by hs_self_drive_share", verified: false}
+  # ASC for WORKER trips (relative to drive_alone = 0).
+  asc_worker:
+    drive_alone: {value: 0.0, unit: utils, range: null, source: reference alternative, verified: true}
+    carpool: {value: -2.2, unit: utils, range: [-3.0, -1.5], source: "ACS carpool share ~7 percent", verified: false}
+    bike: {value: -3.5, unit: utils, range: [-4.5, -2.5], source: "ACS bike share < 1 percent", verified: false}
+    walk: {value: -3.0, unit: utils, range: [-4.0, -2.0], source: "ACS walk share ~1 percent", verified: false}
+  max_walk_km_by_age:
+    "5-10": {value: 1.2, unit: km, range: [0.8, 1.6], source: "NHTS child walk distances; guess", verified: false}
+    "11-13": {value: 2.0, unit: km, range: [1.5, 2.5], source: guess, verified: false}
+    "14-18": {value: 2.5, unit: km, range: [2.0, 3.2], source: guess, verified: false}
+    adult: {value: 2.5, unit: km, range: [1.5, 3.5], source: guess, verified: false}
+  max_bike_km_by_age:
+    "5-10": {value: 0.0, unit: km, range: [0.0, 1.5], source: "young kids do not bike alone to school; guess", verified: false}
+    "11-13": {value: 4.0, unit: km, range: [2.5, 5.0], source: guess, verified: false}
+    "14-18": {value: 6.0, unit: km, range: [4.0, 8.0], source: guess, verified: false}
+    adult: {value: 10.0, unit: km, range: [6.0, 15.0], source: guess, verified: false}
+  school_bus_available_share: {value: 0.05, unit: share, range: [0.0, 0.15], source: "share of students eligible for PUSD home-to-school busing; guess", verified: false}
+  carpool_kids_per_car: {value: 2.5, unit: kids, range: [2.0, 3.5], source: guess, verified: false}
+  carpool_worker_occupancy: {value: 2.1, unit: persons, range: [2.0, 2.5], source: NHTS carpool occupancy, verified: false}
+  shuttle_max_walk_to_stop_km: {value: 0.6, unit: km, range: [0.4, 0.8], source: "standard transit catchment (quarter to half mile)", verified: false}
+  shuttle_capacity: {value: 50, unit: riders, range: [40, 72], source: typical school bus, verified: false}
+
+schools:
+  car_length_m: {value: 7.0, unit: m, range: [6.0, 8.0], source: spec 6.5, verified: true}
+  defaults:
+    bell_start: {value: "08:15", unit: clock, range: ["07:30", "09:00"], source: guess for OSM schools not in schools.yaml, verified: false}
+    curb_spots: {value: 6, unit: cars, range: [3, 12], source: guess, verified: false}
+    unload_seconds: {value: 40, unit: s, range: [25, 60], source: guess, verified: false}
+  queue_capacity_reduction_per_spill: {value: 0.5, unit: ratio, range: [0.3, 0.8], source: "capacity multiplier on approach edge when spillback exceeds edge length; documented simplification", verified: false}
+  upstream_spill_delay_s_per_car: {value: 4.0, unit: s/car, range: [2.0, 8.0], source: "added delay on upstream edges per spilled car; documented simplification", verified: false}
+  late_tolerance_min: {value: 0.0, unit: min, range: null, source: "arrival after bell_start counts as late", verified: true}
+  walk_from_curb_min: {value: 2.0, unit: min, range: [1.0, 4.0], source: "time from curb to classroom; guess", verified: false}
+
+population:
+  # Used by build_population.py with ACS; the synthetic fixture uses these when ACS is absent.
+  seed: {value: 20260930, unit: seed, range: null, source: fixed seed (rule 14.5), verified: true}
+  target_households_fallback: {value: 14500, unit: households, range: [10000, 20000], source: "spec 5.4 order of magnitude; real count comes from ACS", verified: false}
+  avg_household_size: {value: 3.1, unit: persons, range: [2.8, 3.4], source: "ACS 92127 approx", verified: false}
+  share_households_with_kids: {value: 0.48, unit: share, range: [0.40, 0.55], source: "ACS 92127 approx", verified: false}
+  workers_per_household: {value: 1.6, unit: persons, range: [1.3, 1.9], source: ACS approx, verified: false}
+  vehicles_per_household: {value: 2.2, unit: vehicles, range: [1.8, 2.6], source: ACS approx, verified: false}
+  persons_per_unit_apartment_building: {value: 40, unit: households, range: [12, 120], source: "households per apartment building footprint; guess", verified: false}
+
+costs:
+  school_shuttle_per_bus_year: {value: 95000, unit: USD/yr, range: [70000, 130000], source: "contracted school bus incl. driver, CA estimate", verified: false}
+  school_shuttle_bus_contract_note: {value: 0, unit: USD, range: null, source: "bell_time has 0 direct cost; note possible bus contract effects", verified: true}
+  carpool_program_per_year:
+    low: {value: 20000, unit: USD/yr, range: [10000, 40000], source: "app + outreach; guess", verified: false}
+    medium: {value: 60000, unit: USD/yr, range: [30000, 90000], source: "app + small incentives; guess", verified: false}
+    high: {value: 150000, unit: USD/yr, range: [90000, 250000], source: "cash incentives / reserved lanes; guess", verified: false}
+  dropoff_curb_spot_upfront: {value: 45000, unit: USD/spot, range: [25000, 90000], source: "curb extension and striping per car length; guess", verified: false}
+  dropoff_faster_unload_per_year: {value: 15000, unit: USD/yr, range: [5000, 30000], source: "staff/volunteer program to speed unloading; guess", verified: false}
+  new_dropoff_entrance_upfront: {value: 750000, unit: USD, range: [400000, 1500000], source: "new driveway, curb cut and loop; guess", verified: false}
+  signal_timing_upfront: {value: 12000, unit: USD/intersection, range: [5000, 25000], source: "retiming study per intersection; FHWA range", verified: false}
+  turn_lane_upfront: {value: 400000, unit: USD/approach, range: [200000, 900000], source: "added turn pocket incl. widening; guess", verified: false}
+  bike_route_per_km: {value: 250000, unit: USD/km, range: [50000, 1500000], source: "class II/IV buffered lane avg; FHWA cost range", verified: false}
+  safe_walk_route_per_km: {value: 120000, unit: USD/km, range: [40000, 300000], source: "sidewalk gaps, ramps, signage; guess", verified: false}
+  crossing_guard_per_year: {value: 22000, unit: USD/yr/guard, range: [15000, 35000], source: "part-time crossing guard, CA estimate", verified: false}
+  crossing_guards_per_km: {value: 2, unit: guards/km, range: [1, 4], source: guess, verified: false}
+
+tool_effects:
+  carpool_utility_boost:
+    low: {value: 0.3, unit: utils, range: [0.1, 0.5], source: guess, verified: false}
+    medium: {value: 0.7, unit: utils, range: [0.4, 1.0], source: guess, verified: false}
+    high: {value: 1.2, unit: utils, range: [0.8, 1.6], source: guess, verified: false}
+  carpool_adoption_cap_share:
+    low: {value: 0.08, unit: share, range: [0.03, 0.12], source: "max extra share of drivers that switch; guess", verified: false}
+    medium: {value: 0.15, unit: share, range: [0.08, 0.22], source: guess, verified: false}
+    high: {value: 0.25, unit: share, range: [0.15, 0.35], source: guess, verified: false}
+  faster_unload_factor: {value: 0.75, unit: ratio, range: [0.6, 0.9], source: "unload time multiplier with a speed-up program; guess", verified: false}
+  turn_lane_capacity_gain: {value: 0.20, unit: ratio, range: [0.10, 0.30], source: "added turn pocket raises approach capacity; HCM saturation flow approx", verified: false}
+  signal_priority_delay_factor: {value: 0.6, unit: ratio, range: [0.4, 0.8], source: "priority approach node delay multiplier", verified: false}
+  signal_nonpriority_delay_factor: {value: 1.3, unit: ratio, range: [1.1, 1.6], source: "other approaches node delay multiplier", verified: false}
+  bike_route_utility_boost: {value: 0.8, unit: utils, range: [0.3, 1.2], source: "protected/connected route effect on short trips; guess", verified: false}
+  bike_route_catchment_km: {value: 0.5, unit: km, range: [0.3, 1.0], source: "trip ends within this distance of the route get the boost", verified: false}
+  safe_walk_utility_boost: {value: 0.6, unit: utils, range: [0.3, 1.0], source: guess, verified: false}
+  crossing_guard_extra_boost: {value: 0.4, unit: utils, range: [0.2, 0.8], source: guess, verified: false}
+  safe_walk_catchment_km: {value: 0.4, unit: km, range: [0.2, 0.8], source: guess, verified: false}
+  bell_time_bus_contract_note: {value: 0, unit: USD, range: null, source: "moving bell times can change bus contract costs; not modeled in v1", verified: true}
+
+report:
+  seeds: {value: 20, unit: count, range: null, source: spec 6.6, verified: true}
+  percentile_low: {value: 10, unit: pct, range: null, source: spec 6.6, verified: true}
+  percentile_high: {value: 90, unit: pct, range: null, source: spec 6.6, verified: true}
+  side_effect_vc_threshold: {value: 0.9, unit: ratio, range: null, source: spec 6.6, verified: true}
+  winner_loser_threshold_min: {value: 3.0, unit: min, range: null, source: spec 6.6, verified: true}
+  playback_max_trajectories: {value: 3000, unit: count, range: null, source: spec 9.1, verified: true}
+
+calibration:
+  target_median_error: {value: 0.20, unit: ratio, range: null, source: spec 6.7, verified: true}
+  min_targets: {value: 6, unit: count, range: null, source: spec 6.7, verified: true}
+
+residents:
+  persona_count: {value: 500, unit: count, range: null, source: spec 8.1, verified: true}
+  persona_seed: {value: 500500, unit: seed, range: null, source: fixed seed, verified: true}
+  values_list: {value: [safety, time, cost, environment, community, property, change_averse], unit: list, range: null, source: spec 8.1, verified: true}
+  # Approval (spec 8.2): score = base + sum_k weight_k * signal_k; approval_prob = logistic(score).
+  # A persona "approves" when approval_prob >= 0.5. Signals are computed from personal deltas.
+  approval_base: {value: 0.0, unit: utils, range: [-0.5, 0.5], source: neutral prior, verified: false}
+  approval_per_min_commute_saved: {value: 0.25, unit: utils/min, range: [0.1, 0.5], source: guess, verified: false}
+  approval_per_min_dropoff_saved: {value: 0.35, unit: utils/min, range: [0.15, 0.6], source: guess, verified: false}
+  approval_per_100usd_cost_exposure: {value: -0.15, unit: utils/100USD, range: [-0.4, -0.05], source: "per-household share of plan cost per year; guess", verified: false}
+  approval_street_change_penalty: {value: -0.6, unit: utils, range: [-1.2, -0.2], source: "dislike of new traffic/construction on own street; guess", verified: false}
+  approval_change_averse_penalty: {value: -0.5, unit: utils, range: [-1.0, -0.2], source: "status quo bias for change_averse personas; guess", verified: false}
+  value_multipliers:
+    time: {value: 1.5, unit: ratio, range: [1.0, 2.0], source: "persona with 'time' value weighs minutes more", verified: false}
+    safety: {value: 1.5, unit: ratio, range: [1.0, 2.0], source: "weighs walk/bike safety tools", verified: false}
+    cost: {value: 2.0, unit: ratio, range: [1.0, 3.0], source: "weighs cost exposure more", verified: false}
+    environment: {value: 1.5, unit: ratio, range: [1.0, 2.0], source: "values mode shift away from driving", verified: false}
+    community: {value: 1.3, unit: ratio, range: [1.0, 2.0], source: "values shuttles/walk routes", verified: false}
+    property: {value: 1.5, unit: ratio, range: [1.0, 2.0], source: "dislikes changes on own street", verified: false}
+  safety_tool_bonus: {value: 0.4, unit: utils, range: [0.1, 0.8], source: "bonus per safe_walk/bike tool for safety/community values", verified: false}
+  households_sharing_cost: {value: 14500, unit: households, range: [10000, 20000], source: "plan cost per year split across households for cost exposure", verified: false}

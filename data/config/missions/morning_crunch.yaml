@@ -1,0 +1,16 @@
+id: morning_crunch
+title: The Morning Crunch
+brief: >
+  School drop off and commute traffic stack up every weekday morning in
+  4S Ranch and Del Sur. Cut the delay without adding through lanes.
+budget_usd_upfront: 2000000
+budget_usd_per_year: 400000
+constraints:
+  - no_new_through_lanes
+goals_suggested:            # shown as hints, not pass or fail
+  - reduce average drop off delay at Del Norte by 30 percent
+  - no school gets worse
+  - resident approval above 55 percent
+tools: [bell_time, school_shuttle, carpool_program, dropoff_redesign,
+        new_dropoff_entrance, signal_timing, turn_lane, bike_route,
+        safe_walk_route, teen_drive_policy, custom]
