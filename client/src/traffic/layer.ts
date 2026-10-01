@@ -582,10 +582,11 @@ export class TrafficLayer {
   private updateQueues(t: number, scale: number): void {
     if (!this.bars) return;
     const bin = binIndex(t, this.pb.header);
-    const w = 10 * Math.max(1, scale * 0.8);
+    const w = 7 * Math.max(1, scale * 0.6);
     this.barEntrances.forEach((e, idx) => {
       const q = queueAt(this.pb, bin, e.k);
-      const h = (2 + q * 3) * Math.max(1, scale * 0.6);
+      // ~1 m per queued car, softly capped (the label carries the exact count)
+      const h = (2 + 70 * Math.tanh(q / 70)) * Math.max(1, scale * 0.5);
       this.barMat.makeScale(w, h, w);
       this.barMat.setPosition(e.x, e.y, e.z);
       this.bars!.setMatrixAt(idx, this.barMat);

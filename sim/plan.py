@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pipeline.config import load_yaml
 from pipeline.geo import latlon_to_scene
 from sim.assumptions import A, Af, clock_to_s
+from sim.schools import service_rate
 from sim.world import STUDENT_MODES, WORKER_MODES, Entrance, Shuttle, WorldState
 
 
@@ -580,6 +581,9 @@ def _apply(world: WorldState, tool: str, p: dict[str, Any], r: dict[str, Any]) -
             unload_s=base.unload_s if base else Af("schools.defaults.unload_seconds"),
             x=float(net.x[node]), z=float(net.z[node]), lat=lat, lon=lon, verified=False, added_by_plan=True,
         ))
+        # parents have no habit at a brand-new entrance: judge its line at the school's existing rate
+        ne = world.entrances[-1]
+        ne.ref_service_rate = base.ref_service_rate if base and base.ref_service_rate > 0 else service_rate(ne.curb_spots, ne.unload_s)
         s.entrances.append(len(world.entrances) - 1)
     elif tool == "signal_timing":
         approaches = np.nonzero((net.ev == r["node"]) & ~net.is_freeway)[0]

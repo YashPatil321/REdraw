@@ -347,6 +347,7 @@ export class World {
     if (opts.standardBuildings !== this.standardBuildings) {
       this.standardBuildings = opts.standardBuildings;
       for (const m of this.buildingMeshes) {
+        if (m.userData.hero) continue;
         const old = m.material as THREE.Material;
         m.material = this.buildingMaterial(null, this.standardBuildings, Boolean(m.geometry.getAttribute('color')));
         old.dispose();
@@ -407,8 +408,24 @@ export class World {
             // alias without the leading underscore for use in shaders (same buffer)
             if (id) m.geometry.setAttribute('buildingId', id);
             else m.geometry.setAttribute('buildingId', new THREE.BufferAttribute(new Float32Array(m.geometry.getAttribute('position').count), 1));
-            this.addBuildingExtents(m.geometry);
-            m.material = this.buildingMaterial(old, this.standardBuildings, hasColor);
+            if (/^hero/i.test(m.name) || /^hero/i.test(m.parent?.name ?? '')) {
+              // Blender hero campuses carry their own palette (vertex colors, textures):
+              // keep it, only make it a lit PBR surface; still pickable by building id
+              const hm = new THREE.MeshStandardMaterial({
+                map: old.map ?? null,
+                color: old.color ?? new THREE.Color(1, 1, 1),
+                vertexColors: hasColor,
+                roughness: old.roughness ?? 0.85,
+                metalness: old.metalness ?? 0,
+                side: old.side,
+              });
+              if (hm.map) hm.map.colorSpace = THREE.SRGBColorSpace;
+              m.material = hm;
+              m.userData.hero = true;
+            } else {
+              this.addBuildingExtents(m.geometry);
+              m.material = this.buildingMaterial(old, this.standardBuildings, hasColor);
+            }
             this.buildingMeshes.push(m);
           } else {
             m.material = this.roadMaterial(old, hasColor);

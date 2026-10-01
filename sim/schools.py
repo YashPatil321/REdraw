@@ -72,8 +72,13 @@ def _serve_with_balking(A_: np.ndarray, s: np.ndarray, balk_s: np.ndarray) -> tu
 
 
 def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: float, tg: TimeGrid,
-              balk_wait_s: float | np.ndarray | None = None) -> QueueOutput:
-    """Fluid curb queue. With ``balk_wait_s`` (scalar or per arrival) set, arrivals facing a longer wait balk."""
+              balk_wait_s: float | np.ndarray | None = None, ref_service_rate: float = 0.0) -> QueueOutput:
+    """Fluid curb queue. With ``balk_wait_s`` (scalar or per arrival) set, arrivals balk when the line is too long.
+
+    Parents judge the line by how long it looks, not by its service rate: a driver with patience
+    ``balk_wait_s`` tolerates ``balk_wait_s * ref_service_rate`` cars ahead (``ref_service_rate`` is
+    the rate they are used to; 0 = the current rate). Converted to a wait threshold at the current rate.
+    """
     n_b = tg.n_bins
     car_len = Af("schools.car_length_m")
     if len(arr_t) == 0:
@@ -92,6 +97,8 @@ def run_queue(arr_t: np.ndarray, w: np.ndarray, curb_spots: float, unload_s: flo
         balked_sorted = np.zeros(len(A_), dtype=bool)
     else:
         bw = np.broadcast_to(np.asarray(balk_wait_s, dtype=np.float64), arr_t.shape)[order]
+        if ref_service_rate > 0:
+            bw = bw * (ref_service_rate / mu)
         B, balked_sorted = _serve_with_balking(A_, s, bw)
     wait_sorted = np.where(balked_sorted, 0.0, np.maximum(B - A_, 0.0))
     W = np.where(balked_sorted, 0.0, W)  # balked cars never join the line

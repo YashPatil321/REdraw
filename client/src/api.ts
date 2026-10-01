@@ -7,7 +7,7 @@
  * without the API. Mock data is labeled as such everywhere.
  */
 
-import { BUILDINGS_FILE, STATIC_DIR, STATIC_NOTICE, staticTargetFor, type CompactBuildings } from './staticPaths';
+import { BUILDINGS_FILE, STATIC_DIR, STATIC_NOTICE, WORLD_ASSETS_DIR, staticTargetFor, type CompactBuildings } from './staticPaths';
 import type {
   BaselineResponse,
   BuildingInfo,
@@ -224,7 +224,7 @@ export function createStaticFetch(root: string, liveBase: string | null, fetchIm
     const apiPath = url.startsWith(API_BASE) ? url.slice(API_BASE.length) || '/' : url;
     const t = staticTargetFor(init?.method ?? 'GET', apiPath);
     if (!t) return live(apiPath, init);
-    if (t.kind === 'asset') return fetchImpl(`${base}assets/${t.path}`);
+    if (t.kind === 'asset') return fetchImpl(`${base}${WORLD_ASSETS_DIR}/${t.path}`);
     if (t.kind === 'building') {
       buildings ??= fetchImpl(`${base}${STATIC_DIR}/${BUILDINGS_FILE}`)
         .then((r) => (r.ok ? (r.json() as Promise<CompactBuildings>) : null))

@@ -31,7 +31,7 @@ from sim.engine import SeedResult, peak_overlap, peak_window, run_seed
 from sim.world import ALL_MODES, MODE_LABELS, WorldState
 
 log = logging.getLogger("sim.report")
-SIM_VERSION = "sim-1.2"
+SIM_VERSION = "sim-1.3"
 
 METRIC_DEFS: list[dict[str, str]] = [
     {"id": "avg_commute_min", "label": "Average commute time, all workers", "unit": "min", "better": "lower"},

@@ -140,7 +140,7 @@ describe('static viewer transport', () => {
     '/v/static-api/plans/index-votes.json': { plans: [] },
     '/v/static-api/plans/p1.json': { id: 'p1' },
     '/v/static-api/world/buildings.json': { fields: ['type', 'height_m', 'name'], rows: { '7': ['house', 6.5, null] } },
-    '/v/assets/manifest.json': { tiles: [] },
+    '/v/world-assets/manifest.json': { tiles: [] },
   };
   const seen: string[] = [];
   const host = async (url: string): Promise<Response> => {

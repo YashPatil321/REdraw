@@ -449,7 +449,8 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
                 allr = np.concatenate([a[0] for a in queue_arr[ei]])
                 allp = np.concatenate([a[1] for a in queue_arr[ei]])
                 allt = np.concatenate([a[2] for a in queue_arr[ei]])
-                qo = run_queue(allt, trips.weight[allr], ents[ei].curb_spots, ents[ei].unload_s, tg, trips.balk_s[allr])
+                qo = run_queue(allt, trips.weight[allr], ents[ei].curb_spots, ents[ei].unload_s, tg, trips.balk_s[allr],
+                               ents[ei].ref_service_rate)
                 cur = (allp == p) & np.isin(allr, rows)
                 rr = allr[cur]
                 bk = qo.balked[cur]
@@ -472,7 +473,8 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
         if queue_arr[ei]:
             allr = np.concatenate([a[0] for a in queue_arr[ei]])
             allt = np.concatenate([a[2] for a in queue_arr[ei]])
-            queues.append(run_queue(allt, trips.weight[allr], ent.curb_spots, ent.unload_s, tg, trips.balk_s[allr]))
+            queues.append(run_queue(allt, trips.weight[allr], ent.curb_spots, ent.unload_s, tg, trips.balk_s[allr],
+                                    ent.ref_service_rate))
         else:
             queues.append(run_queue(np.zeros(0), np.zeros(0), ent.curb_spots, ent.unload_s, tg))
 

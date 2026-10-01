@@ -152,3 +152,23 @@ def test_road_closure_reports_vc_against_real_capacity_and_routes_around(world):
     assert np.sum(tr["edge"] == busiest) <= 0.01 * max(1, np.sum(base.playback["traj"]["edge"] == busiest))
     assert closed.info["failed_trips"] == 0
     assert int(A("sim_engine.seed_base")) > 0
+
+
+def test_more_curb_capacity_never_lengthens_the_line() -> None:
+    """Regression: balking used to be judged by wait time, so a faster curb let the line
+    (and spillback) grow longer. Parents judge the visible line, so capacity must not hurt."""
+    import numpy as np
+
+    from sim.schools import run_queue, service_rate
+    from sim.world import TimeGrid
+
+    tg = TimeGrid(bin_start_s=21600, bin_s=300, n_bins=48, report_start_s=23400, report_end_s=34200)
+    rng = np.random.default_rng(1)
+    arr = np.sort(rng.normal(8 * 3600 + 300, 600, 900))
+    w = np.ones_like(arr)
+    ref = service_rate(10, 45)
+    base = run_queue(arr, w, 10, 45, tg, 360.0, ref)
+    more = run_queue(arr, w, 16, 45 * 0.75, tg, 360.0, ref)
+    assert more.queue_max.max() <= base.queue_max.max() + 1e-9
+    assert more.spill_m.max() <= base.spill_m.max() + 1e-9
+    assert more.balked.sum() <= base.balked.sum()

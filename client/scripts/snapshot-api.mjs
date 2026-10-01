@@ -4,7 +4,7 @@
  * so the viewer can be hosted on Vercel without Python:
  *
  *   dist-viewer/static-api/...   JSON / binary API responses (layout: src/staticPaths.ts)
- *   dist-viewer/assets/...       world assets (manifest, terrain/building/road tiles, props)
+ *   dist-viewer/world-assets/... world assets (manifest, terrain/building/road tiles, props)
  *
  * Usage:
  *   node scripts/snapshot-api.mjs [--api http://localhost:8000] [--out dist-viewer] [--plans 12]
@@ -14,7 +14,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BUILDINGS_FILE, STATIC_DIR, safeId } from '../src/staticPaths.ts';
+import { BUILDINGS_FILE, STATIC_DIR, WORLD_ASSETS_DIR, safeId } from '../src/staticPaths.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -125,7 +125,7 @@ for (const sort of sorts) {
 console.log(`plans: ${chosen.length}`);
 
 // ---- assets through the API (/assets/...): manifest, everything it references, props
-const assetsOut = join(OUT, 'assets');
+const assetsOut = join(OUT, WORLD_ASSETS_DIR);
 const assetBase = (meta.assets?.base_url ?? '/assets/').replace(/\/?$/, '/');
 async function asset(rel, optional = false) {
   const data = await get(`${assetBase}${rel}`, { binary: true, optional });
@@ -160,7 +160,7 @@ if (propsManifest) {
 
 const mb = (bytes / 1e6).toFixed(1);
 console.log(`done in ${((Date.now() - t0) / 1000).toFixed(0)} s, ${mb} MB written`);
-console.log(`assets: ${files.size} files (+ props) in ${join(OUT, 'assets')}`);
+console.log(`assets: ${files.size} files (+ props) in ${assetsOut}`);
 
 // vercel.json for `vercel deploy dist-viewer`: routing and cache headers only (no build step)
 const vercel = JSON.parse(readFileSync(join(root, 'vercel.json'), 'utf8'));

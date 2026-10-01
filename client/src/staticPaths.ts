@@ -14,10 +14,12 @@
  *   dist-viewer/static-api/plans/{id}.json        GET /plans/{id}
  *   dist-viewer/static-api/plans/{id}/playback.bin
  *   dist-viewer/static-api/plans/{id}/residents.json
- *   dist-viewer/assets/...                        GET /assets/...
+ *   dist-viewer/world-assets/...                  GET /assets/... (kept apart from Vite's hashed
+ *                                                 dist-viewer/assets/ bundles: different cache policy)
  */
 
 export const STATIC_DIR = 'static-api';
+export const WORLD_ASSETS_DIR = 'world-assets';
 export const BUILDINGS_FILE = 'world/buildings.json';
 
 export type StaticTarget =

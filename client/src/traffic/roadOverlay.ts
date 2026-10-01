@@ -182,9 +182,9 @@ void main() {
   float alpha = mix(uOpacity, uOpacity * (0.25 + 0.75 * core), uSoft);
   lin *= 1.0 + 0.25 * uSoft * core;
   // at street level the ribbon is right under your feet: make it a subtle tint
-  float near = smoothstep(12.0, 160.0, vCamDist);
-  alpha *= mix(0.4, 1.0, near);
-  lin *= mix(0.6, 1.0, near);
+  float near = smoothstep(20.0, 320.0, vCamDist);
+  alpha *= mix(0.12, 1.0, near);
+  lin *= mix(0.7, 1.0, near);
   gl_FragColor = vec4(mix(lin, fogColor, f * 0.6), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

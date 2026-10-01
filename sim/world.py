@@ -300,6 +300,10 @@ class Entrance:
     lon: float
     verified: bool
     added_by_plan: bool = False
+    # Service rate (cars/s) parents are used to at this entrance. Balking is judged by the
+    # visible line length, i.e. patience_s * ref_service_rate cars, so a faster curb does not
+    # make parents tolerate a longer line. 0 means "use the current rate".
+    ref_service_rate: float = 0.0
 
 
 @dataclass
@@ -603,6 +607,8 @@ def load_world(data_dir: Path | str | None = None) -> WorldState:
                 lat=float(ent.get("lat", net.lat[ent_node])), lon=float(ent.get("lon", net.lon[ent_node])),
                 verified=bool(ent.get("verified", False)),
             ))
+            # same formula as sim.schools.service_rate (not imported: schools imports world)
+            entrances[-1].ref_service_rate = max(entrances[-1].curb_spots, 1e-6) / max(entrances[-1].unload_s, 1e-6)
             school.entrances.append(len(entrances) - 1)
         if not np.isfinite(school.x):
             school.x, school.z = entrances[school.entrances[0]].x, entrances[school.entrances[0]].z
