@@ -4,12 +4,13 @@ display_name: 4S Ranch and Del Sur, San Diego
 # "Del Sur, San Diego" and expand so I 15 (east), SR 56 (south),
 # Black Mountain Open Space (west), and the San Dieguito River (north) are included.
 bbox:
-  south: 32.948
-  north: 33.050
-  west: -117.180
-  east: -117.065
-# Expanded from the spec starting box after checking real data (Overture/OSM roads,
-# 3DEP DEM): the old box cut off SR 56 and the north-east stretch of I 15.
+  south: 32.993
+  north: 33.040
+  west: -117.165
+  east: -117.080
+# Focused core (2026-10-01): 4S Ranch + Del Sur plus the adjacent I 15 stretch, ~7.9 x 5.2 km.
+# Smaller than the spec's starting box on purpose so the world renders at much higher
+# detail. SR 56 and the rest of I 15 are reached through the exits below.
 bbox_verified: true
 projection: EPSG:32611        # UTM 11N, meters, for all processing
 scene_origin: center_of_bbox  # client uses local meters relative to this point
@@ -39,9 +40,13 @@ arterial_labels:
 # Pipeline snaps each to the nearest drive-graph node of a matching road near the bbox edge.
 # Bearing is the compass direction (deg) of jobs that use this exit.
 exits:
-  # Positions read from the real drive graph (Overture/OSM, release 2026-09-23.1)
-  # where each road meets the bbox edge. verified: false until checked on a map.
-  - {id: i15_north, label: I 15 north, lat: 33.0495, lon: -117.0726, bearing_deg: 10,  verified: false}
-  - {id: i15_south, label: I 15 south, lat: 32.9480, lon: -117.10584, bearing_deg: 190, verified: false}
-  - {id: sr56_west, label: SR 56 west, lat: 32.9644, lon: -117.1800, bearing_deg: 265, verified: false}
-  - {id: cdn_east,  label: Camino del Norte east, lat: 32.9879, lon: -117.0672, bearing_deg: 100, verified: false}
+  # Where real roads (Overture/OSM 2026-09-23.1) cross the bbox edge. bearing_deg is the
+  # compass direction of the jobs that use the exit. verified: false until checked on a map.
+  - {id: i15_north, label: I 15 north, lat: 33.0093, lon: -117.0806, bearing_deg: 20, verified: false}
+  - {id: i15_south, label: I 15 south, lat: 32.9931, lon: -117.0834, bearing_deg: 185, verified: false}
+  - {id: cds_south, label: Camino del Sur south (to SR 56 west), lat: 32.9937, lon: -117.1583, bearing_deg: 225, verified: false}
+  - {id: cvr_south, label: Carmel Valley Road south, lat: 32.9942, lon: -117.1191, bearing_deg: 170, verified: false}
+  - {id: cdn_east, label: Camino del Norte east, lat: 32.9975, lon: -117.0826, bearing_deg: 120, verified: false}
+  - {id: bcd_east, label: Bernardo Center Drive east, lat: 33.0121, lon: -117.0807, bearing_deg: 75, verified: false}
+  - {id: deldios_north, label: Del Dios Highway north, lat: 33.0372, lon: -117.1644, bearing_deg: 330, verified: false}
+  - {id: sandieguito_west, label: San Dieguito Road west, lat: 33.0043, lon: -117.1637, bearing_deg: 275, verified: false}
