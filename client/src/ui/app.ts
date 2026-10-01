@@ -188,7 +188,10 @@ export class RdApp extends LitElement {
     const s = this.st.s;
     const infoPanel = s.building || s.school || s.buildingLoading;
     let content;
-    switch (s.view) {
+    // street level: keep the view clear (HUD + scrubber only)
+    if (s.walking && s.view !== 'browse') {
+      content = s.view === 'traffic' || s.view === 'report' ? html`<div class="bottom" style="left:10px"><rd-scrubber></rd-scrubber></div>` : nothing;
+    } else switch (s.view) {
       case 'explore':
         content = html`<div class="left"><rd-mission></rd-mission></div>
           ${infoPanel ? html`<div class="right"><rd-info-panel></rd-info-panel></div>` : nothing}`;

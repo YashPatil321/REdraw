@@ -443,6 +443,9 @@ export class SceneController {
       l.overlay.setViewport(this.viewer.camera, h);
       l.update(this.clockT, scale);
     }
+    const walking = this.viewer.walking;
+    if (walking || this.schoolMarkers?.isStreetLevel) this.schoolMarkers?.setStreetLevel(walking, this.viewer.camera.position);
+    if (this.arterials) this.arterials.group.visible = !walking;
     this.edgeHighlight.tick(now);
     const pinScale = THREE.MathUtils.clamp(dist / 500, 1, 12);
     this.pin.tick(now, pinScale);
@@ -585,6 +588,12 @@ export class SceneController {
   exitWalk(): void {
     this.viewer.exitWalk();
     store.set({ walking: false });
+  }
+
+  /** Camera straight to a view (debug / screenshots): pitch and heading in degrees. */
+  jumpToXZ(x: number, z: number, distance = 700, pitchDeg = 45, headingDeg?: number): void {
+    if (this.viewer.walking) this.exitWalk();
+    this.viewer.jumpTo(new THREE.Vector3(x, this.groundHeight(x, z), z), { distance, pitchDeg, headingDeg });
   }
 
   flyToXZ(x: number, z: number, distance = 700, duration = 1.6): void {

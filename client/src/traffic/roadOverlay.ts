@@ -177,7 +177,7 @@ void main() {
   // soft glowing ribbon (photoreal): bright core, feathered edges
   float core = smoothstep(1.0, 0.45, vOff) * smoothstep(0.0, 0.35, vOff);
   float alpha = mix(uOpacity, uOpacity * (0.25 + 0.75 * core), uSoft);
-  lin *= 1.0 + 0.5 * uSoft * core;
+  lin *= 1.0 + 0.25 * uSoft * core;
   gl_FragColor = vec4(mix(lin, fogColor, f * 0.6), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -260,10 +260,12 @@ export class RoadOverlay {
     u['uSoft']!.value = pr ? 1 : 0;
     u['uPull']!.value = pr ? 2.5 : 0;
     u['uWidthScale']!.value = pr ? 0.62 : 1;
-    u['uBright']!.value = pr ? 2.6 : 2.2;
+    // photoreal: exact ramp colors like a map overlay (no tone mapping over the photo)
+    u['uBright']!.value = pr ? 1.1 : 2.2;
     if (this.material.transparent !== pr) {
       this.material.transparent = pr;
       this.material.depthWrite = !pr;
+      this.material.toneMapped = !pr;
       this.material.needsUpdate = true;
     }
   }

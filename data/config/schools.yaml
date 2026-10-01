@@ -1,104 +1,134 @@
 # Schools in the Redraw region. EVERY value below is a placeholder until a
-# person verifies it (bell schedules, curb layouts, coordinates). The report
+# person verifies it (bell schedules, curb layouts, entrance locations).
+# Campus coordinates come from Overture Maps (OSM campus polygons); entrances
+# are placed at the campus centroid until someone maps the real drop-off curb. The report
 # card footer lists every field with verified: false.
 # The pipeline also adds any amenity=school found in OSM that is not listed
 # here, using defaults from assumptions.yaml (schools.defaults).
 schools:
-  - id: del_norte_hs
-    name: Del Norte High School
-    grades: [9, 12]
-    bell_start: "08:30"
-    lat: 33.0215
-    lon: -117.1010
+- id: del_norte_hs
+  name: Del Norte High School
+  grades:
+  - 9
+  - 12
+  bell_start: 08:30
+  lat: 33.01402
+  lon: -117.12246
+  verified: false
+  entrances:
+  - id: main_dropoff
+    lat: 33.01402
+    lon: -117.12246
+    curb_spots: 10
+    unload_seconds: 45
     verified: false
-    entrances:
-      - id: main_dropoff
-        lat: 33.0205
-        lon: -117.1022
-        curb_spots: 10
-        unload_seconds: 45
-        verified: false
-  - id: oak_valley_ms
-    name: Oak Valley Middle School
-    grades: [6, 8]
-    bell_start: "08:00"
-    lat: 33.0158
-    lon: -117.1081
+    location_note: placeholder at campus centroid; real drop-off entrance location unknown
+  coords_source: Overture Maps 2026-09-23.1 campus polygon centroid (OSM)
+- id: oak_valley_ms
+  name: Oak Valley Middle School
+  grades:
+  - 6
+  - 8
+  bell_start: 08:00
+  lat: 33.0008
+  lon: -117.10981
+  verified: false
+  entrances:
+  - id: main_dropoff
+    lat: 33.0008
+    lon: -117.10981
+    curb_spots: 8
+    unload_seconds: 40
     verified: false
-    entrances:
-      - id: main_dropoff
-        lat: 33.0152
-        lon: -117.1090
-        curb_spots: 8
-        unload_seconds: 40
-        verified: false
-  - id: design39
-    name: Design39 Campus
-    grades: [0, 8]
-    bell_start: "08:15"
-    lat: 33.0296
-    lon: -117.1415
+    location_note: placeholder at campus centroid; real drop-off entrance location unknown
+  coords_source: Overture Maps 2026-09-23.1 campus polygon centroid (OSM)
+- id: design39
+  name: Design39 Campus
+  grades:
+  - 0
+  - 8
+  bell_start: 08:15
+  lat: 33.01867
+  lon: -117.12186
+  verified: false
+  entrances:
+  - id: main_dropoff
+    lat: 33.01867
+    lon: -117.12186
+    curb_spots: 8
+    unload_seconds: 40
     verified: false
-    entrances:
-      - id: main_dropoff
-        lat: 33.0290
-        lon: -117.1408
-        curb_spots: 8
-        unload_seconds: 40
-        verified: false
-  - id: stone_ranch_es
-    name: Stone Ranch Elementary School
-    grades: [0, 5]
-    bell_start: "08:40"
-    lat: 33.0175
-    lon: -117.1170
+    location_note: placeholder at campus centroid; real drop-off entrance location unknown
+  coords_source: Overture Maps 2026-09-23.1 campus polygon centroid (OSM)
+- id: stone_ranch_es
+  name: Stone Ranch Elementary School
+  grades:
+  - 0
+  - 5
+  bell_start: 08:40
+  lat: 33.00536
+  lon: -117.11674
+  verified: false
+  entrances:
+  - id: main_dropoff
+    lat: 33.00536
+    lon: -117.11674
+    curb_spots: 6
+    unload_seconds: 35
     verified: false
-    entrances:
-      - id: main_dropoff
-        lat: 33.0170
-        lon: -117.1176
-        curb_spots: 6
-        unload_seconds: 35
-        verified: false
-  - id: monterey_ridge_es
-    name: Monterey Ridge Elementary School
-    grades: [0, 5]
-    bell_start: "08:40"
-    lat: 33.0280
-    lon: -117.1250
+    location_note: placeholder at campus centroid; real drop-off entrance location unknown
+  coords_source: Overture Maps 2026-09-23.1 campus polygon centroid (OSM)
+- id: monterey_ridge_es
+  name: Monterey Ridge Elementary School
+  grades:
+  - 0
+  - 5
+  bell_start: 08:40
+  lat: 33.02657
+  lon: -117.1083
+  verified: false
+  entrances:
+  - id: main_dropoff
+    lat: 33.02657
+    lon: -117.1083
+    curb_spots: 6
+    unload_seconds: 35
     verified: false
-    entrances:
-      - id: main_dropoff
-        lat: 33.0275
-        lon: -117.1256
-        curb_spots: 6
-        unload_seconds: 35
-        verified: false
-  - id: del_sur_es
-    name: Del Sur Elementary School
-    grades: [0, 5]
-    bell_start: "08:40"
-    lat: 33.0135
-    lon: -117.1430
+    location_note: placeholder at campus centroid; real drop-off entrance location unknown
+  coords_source: Overture Maps 2026-09-23.1 campus polygon centroid (OSM)
+- id: del_sur_es
+  name: Del Sur Elementary School
+  grades:
+  - 0
+  - 5
+  bell_start: 08:40
+  lat: 33.01822
+  lon: -117.14047
+  verified: false
+  entrances:
+  - id: main_dropoff
+    lat: 33.01822
+    lon: -117.14047
+    curb_spots: 6
+    unload_seconds: 35
     verified: false
-    entrances:
-      - id: main_dropoff
-        lat: 33.0130
-        lon: -117.1424
-        curb_spots: 6
-        unload_seconds: 35
-        verified: false
-  - id: willow_grove_es
-    name: Willow Grove Elementary School
-    grades: [0, 5]
-    bell_start: "08:40"
-    lat: 33.0005
-    lon: -117.1150
+    location_note: placeholder at campus centroid; real drop-off entrance location unknown
+  coords_source: Overture Maps 2026-09-23.1 campus polygon centroid (OSM)
+- id: willow_grove_es
+  name: Willow Grove Elementary School
+  grades:
+  - 0
+  - 5
+  bell_start: 08:40
+  lat: 32.99382
+  lon: -117.16241
+  verified: false
+  entrances:
+  - id: main_dropoff
+    lat: 32.99382
+    lon: -117.16241
+    curb_spots: 6
+    unload_seconds: 35
     verified: false
-    entrances:
-      - id: main_dropoff
-        lat: 33.0000
-        lon: -117.1156
-        curb_spots: 6
-        unload_seconds: 35
-        verified: false
+    location_note: placeholder at campus centroid; real drop-off entrance location unknown
+  coords_source: Overture Maps 2026-09-23.1 campus polygon centroid (OSM)

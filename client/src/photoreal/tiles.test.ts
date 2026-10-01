@@ -8,6 +8,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import points from '../../../docs/geo_test_points.json';
 import { originFromLatLon, latLonToScene } from '../geo';
 import { calibrateOffset, median, pickSpread } from './calibrate';
 import { enuFrame, geodeticToEcef, warpPoint } from './frame';
@@ -18,8 +19,11 @@ const g = globalThis as unknown as Record<string, unknown>;
 g['requestAnimationFrame'] ??= (cb: (t: number) => void) => setTimeout(() => cb(performance.now()), 2);
 g['cancelAnimationFrame'] ??= (h: ReturnType<typeof setTimeout>) => clearTimeout(h);
 
-const origin = originFromLatLon(33.005, -117.125);
-const extent = { min_x: -4700, max_x: 4700, min_z: -4450, max_z: 4450 };
+// origin and extent from the documented coordinate test points (docs/coordinates.md)
+const origin = originFromLatLon(points.origin.lat, points.origin.lon);
+const c0 = latLonToScene(points.bbox.south, points.bbox.west, origin);
+const c1 = latLonToScene(points.bbox.north, points.bbox.east, origin);
+const extent = { min_x: c0.x, max_x: c1.x, min_z: c1.z, max_z: c0.z };
 
 /** Minimal glb: one mesh, positions only, indexed triangles. */
 function makeGlb(positions: number[], indices: number[]): Uint8Array {

@@ -24,6 +24,7 @@ export class SchoolMarkers {
   readonly group = new THREE.Group();
   private pins: THREE.InstancedMesh | null = null;
   private labels: CSS2DObject[] = [];
+  private streetLevel = false;
 
   constructor(schools: School[], onClick: (s: School) => void, heroId?: string) {
     this.group.name = 'school-markers';
@@ -54,6 +55,27 @@ export class SchoolMarkers {
     });
     this.pins.computeBoundingSphere();
     this.group.add(this.pins);
+  }
+
+  /**
+   * Street level (walk camera): no 60 m pins, and only labels of nearby schools
+   * (CSS labels are not occluded by buildings, so far ones would float through walls).
+   */
+  setStreetLevel(on: boolean, cam?: THREE.Vector3): void {
+    this.streetLevel = on;
+    if (this.pins) this.pins.visible = !on;
+    for (const l of this.labels) {
+      if (!on || !cam) l.visible = true;
+      else {
+        const d = Math.hypot(l.position.x - cam.x, l.position.z - cam.z);
+        l.visible = d < 450;
+        if (l.visible) l.position.y = Math.max(l.position.y, 0);
+      }
+    }
+  }
+
+  get isStreetLevel(): boolean {
+    return this.streetLevel;
   }
 
   dispose(): void {

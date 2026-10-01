@@ -73,9 +73,14 @@ export function initialQuality(gl: WebGLRenderingContext | WebGL2RenderingContex
   } catch {
     /* ignore */
   }
-  if (/swiftshader|llvmpipe|software/i.test(renderer)) return { q: 'low', pinned: false };
-  if (/intel|mali|adreno|powervr|apple gpu/i.test(renderer)) return { q: 'medium', pinned: false };
+  // software rasterizers only; every real GPU starts at high (the frame-rate
+  // watchdog steps down to medium / low if a laptop GPU cannot keep up)
+  if (isSoftwareRenderer(renderer)) return { q: 'low', pinned: false };
   return { q: 'high', pinned: false };
+}
+
+export function isSoftwareRenderer(rendererString: string): boolean {
+  return /swiftshader|llvmpipe|softpipe|software|microsoft basic render/i.test(rendererString);
 }
 
 export function saveQuality(q: Quality): void {

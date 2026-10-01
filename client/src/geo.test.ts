@@ -20,7 +20,7 @@ describe('geo (docs/geo_test_points.json)', () => {
   });
 
   it('origin from region bbox equals the documented origin', () => {
-    const o = originFromBbox({ south: 32.965, north: 33.045, west: -117.175, east: -117.075 });
+    const o = originFromBbox(points.bbox);
     expect(o.lat).toBeCloseTo(points.origin.lat, 12);
     expect(o.lon).toBeCloseTo(points.origin.lon, 12);
   });

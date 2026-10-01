@@ -56,6 +56,7 @@ export function makeTileMaterial(old: THREE.Material, uniforms: TileUniforms): T
   const mat = new THREE.MeshBasicMaterial({
     map: o.map ?? null,
     color: o.map ? 0xffffff : (o.color?.clone() ?? new THREE.Color(0xcccccc)),
+    vertexColors: o.vertexColors ?? false,
     side: o.side ?? THREE.FrontSide,
     transparent: o.transparent,
     opacity: o.opacity,
@@ -125,7 +126,7 @@ function bvhRaycast(this: THREE.Mesh, raycaster: THREE.Raycaster, intersects: TH
   if (!geo.boundingSphere) geo.computeBoundingSphere();
   _sphere.copy(geo.boundingSphere!).applyMatrix4(this.matrixWorld);
   if (!raycaster.ray.intersectsSphere(_sphere)) return;
-  if (!geo.boundsTree) geo.boundsTree = new MeshBVH(geo, { maxLeafSize: 16 });
+  if (!geo.boundsTree) geo.boundsTree = new MeshBVH(geo, { targetLeafSize: 16 } as ConstructorParameters<typeof MeshBVH>[1]);
   acceleratedRaycast.call(this, raycaster, intersects);
 }
 

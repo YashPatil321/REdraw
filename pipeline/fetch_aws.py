@@ -36,7 +36,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,10 @@ from pipeline.geo import scene_origin
 # ---------------------------------------------------------------------------
 
 TNM_BUCKET_URL = "https://prd-tnm.s3.amazonaws.com"
-DEM_1M_PROJECTS = ["CA_SanDiegoCo_D24", "San_Diego_CA_2014_LiDAR"]  # preference order (newest first)
+DEM_1M_PROJECTS = [
+    "CA_SanDiegoCo_D24",
+    "San_Diego_CA_2014_LiDAR",
+]  # preference order (newest first)
 DEM_13_TILES = ["n34w118", "n33w118"]  # 1/3 arc-second fallback / gap fill
 DEM_RES_M = 2.0
 
@@ -129,7 +132,9 @@ def _session() -> Any:
     return s
 
 
-def s3_list(bucket_url: str, prefix: str, delimiter: str | None = "/") -> tuple[list[tuple[str, int]], list[str]]:
+def s3_list(
+    bucket_url: str, prefix: str, delimiter: str | None = "/"
+) -> tuple[list[tuple[str, int]], list[str]]:
     """Anonymous S3 ListObjectsV2 over HTTPS -> ([(key, size)], [common prefixes])."""
     sess = _session()
     keys: list[tuple[str, int]] = []
@@ -173,8 +178,14 @@ class FetchExtent:
     def lonlat(self) -> tuple[float, float, float, float]:
         from pipeline.geo import utm_to_lonlat
 
-        pts = [utm_to_lonlat(e, n) for e in (self.west_e, self.east_e) for n in (self.south_n, self.north_n)]
-        pts += [utm_to_lonlat((self.west_e + self.east_e) / 2, n) for n in (self.south_n, self.north_n)]
+        pts = [
+            utm_to_lonlat(e, n)
+            for e in (self.west_e, self.east_e)
+            for n in (self.south_n, self.north_n)
+        ]
+        pts += [
+            utm_to_lonlat((self.west_e + self.east_e) / 2, n) for n in (self.south_n, self.north_n)
+        ]
         lons = [p[0] for p in pts]
         lats = [p[1] for p in pts]
         return min(lons), min(lats), max(lons), max(lats)
@@ -216,19 +227,33 @@ def _read_into(dst: np.ndarray, dst_transform: Any, url: str, overview_factor: f
 
     h, w = dst.shape
     with rasterio.open(url) as src:
-        b = transform_bounds("EPSG:32611", src.crs, *array_bounds(h, w, dst_transform), densify_pts=21)
+        b = transform_bounds(
+            "EPSG:32611", src.crs, *array_bounds(h, w, dst_transform), densify_pts=21
+        )
         win = from_bounds(*b, transform=src.transform).round_offsets().round_lengths()
         win = win.intersection(rasterio.windows.Window(0, 0, src.width, src.height))
         if win.width <= 0 or win.height <= 0:
             return 0
         oh = max(1, int(round(win.height / overview_factor)))
         ow = max(1, int(round(win.width / overview_factor)))
-        arr = src.read(1, window=win, out_shape=(oh, ow), resampling=Resampling.average, masked=True).astype(np.float32)
+        arr = src.read(
+            1, window=win, out_shape=(oh, ow), resampling=Resampling.average, masked=True
+        ).astype(np.float32)
         arr = arr.filled(np.nan)
         arr[(arr < -500) | (arr > 9000)] = np.nan
         wt = src.window_transform(win) * rasterio.Affine.scale(win.width / ow, win.height / oh)
         tmp = np.full_like(dst, np.nan)
-        reproject(arr, tmp, src_transform=wt, src_crs=src.crs, src_nodata=np.nan, dst_transform=dst_transform, dst_crs="EPSG:32611", dst_nodata=np.nan, resampling=Resampling.bilinear)
+        reproject(
+            arr,
+            tmp,
+            src_transform=wt,
+            src_crs=src.crs,
+            src_nodata=np.nan,
+            dst_transform=dst_transform,
+            dst_crs="EPSG:32611",
+            dst_nodata=np.nan,
+            resampling=Resampling.bilinear,
+        )
     fill = np.isnan(dst) & np.isfinite(tmp)
     dst[fill] = tmp[fill]
     return int(fill.sum())
@@ -255,7 +280,9 @@ def fetch_dem(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, A
         if not np.isnan(dem).any():
             break
         try:
-            keys, _ = s3_list(TNM_BUCKET_URL, f"StagedProducts/Elevation/1m/Projects/{proj}/TIFF/", delimiter=None)
+            keys, _ = s3_list(
+                TNM_BUCKET_URL, f"StagedProducts/Elevation/1m/Projects/{proj}/TIFF/", delimiter=None
+            )
         except Exception as e:  # noqa: BLE001
             log(f"DEM: cannot list {proj}: {e}")
             continue
@@ -267,7 +294,14 @@ def fetch_dem(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, A
             n = _read_into(dem, transform, "/vsicurl/" + url, overview_factor=DEM_RES_M)
             log(f"DEM: {key.rsplit('/', 1)[-1]} filled {n:,} px in {time.time() - t0:.1f}s")
             if n:
-                used.append({"name": f"USGS 3DEP 1 m lidar DEM, project {proj}", "url": url, "resolution_m": 1.0, "read_at_m": DEM_RES_M})
+                used.append(
+                    {
+                        "name": f"USGS 3DEP 1 m lidar DEM, project {proj}",
+                        "url": url,
+                        "resolution_m": 1.0,
+                        "read_at_m": DEM_RES_M,
+                    }
+                )
     missing = float(np.isnan(dem).mean())
     if missing > 0:
         for t in DEM_13_TILES:
@@ -279,22 +313,55 @@ def fetch_dem(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, A
                 continue
             log(f"DEM: 1/3 arc-second {t} filled {n:,} gap px")
             if n:
-                used.append({"name": "USGS 3DEP 1/3 arc-second (~10 m) DEM (gap fill)", "url": url, "resolution_m": 10.0})
+                used.append(
+                    {
+                        "name": "USGS 3DEP 1/3 arc-second (~10 m) DEM (gap fill)",
+                        "url": url,
+                        "resolution_m": 10.0,
+                    }
+                )
     cover = 1.0 - float(np.isnan(dem).mean())
     if cover < 0.98:
-        raise DataSourceUnavailable("USGS 3DEP DEM (AWS prd-tnm)", f"{TNM_BUCKET_URL}/StagedProducts/Elevation/", dest, HOW, RuntimeError(f"DEM covers only {cover:.1%} of the extent"))
+        raise DataSourceUnavailable(
+            "USGS 3DEP DEM (AWS prd-tnm)",
+            f"{TNM_BUCKET_URL}/StagedProducts/Elevation/",
+            dest,
+            HOW,
+            RuntimeError(f"DEM covers only {cover:.1%} of the extent"),
+        )
     nod = -9999.0
     out = np.where(np.isnan(dem), nod, dem).astype(np.float32)
     tmp = dest.with_suffix(".part.tif")
-    with rasterio.open(tmp, "w", driver="GTiff", width=w, height=h, count=1, dtype="float32", crs="EPSG:32611", transform=transform, nodata=nod, compress="deflate", predictor=3, tiled=True, blockxsize=512, blockysize=512, BIGTIFF="IF_SAFER") as f:
+    with rasterio.open(
+        tmp,
+        "w",
+        driver="GTiff",
+        width=w,
+        height=h,
+        count=1,
+        dtype="float32",
+        crs="EPSG:32611",
+        transform=transform,
+        nodata=nod,
+        compress="deflate",
+        predictor=3,
+        tiled=True,
+        blockxsize=512,
+        blockysize=512,
+        BIGTIFF="IF_SAFER",
+    ) as f:
         f.write(out, 1)
     tmp.replace(dest)
     lic = "Public domain (USGS 3D Elevation Program)"
     for u in used:
         u.update(license=lic, retrieved=today())
-    write_json(side, {"resolution_m": DEM_RES_M, "crs": "EPSG:32611", "coverage": cover, "sources": used})
+    write_json(
+        side, {"resolution_m": DEM_RES_M, "crs": "EPSG:32611", "coverage": cover, "sources": used}
+    )
     sources.extend(used)
-    log(f"DEM: wrote {dest.name} {w}x{h} @ {DEM_RES_M} m, coverage {cover:.2%}, elev {np.nanmin(dem):.0f}..{np.nanmax(dem):.0f} m")
+    log(
+        f"DEM: wrote {dest.name} {w}x{h} @ {DEM_RES_M} m, coverage {cover:.2%}, elev {np.nanmin(dem):.0f}..{np.nanmax(dem):.0f} m"
+    )
     return dest
 
 
@@ -305,7 +372,14 @@ def fetch_dem(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, A
 S2_BAD_SCL = (0, 1, 3, 8, 9, 10)  # nodata, saturated, cloud shadow, cloud med/high, cirrus
 
 
-def natural_color(refl: np.ndarray, white: float = 0.30, black: float = 0.01, gamma: float = 1.0 / 2.0, saturation: float = 1.25, knee: float = 0.65) -> np.ndarray:
+def natural_color(
+    refl: np.ndarray,
+    white: float = 0.30,
+    black: float = 0.01,
+    gamma: float = 1.0 / 2.0,
+    saturation: float = 1.25,
+    knee: float = 0.65,
+) -> np.ndarray:
     """(3,H,W) surface reflectance -> (3,H,W) uint8 natural colour.
 
     Fixed black/white reflectance points shared by all bands (keeps the scene's colour balance;
@@ -345,7 +419,12 @@ def _scene_item(prefix: str) -> dict[str, Any]:
     return r.json()
 
 
-S2_ASSET_KEYS = {"B04": ("red", "B04"), "B03": ("green", "B03"), "B02": ("blue", "B02"), "SCL": ("scl", "SCL")}
+S2_ASSET_KEYS = {
+    "B04": ("red", "B04"),
+    "B03": ("green", "B03"),
+    "B02": ("blue", "B02"),
+    "SCL": ("scl", "SCL"),
+}
 
 
 def band_scale(item: dict[str, Any], band: str) -> tuple[float, float]:
@@ -356,7 +435,9 @@ def band_scale(item: dict[str, Any], band: str) -> tuple[float, float]:
     """
     props = item.get("properties", {})
     assets = item.get("assets", {})
-    a: dict[str, Any] = next((assets[k] for k in S2_ASSET_KEYS.get(band, (band,)) if k in assets), {})
+    a: dict[str, Any] = next(
+        (assets[k] for k in S2_ASSET_KEYS.get(band, (band,)) if k in assets), {}
+    )
     rb = (a.get("raster:bands") or [{}])[0]
     scale = float(rb.get("scale", 1e-4))
     if props.get("earthsearch:boa_offset_applied") is True:
@@ -376,11 +457,23 @@ def _read_band(url: str, fx: FetchExtent, res: float, resampling: Any) -> np.nda
     h = int(math.ceil((fx.north_n - fx.south_n) / res))
     dst = np.zeros((h, w), dtype=np.float32)
     with rasterio.open("/vsicurl/" + url) as src:
-        reproject(rasterio.band(src, 1), dst, src_transform=src.transform, src_crs=src.crs, src_nodata=0, dst_transform=from_origin(fx.west_e, fx.north_n, res, res), dst_crs="EPSG:32611", dst_nodata=0, resampling=resampling)
+        reproject(
+            rasterio.band(src, 1),
+            dst,
+            src_transform=src.transform,
+            src_crs=src.crs,
+            src_nodata=0,
+            dst_transform=from_origin(fx.west_e, fx.north_n, res, res),
+            dst_crs="EPSG:32611",
+            dst_nodata=0,
+            resampling=resampling,
+        )
     return dst
 
 
-def fetch_imagery(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, Any]], year: int | None = None) -> Path:
+def fetch_imagery(
+    raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, Any]], year: int | None = None
+) -> Path:
     import rasterio
     from rasterio.enums import Resampling
     from rasterio.transform import from_origin
@@ -398,7 +491,9 @@ def fetch_imagery(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[st
         try:
             scenes = _s2_scenes(y)
         except Exception as e:  # noqa: BLE001
-            raise DataSourceUnavailable("Sentinel-2 L2A COGs (AWS)", f"{S2_BUCKET_URL}/{S2_PREFIX}/", dest, HOW, e) from e
+            raise DataSourceUnavailable(
+                "Sentinel-2 L2A COGs (AWS)", f"{S2_BUCKET_URL}/{S2_PREFIX}/", dest, HOW, e
+            ) from e
         with ThreadPoolExecutor(8) as ex:
             items = list(ex.map(lambda p: (p, _scene_item(p)), scenes))
         for p, it in items:
@@ -408,7 +503,13 @@ def fetch_imagery(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[st
         if len(cands) >= 3:
             break
     if not cands:
-        raise DataSourceUnavailable("Sentinel-2 L2A COGs (AWS)", f"{S2_BUCKET_URL}/{S2_PREFIX}/", dest, HOW, RuntimeError("no summer scene under the cloud limit"))
+        raise DataSourceUnavailable(
+            "Sentinel-2 L2A COGs (AWS)",
+            f"{S2_BUCKET_URL}/{S2_PREFIX}/",
+            dest,
+            HOW,
+            RuntimeError("no summer scene under the cloud limit"),
+        )
     cands.sort(key=lambda t: (t[0], t[1]))
     # Local clear fraction from the scene classification layer (marine layer is local).
     best: tuple[float, str, dict[str, Any]] | None = None
@@ -416,7 +517,11 @@ def fetch_imagery(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[st
         scl = _read_band(f"{S2_BUCKET_URL}/{p}SCL.tif", fx, 20.0, Resampling.nearest)
         bad = float(np.isin(scl, S2_BAD_SCL).mean())
         log(f"S2: {p.rstrip('/').rsplit('/', 1)[-1]} scene cloud {cc:.1f}%, local bad {bad:.2%}")
-        if best is None or bad < best[0] - 1e-4 or (abs(bad - best[0]) <= 1e-4 and scene_sort_key(p) > scene_sort_key(best[1])):
+        if (
+            best is None
+            or bad < best[0] - 1e-4
+            or (abs(bad - best[0]) <= 1e-4 and scene_sort_key(p) > scene_sort_key(best[1]))
+        ):
             best = (bad, p, it)
     assert best is not None
     bad, p, it = best
@@ -431,7 +536,20 @@ def fetch_imagery(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[st
     rgb = natural_color(refl)
     h, w = rgb.shape[1:]
     tmp = dest.with_suffix(".part.tif")
-    with rasterio.open(tmp, "w", driver="GTiff", width=w, height=h, count=3, dtype="uint8", crs="EPSG:32611", transform=from_origin(fx.west_e, fx.north_n, IMAGERY_RES_M, IMAGERY_RES_M), compress="deflate", tiled=True, photometric="RGB") as f:
+    with rasterio.open(
+        tmp,
+        "w",
+        driver="GTiff",
+        width=w,
+        height=h,
+        count=3,
+        dtype="uint8",
+        crs="EPSG:32611",
+        transform=from_origin(fx.west_e, fx.north_n, IMAGERY_RES_M, IMAGERY_RES_M),
+        compress="deflate",
+        tiled=True,
+        photometric="RGB",
+    ) as f:
         f.write(rgb)
     tmp.replace(dest)
     dt = str(it.get("properties", {}).get("datetime", ""))[:10]
@@ -441,7 +559,9 @@ def fetch_imagery(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[st
         "url": f"{S2_BUCKET_URL}/{p}",
         "scene": name,
         "acquired": dt,
-        "scene_cloud_cover_pct": float(it.get("properties", {}).get("eo:cloud_cover", float("nan"))),
+        "scene_cloud_cover_pct": float(
+            it.get("properties", {}).get("eo:cloud_cover", float("nan"))
+        ),
         "local_cloud_or_shadow_fraction": bad,
         "resolution_m": 10.0,
         "retrieved": today(),
@@ -472,7 +592,11 @@ def overture_s3() -> Any:
 
 def latest_overture_release() -> str:
     _, pre = s3_list(OVERTURE_URL, "release/")
-    rel = sorted(p.split("/")[1] for p in pre if p.count("/") >= 2 and re.match(r"release/\d{4}-\d{2}-\d{2}", p))
+    rel = sorted(
+        p.split("/")[1]
+        for p in pre
+        if p.count("/") >= 2 and re.match(r"release/\d{4}-\d{2}-\d{2}", p)
+    )
     if not rel:
         raise RuntimeError("no Overture releases listed")
     return rel[-1]
@@ -487,17 +611,34 @@ def row_groups_in_bbox(md: Any, bbox: tuple[float, float, float, float]) -> list
         st: dict[str, Any] = {}
         for j in range(rg.num_columns):
             c = rg.column(j)
-            if c.path_in_schema in ("bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax") and c.statistics is not None and c.statistics.has_min_max:
+            if (
+                c.path_in_schema in ("bbox.xmin", "bbox.xmax", "bbox.ymin", "bbox.ymax")
+                and c.statistics is not None
+                and c.statistics.has_min_max
+            ):
                 st[c.path_in_schema] = c.statistics
         if len(st) < 4:
             out.append(i)  # no stats -> must read
             continue
-        if st["bbox.xmin"].min <= e and st["bbox.xmax"].max >= w and st["bbox.ymin"].min <= n and st["bbox.ymax"].max >= s:
+        if (
+            st["bbox.xmin"].min <= e
+            and st["bbox.xmax"].max >= w
+            and st["bbox.ymin"].min <= n
+            and st["bbox.ymax"].max >= s
+        ):
             out.append(i)
     return out
 
 
-def overture_read(s3: Any, release: str, theme: str, typ: str, bbox: tuple[float, float, float, float], columns: list[str] | None = None, threads: int = 24) -> Any:
+def overture_read(
+    s3: Any,
+    release: str,
+    theme: str,
+    typ: str,
+    bbox: tuple[float, float, float, float],
+    columns: list[str] | None = None,
+    threads: int = 24,
+) -> Any:
     """Rows of one Overture type whose bbox intersects bbox, as a pyarrow Table."""
     import pyarrow as pa
     import pyarrow.compute as pc
@@ -505,7 +646,9 @@ def overture_read(s3: Any, release: str, theme: str, typ: str, bbox: tuple[float
     import pyarrow.parquet as pq
 
     base = f"{OVERTURE_BUCKET}/release/{release}/theme={theme}/type={typ}"
-    files = sorted(f.path for f in s3.get_file_info(pafs.FileSelector(base)) if f.path.endswith(".parquet"))
+    files = sorted(
+        f.path for f in s3.get_file_info(pafs.FileSelector(base)) if f.path.endswith(".parquet")
+    )
     t0 = time.time()
 
     def scan(path: str) -> tuple[str, list[int]]:
@@ -520,7 +663,9 @@ def overture_read(s3: Any, release: str, theme: str, typ: str, bbox: tuple[float
 
     with ThreadPoolExecutor(threads) as ex:
         hits = [(p, rgs) for p, rgs in ex.map(scan, files) if rgs]
-    log(f"overture {typ}: {len(files)} files scanned in {time.time() - t0:.0f}s, {sum(len(r) for _, r in hits)} row groups in {len(hits)} files intersect")
+    log(
+        f"overture {typ}: {len(files)} files scanned in {time.time() - t0:.0f}s, {sum(len(r) for _, r in hits)} row groups in {len(hits)} files intersect"
+    )
 
     def read(arg: tuple[str, list[int]]) -> Any:
         path, rgs = arg
@@ -528,8 +673,14 @@ def overture_read(s3: Any, release: str, theme: str, typ: str, bbox: tuple[float
         b = t.column("bbox")
         w, s, e, n = bbox
         m = pc.and_(
-            pc.and_(pc.less_equal(pc.struct_field(b, "xmin"), e), pc.greater_equal(pc.struct_field(b, "xmax"), w)),
-            pc.and_(pc.less_equal(pc.struct_field(b, "ymin"), n), pc.greater_equal(pc.struct_field(b, "ymax"), s)),
+            pc.and_(
+                pc.less_equal(pc.struct_field(b, "xmin"), e),
+                pc.greater_equal(pc.struct_field(b, "xmax"), w),
+            ),
+            pc.and_(
+                pc.less_equal(pc.struct_field(b, "ymin"), n),
+                pc.greater_equal(pc.struct_field(b, "ymax"), s),
+            ),
         )
         return t.filter(m)
 
@@ -542,7 +693,16 @@ def overture_read(s3: Any, release: str, theme: str, typ: str, bbox: tuple[float
     return tab
 
 
-def overture_cached(raw: Path, s3: Any, release: str, theme: str, typ: str, bbox: tuple[float, float, float, float], columns: list[str] | None, force: bool) -> Any:
+def overture_cached(
+    raw: Path,
+    s3: Any,
+    release: str,
+    theme: str,
+    typ: str,
+    bbox: tuple[float, float, float, float],
+    columns: list[str] | None,
+    force: bool,
+) -> Any:
     """overture_read with a local parquet cache in data/raw/overture/ keyed by release + bbox."""
     import pyarrow.parquet as pq
 
@@ -582,9 +742,28 @@ def license_tally(tab: Any) -> dict[str, int]:
 # Overture transportation -> OSMnx-compatible graphs (pure helpers are unit tested)
 # ---------------------------------------------------------------------------
 
-DRIVE_CLASSES = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential", "living_street"}
+DRIVE_CLASSES = {
+    "motorway",
+    "trunk",
+    "primary",
+    "secondary",
+    "tertiary",
+    "unclassified",
+    "residential",
+    "living_street",
+}
 WALK_EXCLUDE = {"motorway", "trunk"}
-WALK_EXTRA = {"footway", "path", "pedestrian", "steps", "cycleway", "track", "living_street", "service", "bridleway"}
+WALK_EXTRA = {
+    "footway",
+    "path",
+    "pedestrian",
+    "steps",
+    "cycleway",
+    "track",
+    "living_street",
+    "service",
+    "bridleway",
+}
 BIKE_EXCLUDE = {"motorway", "trunk", "steps", "footway", "pedestrian"}
 MODE_SETS = {
     "drive": {"motor_vehicle", "car", "vehicle", "motorcycle"},
@@ -639,7 +818,9 @@ def is_private_rule(rule: dict[str, Any], modes: set[str]) -> bool:
     return not m or bool(set(m) & modes)
 
 
-def directions_allowed(restrictions: Iterable[dict[str, Any]] | None, modes: set[str]) -> tuple[bool, bool]:
+def directions_allowed(
+    restrictions: Iterable[dict[str, Any]] | None, modes: set[str]
+) -> tuple[bool, bool]:
     """(forward allowed, backward allowed) for a mode set from Overture access_restrictions.
 
     Unconditional full-length denials apply first (heading-specific -> oneway); then allowances
@@ -661,7 +842,11 @@ def directions_allowed(restrictions: Iterable[dict[str, Any]] | None, modes: set
             bwd = False
     for r in rules:
         when = r.get("when") or {}
-        if r.get("access_type") not in ("allowed", "designated") or not when.get("mode") or not _applies(when, modes):
+        if (
+            r.get("access_type") not in ("allowed", "designated")
+            or not when.get("mode")
+            or not _applies(when, modes)
+        ):
             continue
         h = when.get("heading")
         if h in (None, "forward"):
@@ -715,16 +900,11 @@ def osm_way_id(sources: Iterable[dict[str, Any]] | None) -> int | None:
     return None
 
 
-@dataclass
-class SegmentEdge:
-    u: str
-    v: str
-    coords: list[tuple[float, float]]  # lon/lat, u -> v
-    length_m: float
-    attrs: dict[str, Any] = field(default_factory=dict)
-
-
-def split_segment(coords_ll: Sequence[tuple[float, float]], connectors: Sequence[dict[str, Any]], to_utm: Callable[[float, float], tuple[float, float]]) -> list[tuple[str, str, list[tuple[float, float]], float]]:
+def split_segment(
+    coords_ll: Sequence[tuple[float, float]],
+    connectors: Sequence[dict[str, Any]],
+    to_utm: Callable[[float, float], tuple[float, float]],
+) -> list[tuple[str, str, list[tuple[float, float]], float]]:
     """Split a segment polyline at its connectors (linear reference `at` in 0..1).
 
     Returns [(from_connector, to_connector, lonlat coords, length_m)] in segment order.
@@ -732,7 +912,14 @@ def split_segment(coords_ll: Sequence[tuple[float, float]], connectors: Sequence
     from shapely.geometry import LineString
     from shapely.ops import substring
 
-    cons = sorted(((float(c["at"]), str(c["connector_id"])) for c in connectors if c.get("connector_id") is not None), key=lambda t: t[0])
+    cons = sorted(
+        (
+            (float(c["at"]), str(c["connector_id"]))
+            for c in connectors
+            if c.get("connector_id") is not None
+        ),
+        key=lambda t: t[0],
+    )
     if len(cons) < 2 or len(coords_ll) < 2:
         return []
     utm = [to_utm(x, y) for x, y in coords_ll]
@@ -751,7 +938,9 @@ def split_segment(coords_ll: Sequence[tuple[float, float]], connectors: Sequence
     return out
 
 
-def _utm_coords_to_ll(sub: list[tuple[float, ...]], utm: list[tuple[float, float]], ll: Sequence[tuple[float, float]]) -> list[tuple[float, float]]:
+def _utm_coords_to_ll(
+    sub: list[tuple[float, ...]], utm: list[tuple[float, float]], ll: Sequence[tuple[float, float]]
+) -> list[tuple[float, float]]:
     """Map substring vertices back to lon/lat: original vertices exactly, cut points by local affine."""
     out = []
     for p in sub:
@@ -780,11 +969,20 @@ def _mode_classes(kind: str, hw: str) -> bool:
     if kind == "drive":
         return base in DRIVE_CLASSES
     if kind == "walk":
-        return base not in WALK_EXCLUDE and (base in DRIVE_CLASSES or base in WALK_EXTRA or base == "road")
-    return base not in BIKE_EXCLUDE and (base in DRIVE_CLASSES or base in {"cycleway", "path", "track", "service", "living_street", "road"})
+        return base not in WALK_EXCLUDE and (
+            base in DRIVE_CLASSES or base in WALK_EXTRA or base == "road"
+        )
+    return base not in BIKE_EXCLUDE and (
+        base in DRIVE_CLASSES
+        or base in {"cycleway", "path", "track", "service", "living_street", "road"}
+    )
 
 
-def build_graphs(segments: Sequence[dict[str, Any]], connector_xy: dict[str, tuple[float, float]], kinds: Sequence[str] = ("drive", "walk", "bike")) -> dict[str, Any]:
+def build_graphs(
+    segments: Sequence[dict[str, Any]],
+    connector_xy: dict[str, tuple[float, float]],
+    kinds: Sequence[str] = ("drive", "walk", "bike"),
+) -> dict[str, Any]:
     """Overture road segments (dicts with Overture columns + `coords` lon/lat list) -> OSMnx graphs.
 
     Nodes are connectors with deterministic integer ids (sorted connector GERS ids); each edge
@@ -800,7 +998,12 @@ def build_graphs(segments: Sequence[dict[str, Any]], connector_xy: dict[str, tup
     for seg in segments:
         if seg.get("subtype") != "road":
             continue
-        flags = [f for rf in (seg.get("road_flags") or []) if _full_length(rf.get("between")) for f in (rf.get("values") or [])]
+        flags = [
+            f
+            for rf in (seg.get("road_flags") or [])
+            if _full_length(rf.get("between"))
+            for f in (rf.get("values") or [])
+        ]
         if {"is_under_construction", "is_abandoned"} & set(flags):
             continue
         hw = highway_tag(seg.get("class"), seg.get("subclass"), flags)
@@ -815,14 +1018,20 @@ def build_graphs(segments: Sequence[dict[str, Any]], connector_xy: dict[str, tup
             "overture_id": seg["id"],
         }
         way = osm_way_id(seg.get("sources"))
-        for c0, c1, ll, length in split_segment(seg["coords"], seg.get("connectors") or [], lonlat_to_utm):
+        for c0, c1, ll, length in split_segment(
+            seg["coords"], seg.get("connectors") or [], lonlat_to_utm
+        ):
             pieces.append((seg, hw, attrs, way, c0, c1, ll, length))
 
     all_conn = sorted({p[4] for p in pieces} | {p[5] for p in pieces})
     nid = {c: i + 1 for i, c in enumerate(all_conn)}
     graphs: dict[str, Any] = {}
     for kind in kinds:
-        G = nx.MultiDiGraph(crs="epsg:4326", simplified=False, created_with="redraw pipeline.fetch_aws (Overture Maps transportation)")
+        G = nx.MultiDiGraph(
+            crs="epsg:4326",
+            simplified=False,
+            created_with="redraw pipeline.fetch_aws (Overture Maps transportation)",
+        )
         for seg, hw, attrs, way, c0, c1, ll, length in pieces:
             if not _mode_classes(kind, hw):
                 continue
@@ -874,7 +1083,18 @@ SUBTYPE_TO_BUILDING = {
     "agricultural": "farm_auxiliary",
     "military": "military",
 }
-SCHOOL_CATEGORIES = {"school", "elementary_school", "middle_school", "high_school", "public_school", "private_school", "charter_school", "primary_school", "secondary_school", "k_12_school"}
+SCHOOL_CATEGORIES = {
+    "school",
+    "elementary_school",
+    "middle_school",
+    "high_school",
+    "public_school",
+    "private_school",
+    "charter_school",
+    "primary_school",
+    "secondary_school",
+    "k_12_school",
+}
 
 
 def building_tags(row: dict[str, Any]) -> dict[str, Any]:
@@ -895,7 +1115,9 @@ def building_tags(row: dict[str, Any]) -> dict[str, Any]:
         "roof:shape": row.get("roof_shape"),
         "roof:material": row.get("roof_material"),
         "roof:colour": row.get("roof_color"),
-        "roof:height": None if row.get("roof_height") is None else f"{float(row['roof_height']):.2f}",
+        "roof:height": None
+        if row.get("roof_height") is None
+        else f"{float(row['roof_height']):.2f}",
         "building:colour": row.get("facade_color"),
         "building:material": row.get("facade_material"),
         "overture_subtype": sub,
@@ -919,16 +1141,25 @@ def is_school_place(row: dict[str, Any]) -> bool:
     if not cats & SCHOOL_CATEGORIES:
         return False
     # skip driving/music/dance/... schools and preschools whose primary category is not a K-12 school
-    prim = tax.get("primary") or (c.get("primary") if isinstance(c, dict) else None) or row.get("basic_category")
+    prim = (
+        tax.get("primary")
+        or (c.get("primary") if isinstance(c, dict) else None)
+        or row.get("basic_category")
+    )
     return prim in SCHOOL_CATEGORIES
 
 
 SCHOOL_PLACE_MIN_CONFIDENCE = 0.75
-SCHOOL_PLACE_NAME_EXCLUDE = re.compile(r"district|football|band|swim|music|kindermusik|garden|services|group|tutor|parents|sports|dance|driving|math", re.I)
+SCHOOL_PLACE_NAME_EXCLUDE = re.compile(
+    r"district|football|band|swim|music|kindermusik|garden|services|group|tutor|parents|sports|dance|driving|math",
+    re.I,
+)
 SCHOOL_MATCH_M = 100.0
 
 
-def merge_school_features(polys: Sequence[tuple[dict[str, Any], Any]], places: Sequence[tuple[dict[str, Any], Any]]) -> tuple[list[dict[str, Any]], list[Any]]:
+def merge_school_features(
+    polys: Sequence[tuple[dict[str, Any], Any]], places: Sequence[tuple[dict[str, Any], Any]]
+) -> tuple[list[dict[str, Any]], list[Any]]:
     """Campus polygons (Overture land_use class=school, from OSM amenity=school areas) plus
     Overture places schools as points.
 
@@ -947,7 +1178,18 @@ def merge_school_features(polys: Sequence[tuple[dict[str, Any], Any]], places: S
     putm = []
     for r, g in polys:
         way = osm_way_id(r.get("sources"))
-        rows.append({"amenity": "school", "name": (r.get("names") or {}).get("primary"), "name_source": "overture_land_use", "overture_id": r["id"], "overture_type": "land_use", "category": "school", "confidence": None, "osm_way_id": None if way is None else str(way)})
+        rows.append(
+            {
+                "amenity": "school",
+                "name": (r.get("names") or {}).get("primary"),
+                "name_source": "overture_land_use",
+                "overture_id": r["id"],
+                "overture_type": "land_use",
+                "category": "school",
+                "confidence": None,
+                "osm_way_id": None if way is None else str(way),
+            }
+        )
         geoms.append(g)
         putm.append(utm(g))
     for r, g in sorted(places, key=lambda t: -(t[0].get("confidence") or 0.0)):
@@ -961,10 +1203,24 @@ def merge_school_features(polys: Sequence[tuple[dict[str, Any], Any]], places: S
             if not rows[hit]["name"]:
                 rows[hit].update(name=name, name_source="overture_place", place_id=r["id"])
             continue
-        if any(rr["name"] == name and gg.distance(g) < 0.003 for rr, gg in zip(rows, geoms, strict=True)):
+        if any(
+            rr["name"] == name and gg.distance(g) < 0.003
+            for rr, gg in zip(rows, geoms, strict=True)
+        ):
             continue
         tax = r.get("taxonomy") or {}
-        rows.append({"amenity": "school", "name": name, "name_source": "overture_place", "overture_id": r["id"], "overture_type": "place", "category": tax.get("primary") or r.get("basic_category"), "confidence": conf, "osm_way_id": None})
+        rows.append(
+            {
+                "amenity": "school",
+                "name": name,
+                "name_source": "overture_place",
+                "overture_id": r["id"],
+                "overture_type": "place",
+                "category": tax.get("primary") or r.get("basic_category"),
+                "confidence": conf,
+                "osm_way_id": None,
+            }
+        )
         geoms.append(g)
         putm.append(pu)
     return rows, geoms
@@ -991,23 +1247,33 @@ def _write_geojson(rows: list[dict[str, Any]], geoms: list[Any], dest: Path) -> 
     tmp.replace(dest)
 
 
-def fetch_overture(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, Any]], release: str | None) -> dict[str, Path]:
+def fetch_overture(
+    raw: Path, fx: FetchExtent, force: bool, sources: list[dict[str, Any]], release: str | None
+) -> dict[str, Path]:
     import osmnx as ox
     from shapely.geometry import box as shapely_box
 
-    targets = {k: raw / FILES[k] for k in ("drive", "walk", "bike", "buildings", "schools", "water")}
+    targets = {
+        k: raw / FILES[k] for k in ("drive", "walk", "bike", "buildings", "schools", "water")
+    }
     if all(p.exists() for p in targets.values()) and not force:
         for p in targets.values():
             log(f"cached: {p.name}")
         old = raw / FILES["sources"]
         if old.exists():
-            sources.extend(s for s in json.loads(old.read_text()).get("sources", []) if str(s.get("name", "")).startswith("Overture"))
+            sources.extend(
+                s
+                for s in json.loads(old.read_text()).get("sources", [])
+                if s.get("kind") == "overture"
+            )
         return targets
     try:
         rel = release or latest_overture_release()
         s3 = overture_s3()
     except Exception as e:  # noqa: BLE001
-        raise DataSourceUnavailable("Overture Maps (AWS)", f"{OVERTURE_URL}/release/", raw, HOW, e) from e
+        raise DataSourceUnavailable(
+            "Overture Maps (AWS)", f"{OVERTURE_URL}/release/", raw, HOW, e
+        ) from e
     bbox = fx.lonlat
     log(f"overture release {rel}, bbox {tuple(round(v, 5) for v in bbox)}")
 
@@ -1028,9 +1294,25 @@ def fetch_overture(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[s
 
     try:
         # ---- transportation
-        seg_cols = ["id", "geometry", "bbox", "subtype", "class", "subclass", "names", "connectors", "road_flags", "access_restrictions", "speed_limits", "routes", "sources"]
+        seg_cols = [
+            "id",
+            "geometry",
+            "bbox",
+            "subtype",
+            "class",
+            "subclass",
+            "names",
+            "connectors",
+            "road_flags",
+            "access_restrictions",
+            "speed_limits",
+            "routes",
+            "sources",
+        ]
         seg = overture_cached(raw, s3, rel, "transportation", "segment", bbox, seg_cols, force)
-        con = overture_cached(raw, s3, rel, "transportation", "connector", bbox, ["id", "geometry", "bbox"], force)
+        con = overture_cached(
+            raw, s3, rel, "transportation", "connector", bbox, ["id", "geometry", "bbox"], force
+        )
         src("transportation", "segment", seg)
         src("transportation", "connector", con)
         cxy = {}
@@ -1038,19 +1320,52 @@ def fetch_overture(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[s
             cxy[i] = (g.x, g.y)
         segs = seg.drop_columns(["geometry", "bbox"]).to_pylist()
         for s_, g in zip(segs, _wkb(seg.column("geometry")), strict=True):
-            s_["coords"] = [(c[0], c[1]) for c in g.coords] if g is not None and g.geom_type == "LineString" else []
+            s_["coords"] = (
+                [(c[0], c[1]) for c in g.coords]
+                if g is not None and g.geom_type == "LineString"
+                else []
+            )
         graphs = build_graphs(segs, cxy)
         for kind, G in graphs.items():
             ox.io.save_graphml(G, targets[kind])
-            log(f"overture: {kind} graph {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges -> {targets[kind].name}")
+            log(
+                f"overture: {kind} graph {G.number_of_nodes():,} nodes, {G.number_of_edges():,} edges -> {targets[kind].name}"
+            )
 
         # ---- buildings
-        b_cols = ["id", "geometry", "bbox", "names", "sources", "height", "min_height", "is_underground", "num_floors", "subtype", "class", "facade_color", "facade_material", "roof_material", "roof_shape", "roof_color", "roof_height", "has_parts"]
+        b_cols = [
+            "id",
+            "geometry",
+            "bbox",
+            "names",
+            "sources",
+            "height",
+            "min_height",
+            "is_underground",
+            "num_floors",
+            "subtype",
+            "class",
+            "facade_color",
+            "facade_material",
+            "roof_material",
+            "roof_shape",
+            "roof_color",
+            "roof_height",
+            "has_parts",
+        ]
         bt = overture_cached(raw, s3, rel, "buildings", "building", bbox, b_cols, force)
         src("buildings", "building", bt)
         rows, geoms = [], []
-        for r, g in zip(bt.drop_columns(["geometry", "bbox"]).to_pylist(), _wkb(bt.column("geometry")), strict=True):
-            if r.get("is_underground") or g is None or g.geom_type not in ("Polygon", "MultiPolygon"):
+        for r, g in zip(
+            bt.drop_columns(["geometry", "bbox"]).to_pylist(),
+            _wkb(bt.column("geometry")),
+            strict=True,
+        ):
+            if (
+                r.get("is_underground")
+                or g is None
+                or g.geom_type not in ("Polygon", "MultiPolygon")
+            ):
                 continue
             rows.append(building_tags(r))
             geoms.append(g)
@@ -1058,68 +1373,150 @@ def fetch_overture(raw: Path, fx: FetchExtent, force: bool, sources: list[dict[s
         log(f"overture: {len(rows):,} buildings -> {targets['buildings'].name}")
 
         # ---- schools: land_use polygons (OSM amenity=school areas) + places points
-        lu = overture_cached(raw, s3, rel, "base", "land_use", bbox, ["id", "geometry", "bbox", "names", "subtype", "class", "sources"], force)
-        pl = overture_cached(raw, s3, rel, "places", "place", bbox, ["id", "geometry", "bbox", "names", "taxonomy", "basic_category", "confidence", "addresses", "websites", "sources", "operating_status"], force)
+        lu = overture_cached(
+            raw,
+            s3,
+            rel,
+            "base",
+            "land_use",
+            bbox,
+            ["id", "geometry", "bbox", "names", "subtype", "class", "sources"],
+            force,
+        )
+        pl = overture_cached(
+            raw,
+            s3,
+            rel,
+            "places",
+            "place",
+            bbox,
+            [
+                "id",
+                "geometry",
+                "bbox",
+                "names",
+                "taxonomy",
+                "basic_category",
+                "confidence",
+                "addresses",
+                "websites",
+                "sources",
+                "operating_status",
+            ],
+            force,
+        )
         src("base", "land_use", lu)
         src("places", "place", pl)
         polys: list[tuple[dict[str, Any], Any]] = []
         if lu is not None:
-            for r, g in zip(lu.drop_columns(["geometry", "bbox"]).to_pylist(), _wkb(lu.column("geometry")), strict=True):
-                if r.get("class") == "school" and g is not None and g.geom_type in ("Polygon", "MultiPolygon"):
+            for r, g in zip(
+                lu.drop_columns(["geometry", "bbox"]).to_pylist(),
+                _wkb(lu.column("geometry")),
+                strict=True,
+            ):
+                if (
+                    r.get("class") == "school"
+                    and g is not None
+                    and g.geom_type in ("Polygon", "MultiPolygon")
+                ):
                     polys.append((r, g))
         places: list[tuple[dict[str, Any], Any]] = []
         if pl is not None:
-            for r, g in zip(pl.drop_columns(["geometry", "bbox"]).to_pylist(), _wkb(pl.column("geometry")), strict=True):
-                if g is not None and is_school_place(r) and r.get("operating_status") in (None, "open"):
+            for r, g in zip(
+                pl.drop_columns(["geometry", "bbox"]).to_pylist(),
+                _wkb(pl.column("geometry")),
+                strict=True,
+            ):
+                if (
+                    g is not None
+                    and is_school_place(r)
+                    and r.get("operating_status") in (None, "open")
+                ):
                     places.append((r, g))
         srows, sgeoms = merge_school_features(polys, places)
         _write_geojson(srows, sgeoms, targets["schools"])
         log(f"overture: {len(srows):,} school features -> {targets['schools'].name}")
 
         # ---- water (previews / bbox checks only; not read by the build)
-        wt = overture_cached(raw, s3, rel, "base", "water", bbox, ["id", "geometry", "bbox", "names", "subtype", "class", "sources"], force)
+        wt = overture_cached(
+            raw,
+            s3,
+            rel,
+            "base",
+            "water",
+            bbox,
+            ["id", "geometry", "bbox", "names", "subtype", "class", "sources"],
+            force,
+        )
         src("base", "water", wt)
         wrows, wgeoms = [], []
         clip = shapely_box(*bbox)
         if wt is not None:
-            for r, g in zip(wt.drop_columns(["geometry", "bbox"]).to_pylist(), _wkb(wt.column("geometry")), strict=True):
+            for r, g in zip(
+                wt.drop_columns(["geometry", "bbox"]).to_pylist(),
+                _wkb(wt.column("geometry")),
+                strict=True,
+            ):
                 g = None if g is None else g.intersection(clip)
                 if g is None or g.is_empty:
                     continue
-                wrows.append({"name": (r.get("names") or {}).get("primary"), "subtype": r.get("subtype"), "class": r.get("class"), "overture_id": r["id"]})
+                wrows.append(
+                    {
+                        "name": (r.get("names") or {}).get("primary"),
+                        "subtype": r.get("subtype"),
+                        "class": r.get("class"),
+                        "overture_id": r["id"],
+                    }
+                )
                 wgeoms.append(g)
         _write_geojson(wrows, wgeoms, targets["water"])
     except DataSourceUnavailable:
         raise
     except Exception as e:  # noqa: BLE001
-        raise DataSourceUnavailable("Overture Maps (AWS)", f"{OVERTURE_URL}/release/{rel}/", raw, HOW, e) from e
+        raise DataSourceUnavailable(
+            "Overture Maps (AWS)", f"{OVERTURE_URL}/release/{rel}/", raw, HOW, e
+        ) from e
     return targets
 
 
-def fetch_all(raw: Path | None = None, force: bool = False, release: str | None = None, only: Sequence[str] = ("dem", "imagery", "overture")) -> dict[str, Any]:
+def fetch_all(
+    raw: Path | None = None,
+    force: bool = False,
+    release: str | None = None,
+    only: Sequence[str] = ("dem", "imagery", "overture"),
+) -> dict[str, Any]:
     configure_network()
     raw = raw or raw_dir()
     raw.mkdir(parents=True, exist_ok=True)
     fx = fetch_extent()
-    log(f"fetch extent UTM E {fx.west_e:.0f}..{fx.east_e:.0f} N {fx.south_n:.0f}..{fx.north_n:.0f} (lon/lat {tuple(round(v, 5) for v in fx.lonlat)})")
+    log(
+        f"fetch extent UTM E {fx.west_e:.0f}..{fx.east_e:.0f} N {fx.south_n:.0f}..{fx.north_n:.0f} (lon/lat {tuple(round(v, 5) for v in fx.lonlat)})"
+    )
     sources: list[dict[str, Any]] = []
     out: dict[str, Any] = {}
-    if "dem" in only:
-        out["dem"] = fetch_dem(raw, fx, force, sources)
-    if "imagery" in only:
-        out["imagery"] = fetch_imagery(raw, fx, force, sources)
-    if "overture" in only:
-        out.update(fetch_overture(raw, fx, force, sources, release))
+    for kind in only:
+        got: list[dict[str, Any]] = []
+        if kind == "dem":
+            out["dem"] = fetch_dem(raw, fx, force, got)
+        elif kind == "imagery":
+            out["imagery"] = fetch_imagery(raw, fx, force, got)
+        elif kind == "overture":
+            out.update(fetch_overture(raw, fx, force, got, release))
+        sources.extend(dict(s, kind=kind) for s in got)
     meta_path = raw / FILES["sources"]
     prev = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    names = {s.get("name") for s in sources}
-    keep = [s for s in prev.get("sources", []) if s.get("name") not in names]
+    keep = [s for s in prev.get("sources", []) if s.get("kind") and s.get("kind") not in set(only)]
     write_json(
         meta_path,
         {
             "generated_at": now_iso(),
             "tool": "pipeline/fetch_aws.py",
-            "extent_utm_32611": {"west": fx.west_e, "south": fx.south_n, "east": fx.east_e, "north": fx.north_n},
+            "extent_utm_32611": {
+                "west": fx.west_e,
+                "south": fx.south_n,
+                "east": fx.east_e,
+                "north": fx.north_n,
+            },
             "extent_lonlat": dict(zip(("west", "south", "east", "north"), fx.lonlat, strict=True)),
             "files": {k: str(Path(v).name) for k, v in out.items()},
             "not_available": [
@@ -1136,10 +1533,17 @@ def fetch_all(raw: Path | None = None, force: bool = False, release: str | None 
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--force", action="store_true", help="re-download even if the raw files exist")
     ap.add_argument("--release", help="Overture release (default: latest under release/)")
-    ap.add_argument("--only", nargs="+", choices=["dem", "imagery", "overture"], default=["dem", "imagery", "overture"])
+    ap.add_argument(
+        "--only",
+        nargs="+",
+        choices=["dem", "imagery", "overture"],
+        default=["dem", "imagery", "overture"],
+    )
     args = ap.parse_args(argv)
     try:
         out = fetch_all(force=args.force, release=args.release, only=args.only)

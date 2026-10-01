@@ -51,7 +51,12 @@ export class RdTopbar extends LitElement {
       nav button {
         border-color: transparent;
         background: transparent;
-        padding: 6px 10px;
+        padding: 6px 9px;
+        white-space: nowrap;
+      }
+      .bar button,
+      .bar .tag {
+        white-space: nowrap;
       }
       nav button.on {
         background: rgba(255, 255, 255, 0.1);
@@ -100,7 +105,7 @@ export class RdTopbar extends LitElement {
       .seg .dot.err {
         background: var(--bad);
       }
-      @media (max-width: 1250px) {
+      @media (max-width: 1480px) {
         .region {
           display: none;
         }
@@ -151,8 +156,8 @@ export class RdTopbar extends LitElement {
       </nav>
       <div class="spacer"></div>
       ${cal
-        ? html`<span class="tag cal ${calCls}" title="Baseline calibration against observed travel times"
-            >Calibration: ${humanize(cal.status)}${err !== null && err !== undefined ? ` (median error ${err.toFixed(0)}%)` : ''}</span
+        ? html`<span class="tag cal ${calCls}" title=${`Baseline calibration against observed travel times: ${humanize(cal.status)}${err !== null && err !== undefined ? `, median error ${err.toFixed(1)}%` : ''}`}
+            >${humanize(cal.status)}${err !== null && err !== undefined ? ` (${err.toFixed(0)}% err)` : ''}</span
           >`
         : nothing}
       ${s.showStats ? html`<rd-stats></rd-stats>` : nothing}
@@ -161,7 +166,7 @@ export class RdTopbar extends LitElement {
         🚶 ${s.walking ? 'Exit walk' : 'Walk'}
       </button>
       <select class="q" aria-label="Render quality" title="Render quality" @change=${(e: Event) => appCtx.scene?.setQuality((e.target as HTMLSelectElement).value as Quality)}>
-        ${(['high', 'medium', 'low'] as const).map((q) => html`<option value=${q} ?selected=${s.quality === q}>Quality: ${q}</option>`)}
+        ${(['high', 'medium', 'low'] as const).map((q) => html`<option value=${q} ?selected=${s.quality === q}>${q === 'medium' ? 'Med' : q[0]!.toUpperCase() + q.slice(1)} quality</option>`)}
       </select>
       <button class=${s.showStats ? 'active' : ''} @click=${() => store.set({ showStats: !s.showStats })} title="FPS, draw calls, triangles">
         Stats

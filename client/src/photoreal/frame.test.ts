@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { originFromLatLon } from '../geo';
+import { latLonToScene, originFromLatLon } from '../geo';
 import {
   applyFrame,
   ecefToGeodetic,
@@ -16,11 +16,22 @@ import {
 
 interface GeoPoints {
   origin: { lat: number; lon: number };
+  bbox: { south: number; north: number; west: number; east: number };
   points: Array<{ lat: number; lon: number; x: number; z: number }>;
 }
 const pts = JSON.parse(readFileSync(new URL('../../../docs/geo_test_points.json', import.meta.url), 'utf8')) as GeoPoints;
 const origin = originFromLatLon(pts.origin.lat, pts.origin.lon);
-const ext = { min_x: -4700, max_x: 4700, min_z: -4450, max_z: 4450 };
+// region extent in scene meters from the documented bbox (never hardcoded)
+const corners = [
+  latLonToScene(pts.bbox.south, pts.bbox.west, origin),
+  latLonToScene(pts.bbox.north, pts.bbox.east, origin),
+];
+const ext = {
+  min_x: Math.min(corners[0]!.x, corners[1]!.x),
+  max_x: Math.max(corners[0]!.x, corners[1]!.x),
+  min_z: Math.min(corners[0]!.z, corners[1]!.z),
+  max_z: Math.max(corners[0]!.z, corners[1]!.z),
+};
 const frame = enuFrame(origin.lat, origin.lon);
 const warp = fitWarp(frame, origin, ext);
 
@@ -85,10 +96,12 @@ describe('ECEF -> scene through frame + warp (docs/geo_test_points.json)', () =>
     }
   });
 
-  it('del norte (hero) matches the contract value', () => {
-    const s = geodeticToSceneViaTiles(frame, warp, 33.0215, -117.101, 0);
-    expect(s[0]).toBeCloseTo(2243.6121, 1);
-    expect(s[2]).toBeCloseTo(-1826.7882, 1);
+  it('every test point matches its documented scene x/z to 2 cm (pyproj values)', () => {
+    for (const p of pts.points) {
+      const s = geodeticToSceneViaTiles(frame, warp, p.lat, p.lon, 0);
+      expect(s[0]).toBeCloseTo(p.x, 1);
+      expect(s[2]).toBeCloseTo(p.z, 1);
+    }
   });
 
   it('unwarp inverts warp', () => {
@@ -98,8 +111,8 @@ describe('ECEF -> scene through frame + warp (docs/geo_test_points.json)', () =>
   });
 
   it('the warp is a small correction (a few meters)', () => {
-    const p = unwarpPoint(warp, [4700, 0, 4450]);
-    expect(Math.hypot(p[0] - 4700, p[2] - 4450)).toBeLessThan(10);
-    expect(Math.hypot(p[0] - 4700, p[2] - 4450)).toBeGreaterThan(0.5);
+    const p = unwarpPoint(warp, [ext.max_x, 0, ext.max_z]);
+    expect(Math.hypot(p[0] - ext.max_x, p[2] - ext.max_z)).toBeLessThan(10);
+    expect(Math.hypot(p[0] - ext.max_x, p[2] - ext.max_z)).toBeGreaterThan(0.5);
   });
 });

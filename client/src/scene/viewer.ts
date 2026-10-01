@@ -322,6 +322,22 @@ export class Viewer {
     }
   }
 
+  /** Move the camera immediately (no animation): automated screenshots, deep links. */
+  jumpTo(target: THREE.Vector3, opts: FlyToOptions = {}): void {
+    this.cancelFlight();
+    void this.flyTo(target, { ...opts, duration: 0 });
+    const f = this.flight;
+    if (f) {
+      this.flight = null;
+      const r = Math.exp(f.s1[0]);
+      const [, az, pol] = f.s1;
+      this.controls.target.copy(f.t1);
+      this.camera.position.set(f.t1.x + r * Math.sin(pol) * Math.sin(az), f.t1.y + r * Math.cos(pol), f.t1.z + r * Math.sin(pol) * Math.cos(az));
+      this.controls.update();
+      f.resolve();
+    }
+  }
+
   /** Smoothly move the camera so it looks at `target`. */
   flyTo(target: THREE.Vector3, opts: FlyToOptions = {}): Promise<void> {
     this.cancelFlight();
