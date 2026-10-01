@@ -12,6 +12,7 @@ import { buildingRoofMaterial, buildingWallMaterial, hasBuildingAtlases } from '
 import { prepareBuildingGeometry, type StreetDirFn } from './buildingPrep';
 import type { MaterialLibrary } from './materials';
 import { terrainMaterial as atlasTerrainMaterial } from './terrainMaterial';
+import { addBuildingExtents, legacyBuildingMaterial, legacyRoadMaterial, legacyTerrainMaterial } from './legacyMaterials';
 
 export type AssetFetcher = (rel: string) => Promise<ArrayBuffer>;
 
@@ -100,7 +101,7 @@ export class World {
     if (this.materials?.atlas('ground') && this.terrainDetail > 0 && map) {
       return atlasTerrainMaterial(this.materials, map, null, { detail: this.terrainDetail, standard: this.standardBuildings });
     }
-    return this.terrainMaterial(old);
+    return legacyTerrainMaterial(old, this.terrainUniforms);
   }
 
   /** Switch building shading and shadow flags for a quality preset. */
@@ -129,7 +130,7 @@ export class World {
       for (const m of this.buildingMeshes) {
         if (m.userData.hero) continue;
         const old = m.material as THREE.Material;
-        m.material = this.buildingMaterial(null, this.standardBuildings, Boolean(m.geometry.getAttribute('color')));
+        m.material = legacyBuildingMaterial(null, this.standardBuildings, Boolean(m.geometry.getAttribute('color')));
         old.dispose();
       }
     }
@@ -215,13 +216,13 @@ export class World {
                 });
                 m.material = atlas;
               } else {
-                this.addBuildingExtents(m.geometry);
-                m.material = this.buildingMaterial(old, this.standardBuildings, hasColor);
+                addBuildingExtents(m.geometry);
+                m.material = legacyBuildingMaterial(old, this.standardBuildings, hasColor);
               }
             }
             this.buildingMeshes.push(m);
           } else {
-            m.material = this.roadMaterial(old, hasColor);
+            m.material = legacyRoadMaterial(old, hasColor);
             m.renderOrder = 1;
             this.roadMeshes.push(m);
           }
