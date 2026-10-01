@@ -73,7 +73,7 @@ export const vehicleLightUniforms = {
   uTail: { value: 1.6 },
 };
 
-function vehicleMaterial(): THREE.MeshLambertMaterial {
+export function vehicleMaterial(): THREE.MeshLambertMaterial {
   const mat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: true });
   mat.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, vehicleLightUniforms);

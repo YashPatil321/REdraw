@@ -49,7 +49,7 @@ build-backend = "setuptools.build_meta"
 include = ["pipeline*", "sim*", "residents*", "api*"]
 
 [tool.pytest.ini_options]
-testpaths = ["pipeline/tests", "sim/tests", "residents/tests", "api/tests"]
+testpaths = ["pipeline/tests", "sim/tests", "residents/tests", "api/tests", "blender/tests"]
 addopts = "-q"
 
 [tool.ruff]

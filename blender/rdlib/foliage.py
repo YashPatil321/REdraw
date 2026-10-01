@@ -106,7 +106,7 @@ def draw_broadleaf(w: int, h: int, seed: int, colors: Sequence[str], leaf_len: t
         centers.append((cx, cy))
         d.line([base, (cx, cy)], fill=_jit(_hex(twig), rng, 0.1), width=int(3 * SS))
     centers.append((W / 2, H * 0.35))
-    for i in range(n_leaves):
+    for _i in range(n_leaves):
         cx, cy = centers[rng.integers(len(centers))]
         rr = rng.normal(0, spread * 0.5) * W * 0.5
         aa = rng.uniform(0, 2 * math.pi)
@@ -138,7 +138,7 @@ def draw_hanging(w: int, h: int, seed: int, colors: Sequence[str], n_strands: in
         sway = rng.uniform(-0.15, 0.15) * W
         pts = [(x0 + sway * (t**2), y0 + length * t) for t in np.linspace(0, 1, 6)]
         d.line(pts, fill=_jit(_hex(stem), rng), width=int(2 * SS))
-        for k in range(leaves):
+        for _k in range(leaves):
             t = rng.uniform(0.05, 1.0)
             px, py = x0 + sway * t**2, y0 + length * t
             ang = math.pi / 2 + rng.normal(0, 0.45)

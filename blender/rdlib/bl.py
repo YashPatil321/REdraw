@@ -192,7 +192,7 @@ def part_to_object(part: Part, name: str, collection: bpy.types.Collection | Non
                     cols[poly.loop_start + k, :3] = np.clip(c * shade, 0, 1)
             else:
                 cols[poly.loop_start : poly.loop_start + poly.loop_total, :3] = np.clip(c, 0, 1)
-        ca.data.foreach_set("color", cols.ravel())
+        ca.data.foreach_set("color_srgb", cols.ravel())  # palette hex is sRGB
         me.color_attributes.active_color = ca
 
     if smooth_angle is None:
@@ -408,7 +408,7 @@ def import_glb(path: Path) -> list[bpy.types.Object]:
     return [o for o in bpy.data.objects if o not in before]
 
 
-def render(path: Path, max_kb: int = 400) -> None:
+def render(path: Path, max_kb: int = 380) -> None:
     """Render to PNG; re-encode as a palettized PNG if it exceeds max_kb (previews are committed)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     bpy.context.scene.render.filepath = str(path)

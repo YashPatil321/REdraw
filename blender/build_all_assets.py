@@ -25,7 +25,7 @@ import math
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -33,7 +33,6 @@ sys.path.insert(0, str(HERE))
 
 import bpy  # noqa: E402
 import numpy as np  # noqa: E402
-
 from rdlib import bl, foliage, materials, props, vehicles  # noqa: E402
 
 REPO = HERE.parent
@@ -83,6 +82,9 @@ def build_vehicles(entries: list[dict]) -> None:
         tris = bl.tri_count([obj])
         lo, hi = _extent([obj])
         tint = any(materials.MATERIALS[m.name].tint for m in obj.data.materials if m.name in materials.MATERIALS)
+        mats = {m.name for m in obj.data.materials}
+        if not {"headlight", "taillight"} <= mats:
+            raise RuntimeError(f"{vid}: light decals missing ({sorted({'headlight', 'taillight'} - mats)})")
         entries.append({
             "id": vid,
             "kind": "vehicle",
@@ -272,7 +274,7 @@ def preview_vehicles(path: Path, samples: int) -> None:
         me.materials.append(bl.simple_material("stripe", "#E8E6DF", 0.7))
         ob = bpy.data.objects.new("stripe", me)
         bpy.context.scene.collection.objects.link(ob)
-    bl.add_camera((x / 2 - 3.0, 17.5, 4.2), (x / 2 + 0.2, 0, 0.9), lens=34)
+    bl.add_camera((x / 2 - 2.0, 24.0, 5.0), (x / 2, 0, 1.0), lens=30)
     bl.render(path)
     log(f"preview {path} ({path.stat().st_size // 1024} KB)")
 
@@ -304,7 +306,7 @@ def preview_trees(path: Path, samples: int) -> None:
     bl.setup_render(1280, 600, samples=samples)
     bl.setup_world(sun_elev_deg=42, sun_azimuth_deg=200)
     bl.ground_plane(400, "#8E9168", roughness=1.0)
-    bl.add_camera((x / 2, -42, 6.5), (x / 2, 0, 7.6), lens=30)
+    bl.add_camera((x / 2, -58, 7.0), (x / 2, 0, 9.5), lens=30)
     bl.render(path)
     log(f"preview {path} ({path.stat().st_size // 1024} KB)")
 
@@ -336,7 +338,7 @@ def main() -> None:
     if "previews" in stages:
         preview_vehicles(PREVIEW_DIR / "vehicles_lineup.png", a.samples)
         preview_trees(PREVIEW_DIR / "vegetation_lineup.png", a.samples)
-    log(f"done in {time.time() - t0:.0f} s ({datetime.now(timezone.utc).isoformat(timespec='seconds')})")
+    log(f"done in {time.time() - t0:.0f} s ({datetime.now(UTC).isoformat(timespec='seconds')})")
 
 
 if __name__ == "__main__":

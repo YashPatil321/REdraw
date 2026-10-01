@@ -349,7 +349,7 @@ class Placer:
                         self.add(self.pick("slope"), qx, qz)
                         counts["slope_trees"] += 1
                     else:
-                        self.add("shrub", qx, qz, scale=float(self.rng.uniform(0.8, 1.5)))
+                        self.add("shrub", qx, qz, scale=float(self.rng.uniform(0.8, 1.3)))
                         counts["slope_shrubs"] += 1
         return counts
 
@@ -429,7 +429,7 @@ class Placer:
             th = math.radians(h["rot"])
             c, s = math.cos(th), math.sin(th)
 
-            def to_scene(lx: float, ly: float) -> tuple[float, float]:
+            def to_scene(lx: float, ly: float, h: dict[str, Any] = h, c: float = c, s: float = s) -> tuple[float, float]:
                 # hero local (x east, y north) -> scene (x, z=-y), then rotation.y = rotation_deg about the center
                 px, pz = lx, -ly
                 return h["x"] + px * c + pz * s, h["z"] - px * s + pz * c
@@ -441,7 +441,7 @@ class Placer:
             for lp in t.get("lamps", []):
                 x, z = to_scene(lp["x"], lp["y"])
                 a = math.radians(lp["rot_deg"])
-                self.add("street_lamp", x, z, rot=_rot_toward_local(a, th), scale=0.9, y=y0)
+                self.add("street_lamp", x, z, rot=_rot_toward_local(a, th), scale=1.0, y=y0)
                 counts["hero_lamps"] += 1
             for car in t.get("parked_cars", []):
                 x, z = to_scene(car["x"], car["y"])
@@ -469,7 +469,10 @@ class Placer:
         arr[:, 3] = [r[3] for r in self.recs]
         arr[:, 4] = [r[4] for r in self.recs]
         arr[:, 5] = [self.ids.index(r[5]) for r in self.recs]
-        return arr
+        inside = (xs >= terr.min_x) & (xs <= terr.max_x) & (zs >= terr.min_z) & (zs <= terr.max_z)
+        if (~inside).any():
+            log(f"dropped {int((~inside).sum())} props outside the terrain extent")
+        return arr[inside]
 
 
 def _rot_toward(d: np.ndarray) -> float:

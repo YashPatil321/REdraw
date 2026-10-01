@@ -153,6 +153,26 @@ def wall_band(ring: list[tuple[float, float]], z0: float, z1: float, key: str, o
     return Part(np.array(V, dtype=float), F, [key] * n)
 
 
+class EdgeQuads:
+    """Accumulates facade quads on one wall edge a -> c (outward normal nrm)."""
+
+    def __init__(self, a: np.ndarray, c: np.ndarray, nrm: np.ndarray):
+        self.a, self.c, self.nrm = a, c, nrm
+        self.V: list = []
+        self.F: list[list[int]] = []
+        self.M: list[str] = []
+
+    def q(self, t0: float, t1: float, za: float, zb: float, off: float, key: str) -> None:
+        v, f, k = quad_on_edge(self.a, self.c, self.nrm, t0, t1, za, zb, off, key)
+        o = len(self.V)
+        self.V.extend(v)
+        self.F.append([o + j for j in f])
+        self.M.append(k)
+
+    def flush(self, acc: Acc) -> None:
+        acc.raw(self.V, self.F, self.M)
+
+
 def quad_on_edge(a: np.ndarray, b: np.ndarray, nrm: np.ndarray, t0: float, t1: float, z0: float, z1: float,
                  off: float, key: str) -> tuple[list, list[int], str]:
     p0 = a + (b - a) * t0 + nrm * off
@@ -257,22 +277,15 @@ def building(b: dict[str, Any], front: list[int], hero: str, rng: np.random.Gene
         m0 = min(0.9, L * 0.15) / L
         if i in front and is_store:
             # storefront: tall glass with mullions, arcade or awning above
-            V, F, M = [], [], []
-
-            def q(t0: float, t1: float, za: float, zb: float, off: float, key: str) -> None:
-                v, f, k = quad_on_edge(a, c, nrm, t0, t1, za, zb, off, key)
-                o = len(V)
-                V.extend(v)
-                F.append([o + j for j in f])
-                M.append(k)
-
+            eq = EdgeQuads(a, c, nrm)
+            q = eq.q
             q(m0, 1 - m0, 0.35, 3.6, 0.03, st["glass"])
             q(m0, 1 - m0, 3.6, 3.85, 0.05, st["trim"])
             nm = max(1, int(L // 3.2))
             for k in range(1, nm):
                 t = m0 + (1 - 2 * m0) * k / nm
                 q(t - 0.06 / L, t + 0.06 / L, 0.35, 3.6, 0.05, "metal_dark")
-            acc.raw(V, F, M)
+            eq.flush(acc)
             if rng.random() < 0.5 and L > 12:  # arcade: projecting roof on columns
                 d = 3.0
                 corner = [a + nrm * 0.0 + e * m0 * 0.5, c - e * m0 * 0.5, c - e * m0 * 0.5 + nrm * d, a + e * m0 * 0.5 + nrm * d]
@@ -293,19 +306,12 @@ def building(b: dict[str, Any], front: list[int], hero: str, rng: np.random.Gene
                      (p1[0] + nrm[0] * 1.6, p1[1] + nrm[1] * 1.6, 3.25), (p0[0] + nrm[0] * 1.6, p0[1] + nrm[1] * 1.6, 3.25)]
                 acc.raw(V, [[0, 1, 2, 3][::-1]], [aw])
             continue
-        V, F, M = [], [], []
-
-        def q2(t0: float, t1: float, za: float, zb: float, off: float, key: str) -> None:
-            v, f, k = quad_on_edge(a, c, nrm, t0, t1, za, zb, off, key)
-            o = len(V)
-            V.extend(v)
-            F.append([o + j for j in f])
-            M.append(k)
-
+        eq = EdgeQuads(a, c, nrm)
+        q2 = eq.q
         if is_store:  # side / rear walls of shops: few high windows, service doors
             if L > 8 and rng.random() < 0.5:
                 q2(0.2, 0.2 + 1.0 / L, 0.0, 2.3, 0.03, "metal_dark")
-            acc.raw(V, F, M)
+            eq.flush(acc)
             continue
         for f in range(n_fl):
             zb = 0.75 + f * fh_eff
@@ -340,7 +346,7 @@ def building(b: dict[str, Any], front: list[int], hero: str, rng: np.random.Gene
             for k in range(ncol + 1):
                 pc = p0 + (p1 - p0) * k / ncol + nrm * (d - 0.3)
                 acc += box(0.22, 0.22, 3.35, "steel_white").moved(pc[0], pc[1], 0.0)
-        acc.raw(V, F, M)
+        eq.flush(acc)
     # roof
     if hip:
         cx, cy = poly.minimum_rotated_rectangle.centroid.coords[0]

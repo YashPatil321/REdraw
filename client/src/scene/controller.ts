@@ -9,7 +9,7 @@ import { api } from '../api';
 import { originFromLatLon, sceneToLatLon, type Origin } from '../geo';
 import { store, toast, type AppState, type RenderMode } from '../state';
 import { advanceClock } from '../time';
-import { TrafficLayer, vehicleLightUniforms, type VehicleGeometries } from '../traffic/layer';
+import { TrafficLayer, vehicleLightUniforms, vehicleMaterial, type VehicleGeometries } from '../traffic/layer';
 import type { RoadNetwork } from '../traffic/network';
 import type { Playback } from '../traffic/playback';
 import { adjTexture, buildRoadOverlayGeometry } from '../traffic/roadOverlay';
@@ -363,7 +363,7 @@ export class SceneController {
       console.warn('vehicle props unavailable', e);
     }
     try {
-      const sp = await loadStaticProps(fetchAsset, (x, z) => this.world.fastHeightAt(x, z));
+      const sp = await loadStaticProps(fetchAsset, (x, z) => this.world.fastHeightAt(x, z), vehicleMaterial);
       if (sp) {
         this.staticProps = sp;
         const qs = QUALITY[store.get().quality];
@@ -511,7 +511,8 @@ export class SceneController {
       if (this.sky) this.photo.tiles.setDim(this.sky.dim);
     }
     this.autoQuality(now);
-    if (this.staticProps?.group.visible) this.staticProps.update(this.viewer.camera.position);
+    if (this.roadDetails?.group.visible) this.roadDetails.update(this.viewer.camera.position);
+    if (this.staticProps?.group.visible) this.staticProps.update(this.viewer.camera.position, this.world.fastHeightAt(this.viewer.camera.position.x, this.viewer.camera.position.z) ?? 0);
     const scale = this.viewer.walking ? 1 : THREE.MathUtils.clamp(dist / 650, 1, 9);
     const colorMode = this.viewer.walking || dist < 320 ? 'paint' : 'speed';
     this.baseline?.setColorMode(colorMode);

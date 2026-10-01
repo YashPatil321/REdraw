@@ -20,6 +20,7 @@ const PAINT_LIFT = 0.04;
 const CURB_H = 0.15;
 const SIDEWALK_W = 1.8;
 const PARKWAY_W = 0.6;
+const CHUNK = 1000;
 
 const NO_SIDEWALK = new Set(['motorway', 'motorway_link', 'trunk', 'trunk_link', 'service', 'track', 'unclassified']);
 const NO_CENTER_LINE = new Set(['residential', 'service', 'living_street', 'unclassified', 'track']);
@@ -140,15 +141,26 @@ export class RoadDetails {
   private walkMat: THREE.MeshLambertMaterial;
   readonly uniforms = { uFadeFar: { value: 900 } };
 
+  /** chunks for distance / frustum culling: [mesh, bounds] */
+  private chunks: Array<{ mesh: THREE.Mesh; box: THREE.Box3 }> = [];
+
   constructor(net: RoadNetwork, height: HeightFn) {
     this.group.name = 'road-details';
-    const paint = newBuilder();
-    const walk = newBuilder();
+    // geometry is bucketed into CHUNK x CHUNK m cells so far / off-screen cells are skipped
+    const buckets = new Map<number, { paint: Builder; walk: Builder }>();
+    const bucketFor = (x: number, z: number): { paint: Builder; walk: Builder } => {
+      const k = (Math.floor(x / CHUNK) + 512) * 1024 + (Math.floor(z / CHUNK) + 512);
+      let b = buckets.get(k);
+      if (!b) buckets.set(k, (b = { paint: newBuilder(), walk: newBuilder() }));
+      return b;
+    };
     const roads = pairRoads(net);
     for (const r of roads) {
       const s = net.ptStart[r.edge]!;
       const n = net.ptCount[r.edge]!;
       if (n < 2) continue;
+      const mid = s + (n >> 1);
+      const { paint, walk } = bucketFor(net.pts[mid * 3]!, net.pts[mid * 3 + 2]!);
       const hw = r.highway;
       // ribbon edges: the pipeline centres the ribbon on the polyline with the combined width
       const total = r.lanesFwd + r.lanesBack;
@@ -244,15 +256,28 @@ export class RoadDetails {
     patch(this.paintMat, true);
     this.walkMat = new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 });
     patch(this.walkMat, false);
-    const pm = new THREE.Mesh(toGeometry(paint), this.paintMat);
-    pm.name = 'road-markings';
-    pm.renderOrder = 2;
-    pm.receiveShadow = true;
-    const wm = new THREE.Mesh(toGeometry(walk), this.walkMat);
-    wm.name = 'sidewalks';
-    wm.renderOrder = 1;
-    wm.receiveShadow = true;
-    this.group.add(wm, pm);
+    for (const { paint, walk } of buckets.values()) {
+      for (const [b, mat, name, order] of [
+        [walk, this.walkMat, 'sidewalks', 1],
+        [paint, this.paintMat, 'road-markings', 2],
+      ] as const) {
+        if (!b.idx.length) continue;
+        const g = toGeometry(b);
+        g.computeBoundingBox();
+        const m = new THREE.Mesh(g, mat);
+        m.name = name;
+        m.renderOrder = order;
+        m.receiveShadow = true;
+        this.group.add(m);
+        this.chunks.push({ mesh: m, box: g.boundingBox!.clone().expandByScalar(5) });
+      }
+    }
+  }
+
+  /** Hide chunks beyond the fade distance (the frustum culls the rest). */
+  update(cam: THREE.Vector3): void {
+    const far = this.uniforms.uFadeFar.value;
+    for (const c of this.chunks) c.mesh.visible = c.box.distanceToPoint(cam) < far;
   }
 
   /** Lines fade out by this camera distance (m). */

@@ -341,17 +341,22 @@ class Projector:
                 grid.append(a)
         V = []
         far = 20.0
-        for a, b in grid:
-            if ax == "y":
-                o, d = Vector((a, sign * far, b)), Vector((0, -sign, 0))
-            elif ax == "x":
-                o, d = Vector((sign * far, a, b)), Vector((-sign, 0, 0))
-            else:
-                o, d = Vector((a, b, sign * far)), Vector((0, 0, -sign))
-            if dirn is not None:
-                d = Vector(dirn).normalized()
-                o = Vector(o) - d * 0.0  # origin already far along the axis
-            hit, nrm, _, _ = self.tree.ray_cast(o, d, 2 * far)
+        qc = sum(q) / 4.0
+        for a0, b0 in grid:
+            hit = None
+            for k in range(6):  # a ray that misses the silhouette edge is pulled toward the quad center
+                a, b = qc + (np.array([a0, b0]) - qc) * (1.0 - 0.12 * k)
+                if ax == "y":
+                    o, d = Vector((a, sign * far, b)), Vector((0, -sign, 0))
+                elif ax == "x":
+                    o, d = Vector((sign * far, a, b)), Vector((-sign, 0, 0))
+                else:
+                    o, d = Vector((a, b, sign * far)), Vector((0, 0, -sign))
+                if dirn is not None:
+                    d = Vector(dirn).normalized()
+                hit, nrm, _, _ = self.tree.ray_cast(o, d, 2 * far)
+                if hit is not None:
+                    break
             if hit is None:
                 return Part()
             if nrm.dot(d) > 0:
@@ -588,7 +593,7 @@ def shuttle_van() -> Part:
         "plate": [(-0.16, 0.6), (0.16, 0.6), (0.16, 0.52), (-0.16, 0.52)],
     }
     rear = {
-        "taillight": [(0.92, 1.6), (1.01, 1.6), (1.01, 0.85), (0.92, 0.85)],
+        "taillight": [(0.74, 1.45), (0.88, 1.45), (0.9, 0.8), (0.76, 0.8)],
         "bumper": [(-1.0, 0.62), (1.0, 0.62), (1.0, 0.4), (-1.0, 0.4)],
         "plate": [(-0.16, 0.8), (0.16, 0.8), (0.16, 0.72), (-0.16, 0.72)],
     }

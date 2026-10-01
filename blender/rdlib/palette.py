@@ -86,7 +86,7 @@ PALETTE: dict[str, Swatch] = {
     # --- ground / landscape ---------------------------------------------------
     "grass": Swatch("#719E46", 0.95),
     "grass_dark": Swatch("#5E8B3B", 0.95),
-    "turf_field": Swatch("#4F9B45", 0.9),
+    "turf_field": Swatch("#4E8C40", 0.9),
     "turf_field_dark": Swatch("#458C3D", 0.9),
     "dry_grass": Swatch("#C2A76D", 1.0),
     "soil_plinth": Swatch("#A78A69", 1.0),

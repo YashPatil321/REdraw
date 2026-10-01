@@ -14,15 +14,14 @@ track lane (1.22 m), court and field sizes are fixed sport standards.
 from __future__ import annotations
 
 import math
+import sys
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 from shapely.affinity import rotate, translate
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Point, Polygon, box
 from shapely.ops import unary_union
-
-import sys
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pipeline.config import assumption  # noqa: E402  (data/config/assumptions.yaml, props.*)
@@ -157,15 +156,15 @@ class Layout:
                    if s["class"] == "service" and s["subclass"] != "parking_aisle" and len(s["coords"]) > 1]
         self.parking(aisles, service)
         # 3) plazas, walks, landscaping
-        ped = unary_union([Polygon(l["exterior"], l["holes"]).buffer(0) for l in lu if l["class"] == "pedestrian"])
+        ped = unary_union([Polygon(q["exterior"], q["holes"]).buffer(0) for q in lu if q["class"] == "pedestrian"])
         walks = unary_union([LineString(s["coords"]).buffer(FOOTWAY_HALF, cap_style=2)
                              for s in segs if s["class"] in ("footway", "pedestrian", "path") and len(s["coords"]) > 1])
         near_b = self.B.buffer(4.0 if self.kind == "commercial" else 7.0).difference(self.B)
         self.add_surface("pavers" if self.kind == "commercial" else "concrete", unary_union([ped, near_b]), 0.14)
         self.add_surface("concrete", walks, 0.14)
-        grass = unary_union([Polygon(l["exterior"], l["holes"]).buffer(0) for l in lu if l["class"] in ("grass",)])
-        beds = unary_union([Polygon(l["exterior"], l["holes"]).buffer(0) for l in lu
-                            if l["class"] in ("flowerbed", "garden", "park")])
+        grass = unary_union([Polygon(q["exterior"], q["holes"]).buffer(0) for q in lu if q["class"] in ("grass",)])
+        beds = unary_union([Polygon(q["exterior"], q["holes"]).buffer(0) for q in lu
+                            if q["class"] in ("flowerbed", "garden", "park")])
         g_grass = self.add_surface("grass", grass, 0.10)
         g_beds = self.add_surface("mulch", beds, 0.12)
         # campus hardscape quads within 30 m of buildings (schools), rest is landscape
@@ -180,7 +179,7 @@ class Layout:
         }
 
     def sports(self, lu: list[dict[str, Any]]) -> None:
-        track = [Polygon(l["exterior"], l["holes"]).buffer(0) for l in lu if l["class"] == "track"]
+        track = [Polygon(q["exterior"], q["holes"]).buffer(0) for q in lu if q["class"] == "track"]
         for t in track:
             g = self.add_surface("track_red", t, 0.12)
             if g.is_empty:
@@ -201,14 +200,14 @@ class Layout:
                     ln = ring.buffer(LANE_W * k, join_style=1).exterior
                     self.add_paint("stripe_white", ln.buffer(0.05), 0.135, within=g)
                 self.add_paint("stripe_white", LineString(ring.exterior.coords).buffer(0.08), 0.135, within=g)
-        for l in sorted(lu, key=lambda q: -Polygon(q["exterior"]).area):
-            cls = l["class"]
+        for lq in sorted(lu, key=lambda q: -Polygon(q["exterior"]).area):
+            cls = lq["class"]
             if cls not in ("pitch", "playground", "recreation_ground"):
                 continue
-            p = Polygon(l["exterior"], l["holes"]).buffer(0)
+            p = Polygon(lq["exterior"], lq["holes"]).buffer(0)
             a = p.area
             cx, cy, L, W, ang = _mrr(p)
-            name = l["name"].lower() if isinstance(l.get("name"), str) else ""
+            name = lq["name"].lower() if isinstance(lq.get("name"), str) else ""
             if cls == "playground":
                 self.add_surface("rubber_play", p, 0.13)
                 self.objects.append({"type": "play_structure", "x": cx, "y": cy, "angle": ang,

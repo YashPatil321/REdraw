@@ -251,23 +251,142 @@ export function parsePlacements(meta: Record<string, unknown>, bin: ArrayBuffer)
 
 const CELL = 200;
 
-/** Instanced static props with distance culling on a coarse grid. */
+export type PropClass = 'tree' | 'palm' | 'shrub' | 'grass' | 'lamp' | 'vehicle' | 'other';
+
+export function propClass(id: string, kind?: string): PropClass {
+  const k = (kind ?? '').toLowerCase();
+  const i = id.toLowerCase();
+  if (k === 'vehicle' || /^car_|bus|shuttle/.test(i)) return 'vehicle';
+  if (k === 'lamp' || /lamp|light/.test(i)) return 'lamp';
+  if (/grass/.test(i)) return 'grass';
+  if (k === 'shrub' || /shrub|chaparral/.test(i)) return 'shrub';
+  if (/palm/.test(i)) return 'palm';
+  if (k === 'tree' || /tree|oak|eucalyptus|jacaranda/.test(i)) return 'tree';
+  return 'other';
+}
+
+/** Draw distances (m) per class at draw-distance 1.0; scaled by the quality preset. */
+const NEAR: Record<PropClass, number> = { tree: 170, palm: 220, shrub: 90, grass: 55, lamp: 350, vehicle: 260, other: 150 };
+const FAR: Record<PropClass, number> = { tree: 1300, palm: 1300, shrub: 260, grass: 0, lamp: 0, vehicle: 0, other: 0 };
+
+/**
+ * Cheap distant stand-in for a tree: an icosahedron crown (20 triangles) over the
+ * upper part of the model's bounds, plus a thin trunk for palms. Colored with the
+ * average foliage color of the model's texture.
+ */
+export function lodGeometry(full: THREE.BufferGeometry, cls: PropClass, color: THREE.Color): THREE.BufferGeometry {
+  full.computeBoundingBox();
+  const b = full.boundingBox!;
+  const w = Math.max(0.5, b.max.x - b.min.x);
+  const d = Math.max(0.5, b.max.z - b.min.z);
+  const h = Math.max(0.5, b.max.y - Math.max(0, b.min.y));
+  const parts: THREE.BufferGeometry[] = [];
+  const crown = new THREE.IcosahedronGeometry(0.5, 0);
+  if (cls === 'palm') {
+    crown.scale(w * 0.9, h * 0.22, d * 0.9).translate((b.min.x + b.max.x) / 2, b.max.y - h * 0.12, (b.min.z + b.max.z) / 2);
+    const trunk = new THREE.CylinderGeometry(0.22, 0.32, h * 0.85, 5, 1, true).translate((b.min.x + b.max.x) / 2, h * 0.425, (b.min.z + b.max.z) / 2);
+    parts.push(trunk.toNonIndexed());
+  } else if (cls === 'shrub' || cls === 'grass') {
+    crown.scale(w * 0.85, h, d * 0.85).translate((b.min.x + b.max.x) / 2, h * 0.45, (b.min.z + b.max.z) / 2);
+  } else {
+    crown.scale(w * 0.85, h * 0.68, d * 0.85).translate((b.min.x + b.max.x) / 2, b.max.y - h * 0.36, (b.min.z + b.max.z) / 2);
+  }
+  parts.push(crown.toNonIndexed());
+  for (const g of parts) {
+    g.deleteAttribute('uv');
+    const n = g.getAttribute('position').count;
+    const c = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      // trunks brownish, crowns the foliage color with a little per-face variation
+      const trunk = cls === 'palm' && g === parts[0];
+      const k = trunk ? 1 : 0.88 + 0.24 * ((i * 0.618) % 1);
+      c[i * 3] = trunk ? 0.32 : color.r * k;
+      c[i * 3 + 1] = trunk ? 0.26 : color.g * k;
+      c[i * 3 + 2] = trunk ? 0.2 : color.b * k;
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+  }
+  const m = mergeGeometries(parts, false)!;
+  m.computeVertexNormals();
+  return m;
+}
+
+/** Average color of opaque texels (foliage atlas), or null if the image cannot be read. */
+function averageTextureColor(tex: THREE.Texture | null | undefined): THREE.Color | null {
+  const img = tex?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
+  if (!img || typeof document === 'undefined') return null;
+  try {
+    const cv = document.createElement('canvas');
+    cv.width = 32;
+    cv.height = 32;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, 32, 32);
+    const px = ctx.getImageData(0, 0, 32, 32).data;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let n = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      if (px[i + 3]! < 128) continue;
+      // foliage only: skip bark-ish / grey texels
+      if (px[i + 1]! < px[i]! * 0.9) continue;
+      r += px[i]!;
+      g += px[i + 1]!;
+      b += px[i + 2]!;
+      n++;
+    }
+    if (!n) return null;
+    return new THREE.Color().setRGB(r / n / 255, g / n / 255, b / n / 255, THREE.SRGBColorSpace);
+  } catch {
+    return null;
+  }
+}
+
+interface KindLayer {
+  mesh: THREE.InstancedMesh;
+  /** true: draws the far ring [near, far); false: [0, near) */
+  far: boolean;
+  cap: number;
+}
+
+interface Kind {
+  id: string;
+  cls: PropClass;
+  cells: Map<number, Placement[]>;
+  layers: KindLayer[];
+  paint: Array<[number, number, number]> | null;
+}
+
+/** Instanced static props with two LODs and distance budgets on a coarse grid. */
 export class StaticProps {
   readonly group = new THREE.Group();
-  private kinds: Array<{ mesh: THREE.InstancedMesh; cells: Map<number, Placement[]>; cap: number }> = [];
+  private kinds: Kind[] = [];
   private lastPos = new THREE.Vector3(Infinity, 0, 0);
-  private drawDistance = 1500;
+  private scaleDist = 1;
   private mat4 = new THREE.Matrix4();
   private q = new THREE.Quaternion();
   private up = new THREE.Vector3(0, 1, 0);
   private sv = new THREE.Vector3();
   private pv = new THREE.Vector3();
+  private color = new THREE.Color();
+  private shadows = true;
+  /** triangles drawn after the last refill (budget checks / stats) */
+  triangles = 0;
 
   constructor() {
     this.group.name = 'static-props';
   }
 
-  add(id: string, geometry: THREE.BufferGeometry, material: THREE.Material, list: Placement[], heightAt: (x: number, z: number) => number | null): void {
+  add(
+    id: string,
+    cls: PropClass,
+    full: { geometry: THREE.BufferGeometry; material: THREE.Material },
+    lod: { geometry: THREE.BufferGeometry; material: THREE.Material } | null,
+    list: Placement[],
+    heightAt: (x: number, z: number) => number | null,
+    paint: Array<[number, number, number]> | null = null,
+  ): void {
     const cells = new Map<number, Placement[]>();
     for (const p of list) {
       if (!Number.isFinite(p.y)) p.y = heightAt(p.x, p.z) ?? 0;
@@ -276,75 +395,109 @@ export class StaticProps {
       if (!a) cells.set(k, (a = []));
       a.push(p);
     }
-    const cap = Math.min(list.length, 20000);
-    const mesh = new THREE.InstancedMesh(geometry, material, Math.max(1, cap));
-    mesh.name = `prop:${id}`;
-    mesh.count = 0;
-    mesh.frustumCulled = false;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.group.add(mesh);
-    this.kinds.push({ mesh, cells, cap });
+    const mk = (g: THREE.BufferGeometry, m: THREE.Material, far: boolean, cap: number): KindLayer => {
+      const mesh = new THREE.InstancedMesh(g, m, Math.max(1, Math.min(cap, list.length)));
+      mesh.name = `prop:${id}${far ? ':lod' : ''}`;
+      mesh.count = 0;
+      mesh.frustumCulled = false;
+      mesh.castShadow = !far && this.shadows;
+      mesh.receiveShadow = !far;
+      if (paint) {
+        mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(mesh.instanceMatrix.count * 3), 3);
+      }
+      this.group.add(mesh);
+      return { mesh, far, cap: Math.max(1, Math.min(cap, list.length)) };
+    };
+    const layers = [mk(full.geometry, full.material, false, cls === 'vehicle' ? 600 : 4000)];
+    if (lod && FAR[cls] > 0) layers.push(mk(lod.geometry, lod.material, true, 20000));
+    this.kinds.push({ id, cls, cells, layers, paint });
     this.lastPos.set(Infinity, 0, 0);
   }
 
+  /** Quality preset draw distance (m, ~800 low .. 2500 high) -> scale of the per-class distances. */
   setDrawDistance(d: number): void {
-    this.drawDistance = d;
+    this.scaleDist = THREE.MathUtils.clamp(d / 1500, 0.4, 1.6);
     this.lastPos.set(Infinity, 0, 0);
   }
 
   setShadows(on: boolean): void {
-    for (const k of this.kinds) k.mesh.castShadow = on;
+    this.shadows = on;
+    for (const k of this.kinds) for (const l of k.layers) l.mesh.castShadow = on && !l.far;
   }
 
   /** Refill visible instances when the camera moved enough. */
-  update(cam: THREE.Vector3): void {
-    if (cam.distanceTo(this.lastPos) < Math.max(25, this.drawDistance * 0.05)) return;
+  update(cam: THREE.Vector3, groundY = 0): void {
+    if (cam.distanceTo(this.lastPos) < 20) return;
     this.lastPos.copy(cam);
-    const D = this.drawDistance;
-    // from high above, trees are sub-pixel: cap by height too
-    if (cam.y - 0 > D * 3) {
-      for (const k of this.kinds) k.mesh.count = 0;
-      return;
-    }
-    const r = Math.ceil(D / CELL);
-    const cx = Math.floor(cam.x / CELL);
-    const cz = Math.floor(cam.z / CELL);
+    const alt = Math.max(0, cam.y - groundY);
+    let tris = 0;
     for (const k of this.kinds) {
-      let n = 0;
-      for (let ix = cx - r; ix <= cx + r && n < k.cap; ix++) {
-        for (let iz = cz - r; iz <= cz + r && n < k.cap; iz++) {
-          const arr = k.cells.get((ix + 32768) * 65536 + (iz + 32768));
-          if (!arr) continue;
-          for (const p of arr) {
-            if (n >= k.cap) break;
-            const d = Math.hypot(p.x - cam.x, p.z - cam.z);
-            if (d > D) continue;
-            this.q.setFromAxisAngle(this.up, p.rot);
-            this.sv.setScalar(p.scale);
-            this.pv.set(p.x, p.y, p.z);
-            this.mat4.compose(this.pv, this.q, this.sv);
-            k.mesh.setMatrixAt(n++, this.mat4);
+      const near = NEAR[k.cls] * this.scaleDist;
+      const far = FAR[k.cls] * this.scaleDist;
+      const maxD = Math.max(near, far);
+      const counts = k.layers.map(() => 0);
+      if (alt < maxD) {
+        const r = Math.ceil(maxD / CELL);
+        const cx = Math.floor(cam.x / CELL);
+        const cz = Math.floor(cam.z / CELL);
+        for (let ix = cx - r; ix <= cx + r; ix++) {
+          for (let iz = cz - r; iz <= cz + r; iz++) {
+            const arr = k.cells.get((ix + 32768) * 65536 + (iz + 32768));
+            if (!arr) continue;
+            for (let pi = 0; pi < arr.length; pi++) {
+              const p = arr[pi]!;
+              const d = Math.hypot(p.x - cam.x, p.y - cam.y, p.z - cam.z);
+              const li = d < near ? 0 : d < far && k.layers[1] ? 1 : -1;
+              if (li < 0) continue;
+              const L = k.layers[li]!;
+              const n = counts[li]!;
+              if (n >= L.cap) continue;
+              this.q.setFromAxisAngle(this.up, p.rot);
+              this.sv.setScalar(p.scale);
+              this.pv.set(p.x, p.y, p.z);
+              this.mat4.compose(this.pv, this.q, this.sv);
+              L.mesh.setMatrixAt(n, this.mat4);
+              if (k.paint && L.mesh.instanceColor) {
+                // stable per record: hash the position
+                const h = Math.abs(Math.sin(p.x * 12.9898 + p.z * 78.233) * 43758.5453) % 1;
+                const c = k.paint[Math.floor(h * k.paint.length) % k.paint.length]!;
+                this.color.setRGB(c[0], c[1], c[2]);
+                L.mesh.setColorAt(n, this.color);
+              }
+              counts[li] = n + 1;
+            }
           }
         }
       }
-      k.mesh.count = n;
-      k.mesh.instanceMatrix.needsUpdate = true;
+      k.layers.forEach((L, i) => {
+        L.mesh.count = counts[i]!;
+        L.mesh.instanceMatrix.needsUpdate = true;
+        if (L.mesh.instanceColor) L.mesh.instanceColor.needsUpdate = true;
+        const g = L.mesh.geometry;
+        tris += counts[i]! * (g.index ? g.index.count / 3 : g.getAttribute('position').count / 3);
+      });
     }
+    this.triangles = tris;
   }
 
   dispose(): void {
     for (const k of this.kinds) {
-      k.mesh.geometry.dispose();
-      (k.mesh.material as THREE.Material).dispose();
-      k.mesh.dispose();
+      for (const L of k.layers) {
+        L.mesh.geometry.dispose();
+        (L.mesh.material as THREE.Material).dispose();
+        L.mesh.dispose();
+      }
     }
     this.group.removeFromParent();
   }
 }
 
-/** Load trees / lamps from the manifest + placements; null if absent or not understood. */
-export async function loadStaticProps(fetchAsset: AssetFetcher, heightAt: (x: number, z: number) => number | null): Promise<StaticProps | null> {
+/** Load trees / shrubs / lamps / parked cars from the manifest + placements; null if absent or not understood. */
+export async function loadStaticProps(
+  fetchAsset: AssetFetcher,
+  heightAt: (x: number, z: number) => number | null,
+  vehicleMaterial: () => THREE.Material,
+): Promise<StaticProps | null> {
   let raw: Record<string, unknown> | unknown[];
   try {
     raw = JSON.parse(new TextDecoder().decode(await fetchAsset('props/props_manifest.json'))) as Record<string, unknown> | unknown[];
@@ -370,10 +523,18 @@ export async function loadStaticProps(fetchAsset: AssetFetcher, heightAt: (x: nu
   const sp = new StaticProps();
   for (const [id, list] of placements) {
     const e = info.entries.find((x) => x.id === id);
-    if (!e) continue;
+    if (!e || !list.length) continue;
+    const cls = propClass(id, e.kind);
     try {
       const rel = e.file.startsWith('props/') ? e.file : `props/${e.file}`;
-      const gltf = await gltfLoader().parseAsync(await fetchAsset(rel), '');
+      const buf = await fetchAsset(rel);
+      if (cls === 'vehicle') {
+        // parked cars: same baked model as traffic, facing -z (placement rot_y follows three.js)
+        const g = await loadPropGeometry(buf, false);
+        if (g) sp.add(id, cls, { geometry: g, material: vehicleMaterial() }, null, list, heightAt, info.paint.length ? info.paint : null);
+        continue;
+      }
+      const gltf = await gltfLoader().parseAsync(buf, '');
       const geoms: THREE.BufferGeometry[] = [];
       let material: THREE.Material | null = null;
       gltf.scene.updateMatrixWorld(true);
@@ -381,8 +542,8 @@ export async function loadStaticProps(fetchAsset: AssetFetcher, heightAt: (x: nu
         const m = o as THREE.Mesh;
         if (!m.isMesh) return;
         const g = m.geometry.clone().applyMatrix4(m.matrixWorld);
-        for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'color'].includes(name)) g.deleteAttribute(name);
-        geoms.push(g);
+        for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
+        geoms.push(g.index ? g : g);
         material ??= Array.isArray(m.material) ? m.material[0]! : m.material;
       });
       if (!geoms.length || !material) continue;
@@ -390,7 +551,12 @@ export async function loadStaticProps(fetchAsset: AssetFetcher, heightAt: (x: nu
       if (!merged) continue;
       const mat = material as THREE.MeshStandardMaterial;
       if (mat.map) mat.map.anisotropy = 4;
-      sp.add(id, merged, mat, list, heightAt);
+      let lod: { geometry: THREE.BufferGeometry; material: THREE.Material } | null = null;
+      if (FAR[cls] > 0) {
+        const avg = averageTextureColor(mat.map) ?? new THREE.Color(0.22, 0.3, 0.14);
+        lod = { geometry: lodGeometry(merged, cls, avg), material: new THREE.MeshLambertMaterial({ vertexColors: true }) };
+      }
+      sp.add(id, cls, { geometry: merged, material: mat }, lod, list, heightAt);
     } catch (err) {
       console.warn(`prop ${id} failed`, err);
     }

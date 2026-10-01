@@ -47,3 +47,10 @@ Every leaf with `verified: false`. Highest impact first:
 - [ ] Del Norte's max curb line (~100 cars) depends on placeholder curb data (10 spots, 45 s)
 - [ ] Imagery is Sentinel-2 (2.5 m resampled); NAIP 0.6 m was not reachable
 - [ ] Hero campus models (Del Norte, Design39, 4S Commons) are approximations from OSM footprints
+
+## Props and hero campuses (blender/, pipeline/build_props.py)
+- [ ] Hero campus details are guesses on top of real OSM/Overture footprints: wall colors, window patterns, solar carports over the longest school stall rows, entry canopies, tile roofs / arcades at 4S Commons. Check against photos.
+- [ ] Del Norte building heights: many OSM wings are tagged 3.8-4.6 m (single story); untagged school buildings default to 7.0 m. Several Del Norte buildings may be two-story.
+- [ ] 4S Commons was modeled at Overture's "4S Commons Town Center" (33.0195, -117.1129), not the brief's 33.0195, -117.1260 (that is the Target / Del Sur Town Center).
+- [ ] Street tree spacing, yard tree / shrub counts, slope vegetation density, lamp spacing and species mixes (`assumptions.yaml props.*`) are eyeballed from aerial imagery, not surveyed; City of San Diego street light and street tree inventories would replace them.
+- [ ] Vehicle color and type shares (`props.vehicle_paint_shares`, `props.vehicle_type_shares`) are national color reports plus a guess for the local fleet mix (DMV registrations by ZIP 92127 would pin it down).
