@@ -38,6 +38,8 @@ export interface FrameStats {
 
 type FrameFn = (dt: number, now: number) => void;
 
+const WALK_FAR = 15000;
+
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
 }
@@ -65,6 +67,7 @@ export class Viewer {
    * materials opt out of tone mapping while our overlays keep ACES.
    */
   directRender = false;
+  private orbitFar = 150000;
 
   private frameFns = new Set<FrameFn>();
   private raf = 0;
@@ -195,8 +198,10 @@ export class Viewer {
 
     if (this.walk.enabled) {
       this.walk.update(dt, this.groundFn);
-      if (Math.abs(this.camera.near - 0.15) > 1e-3) {
-        this.camera.near = 0.15;
+      // street level: tight depth range (near 0.25 m, far 15 km) so AO / depth tests stay precise
+      if (Math.abs(this.camera.near - 0.25) > 1e-3 || this.camera.far !== WALK_FAR) {
+        this.camera.near = 0.25;
+        this.camera.far = WALK_FAR;
         this.camera.updateProjectionMatrix();
       }
     } else this.orbitFrame(now);
@@ -290,6 +295,7 @@ export class Viewer {
   /** Enter the street-level walk camera at a pose. */
   enterWalk(pose: WalkPose): void {
     this.cancelFlight();
+    if (!this.walk.enabled) this.orbitFar = this.camera.far;
     this.controls.enabled = false;
     this.walk.enable(pose, this.groundFn);
     this.walk.apply();
@@ -305,6 +311,7 @@ export class Viewer {
     this.controls.target.set(this.walk.x + fx * 60, g, this.walk.z + fz * 60);
     this.camera.position.set(this.walk.x - fx * 80, this.camera.position.y + 90, this.walk.z - fz * 80);
     this.camera.near = 2;
+    this.camera.far = this.orbitFar;
     this.camera.updateProjectionMatrix();
     this.controls.enabled = true;
     this.controls.update();

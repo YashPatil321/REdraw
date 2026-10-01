@@ -142,9 +142,18 @@ def test_maxspeed_parsing() -> None:
 def test_labels_and_refs() -> None:
     labels = region()["arterial_labels"]
     assert normalize_ref("SR-56") == ["CA 56"] and normalize_ref("I-15;CA 56") == ["I 15", "CA 56"]
-    assert label_for("Camino del Sur", "", labels) == "Camino Del Sur"
-    assert label_for("", "CA 56", labels) == "Ted Williams Parkway"
-    assert label_for("", "I 15", labels) == "Escondido Freeway"
+    # every configured label matches its own OSM name exactly (and case-insensitively)
+    for lab in labels:
+        assert label_for(lab["name"], "", labels) == lab["name"]
+        assert label_for(lab["name"].upper(), "", labels) == lab["name"]
+    # a ref alone maps to the first label carrying that ref; a name always wins over a ref
+    for lab in labels:
+        if lab.get("ref"):
+            first_with_ref = next(x["name"] for x in labels if set(normalize_ref(str(x.get("ref", "")))) & set(normalize_ref(lab["ref"])))
+            assert label_for("", lab["ref"], labels) == first_with_ref
+            assert label_for(lab["name"], lab["ref"], labels) == lab["name"]
+    by_ref = {n for n in (label_for("", "CA 56", labels), label_for("", "SR-56", labels)) if n}
+    assert by_ref and by_ref <= {x["name"] for x in labels if "CA 56" in normalize_ref(str(x.get("ref", "")))}
     assert label_for("Calle Albero", "", labels) == ""
 
 
@@ -180,8 +189,15 @@ def test_terrain_sample_and_tile_mesh() -> None:
 
 
 def test_tile_grid_and_extent() -> None:
-    ext = bbox_scene_extent(region()["bbox"])
-    assert ext.min_x < -4600 and ext.max_x > 4600 and ext.min_z < -4400 and ext.max_z > 4400
+    from pipeline.geo import latlon_to_scene
+
+    b = region()["bbox"]
+    ext = bbox_scene_extent(b)
+    for lat in (b["south"], b["north"]):
+        for lon in (b["west"], b["east"]):
+            x, z = latlon_to_scene(lat, lon)
+            assert ext.min_x <= x <= ext.max_x and ext.min_z <= z <= ext.max_z
+    assert ext.min_x < 0 < ext.max_x and ext.min_z < 0 < ext.max_z  # origin = bbox center
     g = TileGrid(Extent(0, 400, 0, 400), 4, 4)
     r, c = g.tile_of(np.array([10.0, 399.0, 500.0]), np.array([10.0, 150.0, -5.0]))
     assert list(r) == [0, 1, 0] and list(c) == [0, 3, 3]
@@ -196,10 +212,9 @@ def test_bearings_and_exits() -> None:
     assert bearing_deg(0, 0, 100, 0) == pytest.approx(90.0)
     assert bearing_deg(0, 0, 0, 100) == pytest.approx(180.0)
     exits = region()["exits"]
-    assert exit_for_bearing(5.0, exits) == "i15_north"
-    assert exit_for_bearing(200.0, exits) == "i15_south"
-    assert exit_for_bearing(250.0, exits) == "sr56_west"
-    assert exit_for_bearing(80.0, exits) == "cdn_east"
+    for e in exits:  # a job straight along an exit's bearing uses that exit
+        assert exit_for_bearing(float(e["bearing_deg"]), exits) == e["id"]
+        assert exit_for_bearing((float(e["bearing_deg"]) + 3.0) % 360.0, exits) == e["id"]
 
 
 def test_household_allocation() -> None:

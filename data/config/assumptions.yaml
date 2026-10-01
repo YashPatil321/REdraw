@@ -137,7 +137,7 @@ schools:
 population:
   # Used by build_population.py with ACS; the synthetic fixture uses these when ACS is absent.
   seed: {value: 20260930, unit: seed, range: null, source: fixed seed (rule 14.5), verified: true}
-  target_households_fallback: {value: 14500, unit: households, range: [10000, 20000], source: "spec 5.4 order of magnitude; real count comes from ACS", verified: false}
+  target_households_fallback: {value: 37000, unit: households, range: [30000, 45000], source: "footprint estimate for the expanded bbox (4S Ranch, Del Sur, Rancho Penasquitos, Carmel Mountain Ranch, Sabre Springs, part of Rancho Bernardo, Santaluz); spec 5.4 10k-20k was for the original smaller box; real count comes from ACS", verified: false}
   avg_household_size: {value: 3.1, unit: persons, range: [2.8, 3.4], source: "ACS 92127 approx", verified: false}
   share_households_with_kids: {value: 0.48, unit: share, range: [0.40, 0.55], source: "ACS 92127 approx", verified: false}
   workers_per_household: {value: 1.6, unit: persons, range: [1.3, 1.9], source: ACS approx, verified: false}
@@ -213,7 +213,7 @@ residents:
     community: {value: 1.3, unit: ratio, range: [1.0, 2.0], source: "values shuttles/walk routes", verified: false}
     property: {value: 1.5, unit: ratio, range: [1.0, 2.0], source: "dislikes changes on own street", verified: false}
   safety_tool_bonus: {value: 0.4, unit: utils, range: [0.1, 0.8], source: "bonus per safe_walk/bike tool for safety/community values", verified: false}
-  households_sharing_cost: {value: 14500, unit: households, range: [10000, 20000], source: "plan cost per year split across households for cost exposure", verified: false}
+  households_sharing_cost: {value: 37000, unit: households, range: [30000, 45000], source: "plan cost per year split across households in the region (footprint estimate for the expanded bbox)", verified: false}
   street_change_vc_delta: {value: 0.1, unit: ratio, range: [0.05, 0.2], source: "rise in max v/c on edges nearest home that counts as a noticeable change on the resident's street; guess", verified: false}
 
 # --- Added by the pipeline (append only). Used by pipeline/build_*.py and pipeline/synthetic.py. ---
@@ -313,3 +313,47 @@ sim_behavior:
   worker_share_targets:
     carpool: {value: 0.08, unit: share, range: [0.05, 0.11], source: "ACS 2022 S0801 San Diego County: ~8 percent of commuters carpool (cf. modechoice.asc_worker.carpool note)", verified: false}
   balk_threshold_spread: {value: 0.5, unit: ratio, range: [0.2, 0.8], source: "households differ in patience: curb-line balk thresholds are triangular with mode sim_engine.dropoff_balk_wait_min and half-width this share of it (e.g. 3-9 min); guess", verified: false}
+
+# ---------------------------------------------------------------------------
+# Added by the Blender asset / prop placement work (blender/, pipeline/build_props.py).
+# Append-only. Densities and spacings for instanced trees, shrubs, lamps and parked
+# cars in the open-data view, plus hero campus site-layout standards. Visual only:
+# nothing here affects simulation results.
+props:
+  seed: {value: 20261001, unit: seed, range: null, source: "fixed RNG seed for prop placement (rule 14.5)", verified: true}
+  street_tree_spacing_m:
+    residential: {value: 11.0, unit: m, range: [8.0, 16.0], source: "City of San Diego Street Tree Selection Guide: 25-40 ft on center for small/medium parkway trees; 4S Ranch / Del Sur HOA streetscapes look denser; guess", verified: false}
+    arterial: {value: 14.0, unit: m, range: [10.0, 20.0], source: "larger canopy and palm spacing on Camino del Sur / 4S Ranch Pkwy style arterials (30-50 ft); guess", verified: false}
+  street_tree_presence: {value: 0.8, unit: share, range: [0.6, 0.95], source: "share of spacing slots that actually hold a tree (driveways, utilities, gaps); guess from aerial imagery", verified: false}
+  curb_extra_m:
+    residential: {value: 2.4, unit: m, range: [1.5, 3.0], source: "parking lane between the outer travel lane and the curb on local streets", verified: false}
+    arterial: {value: 1.8, unit: m, range: [1.2, 2.5], source: "bike lane / shoulder between the outer lane and the curb on arterials", verified: false}
+  parkway_offset_m: {value: 1.6, unit: m, range: [0.8, 3.0], source: "curb face to tree trunk (parkway strip or tree well behind a curb-adjacent sidewalk); guess", verified: false}
+  tree_building_clearance_m: {value: 3.0, unit: m, range: [2.0, 5.0], source: "minimum trunk distance from a building footprint", verified: false}
+  tree_road_clearance_m: {value: 1.2, unit: m, range: [0.5, 2.0], source: "minimum trunk distance from any travel-way edge", verified: false}
+  yard_trees_per_house: {value: 1.1, unit: trees/house, range: [0.5, 2.0], source: "front + back yard trees per detached house in 2000s-era 4S Ranch / Del Sur tracts (small lots); guess from aerial imagery", verified: false}
+  shrubs_per_house: {value: 1.6, unit: shrubs/house, range: [0.5, 4.0], source: "front-yard shrub masses per house; guess", verified: false}
+  grass_clumps_per_house: {value: 0.8, unit: clumps/house, range: [0.0, 3.0], source: "drought-tolerant ornamental grass clumps per house (turf replacement era); guess", verified: false}
+  commercial_palm_spacing_m: {value: 22.0, unit: m, range: [10.0, 30.0], source: "palms / trees around commercial and apartment building perimeters; guess", verified: false}
+  slope_min_grade: {value: 0.18, unit: ratio, range: [0.1, 0.3], source: "terrain grade above which undeveloped land is treated as canyon / slope habitat (oaks, eucalyptus, scrub)", verified: false}
+  slope_trees_per_ha: {value: 8.0, unit: trees/ha, range: [4.0, 40.0], source: "coast live oak woodland and eucalyptus stands in canyon bottoms / north slopes, averaged with open coastal sage scrub; guess", verified: false}
+  slope_shrubs_per_ha: {value: 18.0, unit: shrubs/ha, range: [10.0, 80.0], source: "coastal sage scrub / chaparral clumps on open-space slopes (only the shrub prop is instanced); guess", verified: false}
+  open_space_building_clearance_m: {value: 35.0, unit: m, range: [15.0, 60.0], source: "slope vegetation is only placed this far from buildings (brush management zones are cleared/irrigated near homes)", verified: false}
+  lamp_midblock_spacing_m:
+    residential: {value: 75.0, unit: m, range: [45.0, 110.0], source: "City of San Diego street light standards: residential lights at intersections and roughly every 150-300 ft mid-block; guess", verified: false}
+    arterial: {value: 50.0, unit: m, range: [35.0, 80.0], source: "arterial davit lights roughly every 120-200 ft, staggered; guess", verified: false}
+  lamp_corner_offset_m: {value: 1.0, unit: m, range: [0.5, 2.0], source: "pole setback behind the curb face", verified: false}
+  species_mix:
+    residential_street: {value: {tree_street: 0.55, tree_jacaranda: 0.22, tree_palm_queen: 0.13, tree_oak: 0.10}, unit: share, range: null, source: "typical 4S Ranch / Del Sur parkway palette (Brisbane box, Chinese elm, pistache, jacaranda, queen palm accents); guess", verified: false}
+    arterial_street: {value: {tree_street: 0.40, tree_palm_fan: 0.25, tree_palm_queen: 0.15, tree_jacaranda: 0.10, tree_eucalyptus: 0.10}, unit: share, range: null, source: "arterial landscaping: broadleaf canopy trees with Mexican fan / queen palm accents near entries and commercial frontage; guess", verified: false}
+    yard: {value: {tree_street: 0.35, tree_jacaranda: 0.2, tree_palm_queen: 0.2, tree_oak: 0.15, tree_palm_fan: 0.1}, unit: share, range: null, source: guess from aerial imagery, verified: false}
+    commercial: {value: {tree_palm_queen: 0.35, tree_palm_fan: 0.3, tree_street: 0.25, tree_jacaranda: 0.1}, unit: share, range: null, source: guess, verified: false}
+    slope: {value: {tree_oak: 0.65, tree_eucalyptus: 0.35}, unit: share, range: null, source: "coast live oak dominates native canyons; eucalyptus in older planted windbreaks; guess", verified: false}
+  vehicle_paint_shares: {value: {white: 0.25, black: 0.21, gray: 0.18, silver: 0.12, blue: 0.09, red: 0.08, pearl_white: 0.03, green: 0.02, beige: 0.02}, unit: share, range: null, source: "US new-car color popularity (PPG / Axalta / iSeeCars 2023-2025 reports: white, black, gray, silver ~75 percent); assumed similar for SoCal suburbs", verified: false}
+  vehicle_type_shares: {value: {car_sedan: 0.30, car_suv: 0.30, car_crossover_ev: 0.12, car_minivan: 0.12, car_pickup: 0.16}, unit: share, range: null, source: "suburban San Diego light-vehicle mix (crossovers/SUVs dominant, high Tesla share in 4S Ranch / Del Sur); guess", verified: false}
+  parking_stall_width_m: {value: 2.75, unit: m, range: [2.6, 2.9], source: "9 ft standard stall (City of San Diego Land Development Code 142.0560)", verified: false}
+  parking_stall_length_m: {value: 5.5, unit: m, range: [5.2, 5.8], source: "18 ft standard stall", verified: false}
+  parking_aisle_width_m: {value: 7.3, unit: m, range: [7.0, 7.6], source: "24 ft two-way 90-degree aisle", verified: false}
+  parked_occupancy:
+    school: {value: 0.75, unit: share, range: [0.5, 0.95], source: "school staff/student lots on a school-day morning; guess", verified: false}
+    commercial: {value: 0.55, unit: share, range: [0.3, 0.85], source: "neighborhood shopping center lot at mid-morning; guess", verified: false}

@@ -34,6 +34,9 @@ from pyproj import Transformer
 from shapely.geometry import LineString, MultiPolygon, Point, Polygon, mapping
 from shapely.ops import unary_union
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hero_layout import build_layout  # noqa: E402
+
 REPO = Path(__file__).resolve().parents[1]
 RAW = REPO / "data" / "raw"
 OUT = REPO / "blender" / "build" / "hero_sites.json"
@@ -219,7 +222,7 @@ def main() -> None:
             for p in _polys(_local(g, cx, cy)):
                 if p.area < 1.0:
                     continue
-                landuse.append({"subtype": r["subtype"], "class": r["class"], "name": r["nm"], **_poly_json(p, 2)})
+                landuse.append({"subtype": r["subtype"], "class": r["class"], "name": r["nm"] if isinstance(r["nm"], str) else None, **_poly_json(p, 2)})
         segs = []
         ss = seg[seg.intersects(circle)]
         for _, r in ss.iterrows():
@@ -233,14 +236,19 @@ def main() -> None:
                     "coords": [[round(x - cx, 2), round(y - cy, 2)] for x, y in ln.coords],
                 })
         site_l = _local(site, cx, cy)
-        out.append({
+        rec = {
             "id": h["id"], "school_id": h["school_id"], "name": h["name"], "type": h["type"], "glb": h["glb"],
             "lat": round(lat, 6), "lon": round(lon, 6), "utm": [round(cx, 2), round(cy, 2)],
             "footprint_radius_m": round(R, 1), "n_buildings": len(inc),
             "site": _poly_json(max(_polys(site_l), key=lambda p: p.area)),
             "site_area_m2": round(site.area),
             "buildings": bl, "keep_out": keep, "landuse": landuse, "segments": segs,
-        })
+        }
+        rec["layout"] = build_layout(rec)
+        lay = rec["layout"]
+        print(f"   layout: {len(lay['surfaces'])} surfaces, {len(lay['paint'])} paint, {len(lay['trees'])} trees, "
+              f"{len(lay['parked'])} parked, {len(lay['canopies'])} canopies, {len(lay['lamps'])} lamps")
+        out.append(rec)
         print(f"{h['id']}: center {lat:.6f},{lon:.6f} R={R:.1f} m  buildings={len(inc)} "
               f"landuse={len(landuse)} segments={len(segs)} keep_out={len(keep)}")
     OUT.parent.mkdir(parents=True, exist_ok=True)

@@ -205,3 +205,14 @@ assets/
 - Draco: compress with `npx @gltf-transform/cli draco` when Node is available;
   if not, write uncompressed glb and set `manifest.draco = false`. The client
   must load both (GLTFLoader + DRACOLoader).
+
+## Contract additions (v1, real-data build)
+
+- `region_meta.json`: `population_source` (`acs_lodes` | `footprint_estimate`), `population_note`,
+  `signal_source` (`osm` | `inferred`), `attribution`, `sources_not_available`.
+- `exits.json`: each exit adds `target_distance_m` (distance from the region.yaml point to the
+  snapped bbox-edge crossing). Exit split node ids start at 9,000,000,000.
+- `schools_resolved.json` entrances add `snap_method`, `configured_lat`, `configured_lon`.
+- `terrain_meta.json` adds `sources` and `texture_px`.
+- `network_edges.osmid` may be `virtual_connector` (short links joining gated-community islands)
+  or `virtual_exit_turnaround`.

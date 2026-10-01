@@ -44,8 +44,8 @@ PALETTE: dict[str, Swatch] = {
     "stucco_gray": Swatch("#B9B5AE", 0.9),
     "stone_base": Swatch("#A8957B", 0.95),
     "trim_dark": Swatch("#4E463F", 0.6, 0.3),
-    "trim_white": Swatch("#F6F3EC", 0.7),
-    "roof_tile": Swatch("#B65A3B", 0.8),
+    "trim_white": Swatch("#E4E0D6", 0.7),
+    "roof_tile": Swatch("#9E4A30", 0.8),
     "roof_tile_dark": Swatch("#8E4128", 0.8),
     "roof_flat": Swatch("#D2CCC1", 0.95),
     "roof_metal": Swatch("#8E979B", 0.45, 0.6),
@@ -139,6 +139,16 @@ PALETTE: dict[str, Swatch] = {
     "play_blue": Swatch("#3B78C2", 0.6),
     "scoreboard": Swatch("#22324F", 0.6),
     "signage": Swatch("#F7F4EC", 0.6),
+    # --- hero campuses (appended; keep order) -------------------------------------
+    "landscape": Swatch("#7F8350", 1.0),  # irrigated groundcover / slope planting
+    "glass_dark": Swatch("#24323D", 0.08, 0.0),
+    "panel_white": Swatch("#EEEEEA", 0.6),
+    "metal_dark": Swatch("#3B4045", 0.45, 0.6),
+    "stucco_warm": Swatch("#DCC7A6", 0.9),
+    "stucco_olive": Swatch("#B9AE8C", 0.9),
+    "hvac": Swatch("#C9CBC8", 0.5, 0.5),
+    "roof_tpo": Swatch("#C4C1B9", 0.85),
+    "net_dark": Swatch("#2B2E2F", 0.8),
 }
 
 

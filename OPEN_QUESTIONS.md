@@ -35,3 +35,15 @@ Every leaf with `verified: false`. Highest impact first:
 
 ## Data access
 - [ ] The cloud dev sandbox used to build v1 could not reach OSM, USGS, Census or Planetary Computer, so the real-data pipeline was written but not run end to end there. Run `python pipeline/build_all.py` on a machine with internet and record results here.
+
+## Found while building on real data (2026-10-01)
+- [ ] Census ACS/LODES were unreachable from the build sandbox; households come from a labeled footprint estimate (37,418 households in the expanded bbox). Rerun with `--population-source acs` where census.gov is reachable.
+- [ ] 532 traffic signals are inferred (Overture has none); many tertiary junctions are probably all-way stops
+- [ ] Lanes and most speed limits are class defaults (Overture lacks them)
+- [ ] Every school drop-off entrance is inferred (side of campus facing the highest-class road). Del Norte lands on Camino San Bernardo; the real main drop-off is probably Nighthawk Lane
+- [ ] 18 schools added from OSM use default bell 08:15, 6 curb spots, 40 s unload
+- [ ] Design39 is a lottery school; nearest-school assignment overstates its local enrollment
+- [ ] Gated communities (Santaluz, The Crosby) have no public roads in Overture; ~870 households snap > 500 m to the network
+- [ ] Del Norte's max curb line (~100 cars) depends on placeholder curb data (10 spots, 45 s)
+- [ ] Imagery is Sentinel-2 (2.5 m resampled); NAIP 0.6 m was not reachable
+- [ ] Hero campus models (Del Norte, Design39, 4S Commons) are approximations from OSM footprints

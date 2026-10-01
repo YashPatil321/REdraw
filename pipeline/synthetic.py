@@ -240,13 +240,16 @@ def synthetic_albedo(terrain: Terrain, developed: list[Polygon], paved: list[Pol
     fld = mask_of(fields)
     img = img * (1 - fld) + np.array([92, 140, 70], dtype=np.float32) * fld
     img += (6.0 * n2 + 5.0 * n3)[..., None]
-    full = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8), mode="RGB")
+    full = Image.fromarray(np.clip(img, 0, 255).astype(np.uint8))
 
     def fn(b: Extent, size: int) -> np.ndarray:
         x0 = (b.min_x - ext.min_x) / res_m
         x1 = (b.max_x - ext.min_x) / res_m
         z0 = (b.min_z - ext.min_z) / res_m
         z1 = (b.max_z - ext.min_z) / res_m
+        # clamp: the image is round(extent / res_m) px, so the far edge can overshoot by < 1 px
+        x0, x1 = max(0.0, x0), min(float(full.width), x1)
+        z0, z1 = max(0.0, z0), min(float(full.height), z1)
         crop = full.resize((size, size), Image.BILINEAR, box=(x0, z0, x1, z1))
         return np.asarray(crop)
 

@@ -125,6 +125,7 @@ uniform sampler2D uAdj;
 uniform float uPull;
 uniform float uWidthScale;
 varying float vOff;
+varying float vCamDist;
 uniform float uPxScale;
 uniform float uMinPx;
 uniform sampler2D uVc;
@@ -143,6 +144,7 @@ void main() {
   wp.y += texelFetch(uAdj, ivec2(pi - (pi / ${ADJ_TEX_W}) * ${ADJ_TEX_W}, pi / ${ADJ_TEX_W}), 0).r;
   wp.y += 0.8 + dist * 0.0025;
   vOff = aOff;
+  vCamDist = dist;
   int e = int(aEdge + 0.5);
   int tw = int(uTexW);
   float vc = texelFetch(uVc, ivec2(e - (e / tw) * tw, e / tw), 0).r;
@@ -171,6 +173,7 @@ uniform float uSoft;
 varying vec3 vColor;
 varying float vFogDepth;
 varying float vOff;
+varying float vCamDist;
 void main() {
   float f = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
   vec3 lin = pow(max(vColor, vec3(0.0)), vec3(2.2)) * uBright;
@@ -178,6 +181,10 @@ void main() {
   float core = smoothstep(1.0, 0.45, vOff) * smoothstep(0.0, 0.35, vOff);
   float alpha = mix(uOpacity, uOpacity * (0.25 + 0.75 * core), uSoft);
   lin *= 1.0 + 0.25 * uSoft * core;
+  // at street level the ribbon is right under your feet: make it a subtle tint
+  float near = smoothstep(12.0, 160.0, vCamDist);
+  alpha *= mix(0.4, 1.0, near);
+  lin *= mix(0.6, 1.0, near);
   gl_FragColor = vec4(mix(lin, fogColor, f * 0.6), alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

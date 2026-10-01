@@ -188,6 +188,7 @@ def build_heroes(previews: bool, samples: int) -> None:
         out = HERO_DIR / site["glb"]
         bl.export_glb(objs, out)
         tris = bl.tri_count(objs)
+        trees = stats.pop("_trees")
         log(f"{site['id']}: {tris} tris, {stats} -> {out}")
         overrides.append({
             "id": site["id"],
@@ -206,7 +207,7 @@ def build_heroes(previews: bool, samples: int) -> None:
             "source": "OSM building footprints + Overture land_use/segments (blender/extract_hero_sites.py)",
             "verified": False,
         })
-        (HERO_DIR / f"{site['id']}_trees.json").write_text(json.dumps(stats.pop("_trees"), separators=(",", ":")))
+        (HERO_DIR / f"{site['id']}_trees.json").write_text(json.dumps(trees, separators=(",", ":")))
         if previews:
             heroes.render_preview(site, objs, PREVIEW_DIR / f"hero_{site['id']}.png", samples=samples)
     (HERO_DIR / "hero_overrides.json").write_text(json.dumps(overrides, indent=2) + "\n")

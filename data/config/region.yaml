@@ -42,6 +42,6 @@ exits:
   # Positions read from the real drive graph (Overture/OSM, release 2026-09-23.1)
   # where each road meets the bbox edge. verified: false until checked on a map.
   - {id: i15_north, label: I 15 north, lat: 33.0495, lon: -117.0726, bearing_deg: 10,  verified: false}
-  - {id: i15_south, label: I 15 south, lat: 32.9490, lon: -117.1025, bearing_deg: 190, verified: false}
-  - {id: sr56_west, label: SR 56 west, lat: 32.9550, lon: -117.1795, bearing_deg: 265, verified: false}
+  - {id: i15_south, label: I 15 south, lat: 32.9480, lon: -117.10584, bearing_deg: 190, verified: false}
+  - {id: sr56_west, label: SR 56 west, lat: 32.9644, lon: -117.1800, bearing_deg: 265, verified: false}
   - {id: cdn_east,  label: Camino del Norte east, lat: 32.9879, lon: -117.0672, bearing_deg: 100, verified: false}

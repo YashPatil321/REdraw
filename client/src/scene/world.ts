@@ -153,7 +153,7 @@ export class World {
       shader.vertexShader = shader.vertexShader
         .replace(
           '#include <common>',
-          '#include <common>\nattribute float buildingId;\nattribute float aBase;\nattribute float aTop;\nvarying float vBid;\nvarying vec3 vBWN;\nvarying vec3 vBWP;\nvarying vec2 vBT;',
+          '#include <common>\nattribute float buildingId;\nattribute float aBase;\nattribute float aTop;\nflat varying float vBid;\nflat varying vec2 vBT;\nvarying vec3 vBWN;\nvarying vec3 vBWP;',
         )
         .replace(
           '#include <beginnormal_vertex>',
@@ -164,10 +164,11 @@ export class World {
         .replace(
           '#include <common>',
           `#include <common>
-          varying float vBid;
+          // flat: per-building constants must not be interpolated (hashing amplifies ULP noise)
+          flat varying float vBid;
+          flat varying vec2 vBT;
           varying vec3 vBWN;
           varying vec3 vBWP;
-          varying vec2 vBT;
           float bHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
           float bNoise(vec2 p) {
             vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -178,9 +179,10 @@ export class World {
         .replace(
           '#include <color_fragment>',
           `#include <color_fragment>
-          float bh = fract(sin(vBid * 12.9898 + 1.7) * 43758.5453);
-          float bh2 = fract(sin(vBid * 78.233 + 4.1) * 24634.6345);
-          float bh3 = fract(sin(vBid * 39.346 + 2.3) * 11743.123);
+          float bid = mod(floor(vBid + 0.5), 1009.0);
+          float bh = fract(sin(bid * 12.9898 + 1.7) * 43758.5453);
+          float bh2 = fract(sin(bid * 78.233 + 4.1) * 24634.6345);
+          float bh3 = fract(sin(bid * 39.346 + 2.3) * 11743.123);
           vec3 n = normalize(vBWN);
           float ny = n.y;
           float hgt = max(vBT.y - vBT.x, 0.1);
@@ -206,12 +208,12 @@ export class World {
               float stripes = mix(0.5, 0.5 + 0.5 * sin(u * 6.2831 / period), aaS);
               float rows = mix(0.92, smoothstep(0.0, 0.08, fract(v / 0.34)), aaR);
               roof *= (barrel ? 0.78 + 0.3 * stripes : 0.9 + 0.12 * stripes) * (0.86 + 0.14 * rows);
-              roof *= 0.9 + 0.2 * bNoise(vBWP.xz * 0.9 + vBid);
+              roof *= 0.9 + 0.2 * bNoise(vBWP.xz * 0.9 + bid);
               diffuseColor.rgb = roof;
             } else {
               // flat roofs: light membrane or gravel, with HVAC-ish blotches
               vec3 flatc = mix(vec3(0.78, 0.77, 0.74), vec3(0.55, 0.54, 0.52), bh2);
-              flatc *= 0.9 + 0.12 * bNoise(vBWP.xz * 2.5) - 0.12 * step(0.93, bNoise(vBWP.xz * 0.25 + vBid));
+              flatc *= 0.9 + 0.12 * bNoise(vBWP.xz * 2.5) - 0.12 * step(0.93, bNoise(vBWP.xz * 0.25 + bid));
               diffuseColor.rgb = flatc;
             }
           } else {
@@ -232,7 +234,7 @@ export class World {
             // no windows in the top 0.6 m (eaves / parapet) or below 0.6 m
             float inside = step(0.6, above) * step(above, hgt - 0.6);
             // some cells blank (closets, garages) on houses
-            float blank = (1.0 - tall) * step(0.62, bHash(floor(vec2(u / cell + bh, level)) + vBid));
+            float blank = (1.0 - tall) * step(0.62, bHash(mod(floor(vec2(u / cell + bh, level)), 512.0) * 0.731 + bid * 0.137));
             // antialias: when a window cell gets smaller than a few pixels, blend to the average facade
             float aaW = clamp(1.0 - max(fwidth(u / cell), fwidth(level)) * 3.0, 0.0, 1.0);
             rdWin = wx * wy * inside * (1.0 - blank) * aaW;

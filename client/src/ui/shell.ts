@@ -4,6 +4,7 @@ import { LitElement, css, html, nothing } from 'lit';
 import { navigate } from '../actions';
 import type { Quality } from '../scene/quality';
 import { NO_KEY_HELP } from '../photoreal/key';
+import { OFFLINE_VIEWER } from '../actions';
 import { store, type View } from '../state';
 import { StoreController, appCtx, humanize, fmtUsd, theme } from './base';
 
@@ -155,6 +156,7 @@ export class RdTopbar extends LitElement {
         )}
       </nav>
       <div class="spacer"></div>
+      ${OFFLINE_VIEWER ? html`<span class="tag warn" title="Static snapshot: explore and replay saved plans; runs need the Python API">Viewer</span>` : nothing}
       ${cal
         ? html`<span class="tag cal ${calCls}" title=${`Baseline calibration against observed travel times: ${humanize(cal.status)}${err !== null && err !== undefined ? `, median error ${err.toFixed(1)}%` : ''}`}
             >${humanize(cal.status)}${err !== null && err !== undefined ? ` (${err.toFixed(0)}% err)` : ''}</span
@@ -477,7 +479,7 @@ export class RdAttribution extends LitElement {
       }
     `,
   ];
-  private st = new StoreController(this, ['attribution', 'renderMode', 'meta']);
+  private st = new StoreController(this, ['attribution', 'renderMode', 'meta', 'openCredits']);
   override render() {
     const s = this.st.s;
     const a = s.attribution;
@@ -488,7 +490,7 @@ export class RdAttribution extends LitElement {
       </div>`;
     }
     return html`<div class="a" role="contentinfo">
-      <span class="txt">${s.meta?.synthetic ? 'Synthetic dev world (not real geography)' : 'Map data © OpenStreetMap contributors (ODbL) · USGS 3DEP · USDA NAIP'}</span>
+      <span class="txt" title=${s.openCredits}>${s.meta?.synthetic ? 'Synthetic dev world (not real geography)' : s.openCredits || '© OpenStreetMap contributors (ODbL)'}</span>
     </div>`;
   }
 }

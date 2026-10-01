@@ -23,6 +23,18 @@ describe('props manifest', () => {
   });
 });
 
+describe('blender props_manifest.json (top-level array)', () => {
+  it('reads fleet_share and the per-vehicle paint palette', () => {
+    const a = parsePropsManifest([
+      { id: 'car_sedan', kind: 'vehicle', vehicle_class: 'car', file: 'vehicles/car_sedan.glb', fleet_share: 0.3, paint_colors: [{ name: 'white', hex: '#E9EAEA', share: 0.25 }, { name: 'red', hex: '#8E1B1E', share: 0.08 }] },
+      { id: 'tree_oak', kind: 'tree', file: 'vegetation/tree_oak.glb' },
+    ]);
+    expect(a.entries.map((e) => e.id)).toEqual(['car_sedan', 'tree_oak']);
+    expect(a.entries[0]!.share).toBe(0.3);
+    expect(a.paint.length).toBe(5 + 2);
+  });
+});
+
 describe('placements', () => {
   const rows = [
     [10, 100, 20, 0.5, 1.2, 0],

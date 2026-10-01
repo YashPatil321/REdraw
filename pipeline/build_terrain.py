@@ -128,7 +128,7 @@ def write_heightmap(terrain: Terrain, png_path: Path, size: int = HEIGHTMAP_SIZE
     scale = max(hi - lo, 1e-3) / 65535.0
     px = np.clip(np.round((e - lo) / scale), 0, 65535).astype(np.uint16)
     png_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(px, mode="I;16").save(png_path)
+    Image.fromarray(px.astype("<u2")).save(png_path)
     return {
         "heightmap": "terrain/heightmap.png",
         "width_px": size,
@@ -178,7 +178,7 @@ def terrain_tile_mesh(terrain: Terrain, b: Extent, step: float) -> tuple[np.ndar
 
 def jpeg_bytes(img: np.ndarray, quality: int = 85) -> bytes:
     buf = io.BytesIO()
-    Image.fromarray(img.astype(np.uint8), mode="RGB").save(buf, format="JPEG", quality=quality)
+    Image.fromarray(np.ascontiguousarray(img.astype(np.uint8)[..., :3])).save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
 
 

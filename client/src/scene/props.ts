@@ -38,7 +38,7 @@ export interface PropsManifestInfo {
 const GLB_RE = /\.glb$/i;
 
 /** Find prop entries (objects with an id and a .glb path) anywhere in the manifest. Pure; unit tested. */
-export function parsePropsManifest(raw: Record<string, unknown>): PropsManifestInfo {
+export function parsePropsManifest(raw: Record<string, unknown> | unknown[]): PropsManifestInfo {
   const entries: PropEntry[] = [];
   const seen = new Set<string>();
   const visit = (v: unknown, keyHint?: string): void => {
@@ -57,8 +57,13 @@ export function parsePropsManifest(raw: Record<string, unknown>): PropsManifestI
     }
     for (const [k, x] of Object.entries(o)) visit(x, k);
   };
-  visit(raw['props'] ?? raw);
-  const paintHex = (raw['paint_colors'] ?? (raw['vehicles'] as Record<string, unknown> | undefined)?.['paint_colors']) as unknown;
+  const obj = (Array.isArray(raw) ? {} : raw) as Record<string, unknown>;
+  visit(Array.isArray(raw) ? raw : (obj['props'] ?? obj));
+  for (const e of entries) if (typeof e.share !== 'number' && typeof e['fleet_share'] === 'number') e.share = e['fleet_share'] as number;
+  // paint palette: top level, or the first tintable vehicle entry's (blender writes it per vehicle)
+  const paintHex = (obj['paint_colors'] ??
+    (obj['vehicles'] as Record<string, unknown> | undefined)?.['paint_colors'] ??
+    entries.find((e) => Array.isArray(e['paint_colors']))?.['paint_colors']) as unknown;
   const paint: Array<[number, number, number]> = [];
   if (Array.isArray(paintHex)) {
     for (const p of paintHex) {
@@ -70,8 +75,8 @@ export function parsePropsManifest(raw: Record<string, unknown>): PropsManifestI
       for (let k = 0; k < Math.max(1, Math.round(share * 20)); k++) paint.push([c.r, c.g, c.b]);
     }
   }
-  const placements = typeof raw['placements'] === 'string' ? (raw['placements'] as string) : null;
-  return { entries, paint, placements, raw };
+  const placements = typeof obj['placements'] === 'string' ? (obj['placements'] as string) : null;
+  return { entries, paint, placements, raw: obj };
 }
 
 let loader: GLTFLoader | null = null;
@@ -146,9 +151,9 @@ const CAR_IDS = /^car[_-]|^(sedan|suv|minivan|pickup|crossover)/i;
 
 /** Vehicle models for the traffic layer, or null when the prop library is absent. */
 export async function loadVehicleProps(fetchAsset: AssetFetcher): Promise<VehicleGeometries | null> {
-  let raw: Record<string, unknown>;
+  let raw: Record<string, unknown> | unknown[];
   try {
-    raw = JSON.parse(new TextDecoder().decode(await fetchAsset('props/props_manifest.json'))) as Record<string, unknown>;
+    raw = JSON.parse(new TextDecoder().decode(await fetchAsset('props/props_manifest.json'))) as Record<string, unknown> | unknown[];
   } catch {
     return null; // no props built yet: procedural low-poly vehicles
   }
@@ -166,12 +171,14 @@ export async function loadVehicleProps(fetchAsset: AssetFetcher): Promise<Vehicl
   await Promise.all(
     info.entries.map(async (e) => {
       const id = e.id.toLowerCase();
-      if (CAR_IDS.test(id)) {
+      const cls = String(e['vehicle_class'] ?? '');
+      if (e['kind'] && e['kind'] !== 'vehicle') return;
+      if (cls === 'car' || (!cls && CAR_IDS.test(id))) {
         const g = await load(e);
         if (g) out.cars!.push({ id: e.id, geometry: g, share: typeof e.share === 'number' && e.share > 0 ? e.share : 0.1 });
-      } else if (/school_?bus/.test(id)) {
+      } else if (cls === 'bus' || /school_?bus/.test(id)) {
         out.bus = (await load(e)) ?? undefined;
-      } else if (/shuttle/.test(id)) {
+      } else if (cls === 'shuttle' || /shuttle/.test(id)) {
         out.shuttle = (await load(e)) ?? undefined;
       }
     }),
@@ -338,9 +345,9 @@ export class StaticProps {
 
 /** Load trees / lamps from the manifest + placements; null if absent or not understood. */
 export async function loadStaticProps(fetchAsset: AssetFetcher, heightAt: (x: number, z: number) => number | null): Promise<StaticProps | null> {
-  let raw: Record<string, unknown>;
+  let raw: Record<string, unknown> | unknown[];
   try {
-    raw = JSON.parse(new TextDecoder().decode(await fetchAsset('props/props_manifest.json'))) as Record<string, unknown>;
+    raw = JSON.parse(new TextDecoder().decode(await fetchAsset('props/props_manifest.json'))) as Record<string, unknown> | unknown[];
   } catch {
     return null;
   }

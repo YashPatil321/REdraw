@@ -12,6 +12,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sceneToLatLon, originFromLatLon } from '../src/geo.ts';
@@ -86,10 +87,10 @@ const meta = JSON.parse(readFileSync(join(root, '../data/processed/region_meta.j
 const origin = originFromLatLon(meta.origin.lat, meta.origin.lon);
 
 /** Re-express one glb in a local ENU frame at its center; returns tileset child. */
-function convert(rel, name) {
+function convert(rel, name, bytes = null) {
   const src = join(assets, rel);
-  if (!existsSync(src)) return null;
-  const { json, bin } = readGlb(readFileSync(src));
+  if (!bytes && !existsSync(src)) return null;
+  const { json, bin } = readGlb(bytes ?? readFileSync(src));
   if (json.extensionsUsed?.includes('KHR_draco_mesh_compression')) {
     console.warn(`skip ${rel}: draco compressed (rebuild assets without draco for the dev tileset)`);
     return null;
@@ -157,13 +158,157 @@ function convert(rel, name) {
   };
 }
 
+/** Decode a 16-bit grayscale PNG (the contract heightmap). */
+function readPng16(buf) {
+  let off = 8;
+  let w = 0, h = 0, depth = 0, ctype = 0;
+  const idat = [];
+  while (off < buf.length) {
+    const len = buf.readUInt32BE(off);
+    const type = buf.toString('ascii', off + 4, off + 8);
+    const data = buf.subarray(off + 8, off + 8 + len);
+    if (type === 'IHDR') {
+      w = data.readUInt32BE(0);
+      h = data.readUInt32BE(4);
+      depth = data[8];
+      ctype = data[9];
+    } else if (type === 'IDAT') idat.push(data);
+    off += 12 + len;
+  }
+  if (depth !== 16 || ctype !== 0) throw new Error(`heightmap must be 16-bit gray (got depth ${depth}, type ${ctype})`);
+  const raw = inflateSync(Buffer.concat(idat));
+  const bpp = 2;
+  const stride = w * bpp;
+  const out = new Uint16Array(w * h);
+  let prev = Buffer.alloc(stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)];
+    const line = Buffer.from(raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1)));
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? line[i - bpp] : 0;
+      const b = prev[i];
+      const c = i >= bpp ? prev[i - bpp] : 0;
+      let v = line[i];
+      if (f === 1) v += a;
+      else if (f === 2) v += b;
+      else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      }
+      line[i] = v & 255;
+    }
+    for (let x = 0; x < w; x++) out[y * w + x] = line.readUInt16BE(x * 2);
+    prev = line;
+  }
+  return { w, h, data: out };
+}
+
+/** Terrain tile glb from the heightmap + the tile's embedded albedo (works when tiles are Draco compressed). */
+function terrainFromHeightmap(tile, tm, hm) {
+  const src = join(assets, tile.terrain);
+  if (!existsSync(src)) return null;
+  const { json, bin } = readGlb(readFileSync(src));
+  const img = json.images?.[0];
+  let jpeg = null;
+  if (img && img.bufferView !== undefined) {
+    const bv = json.bufferViews[img.bufferView];
+    jpeg = bin.subarray(bv.byteOffset ?? 0, (bv.byteOffset ?? 0) + bv.byteLength);
+  }
+  const b = tile.bounds;
+  const pxW = (tm.max_x - tm.min_x) / (tm.width_px - 1);
+  const pxH = (tm.max_z - tm.min_z) / (tm.height_px - 1);
+  const step = 1;
+  const c0 = Math.max(0, Math.floor((b.min_x - tm.min_x) / pxW));
+  const c1 = Math.min(tm.width_px - 1, Math.ceil((b.max_x - tm.min_x) / pxW));
+  const r0 = Math.max(0, Math.floor((b.min_z - tm.min_z) / pxH));
+  const r1 = Math.min(tm.height_px - 1, Math.ceil((b.max_z - tm.min_z) / pxH));
+  const cols = Math.floor((c1 - c0) / step) + 1;
+  const rows = Math.floor((r1 - r0) / step) + 1;
+  const pos = new Float32Array(cols * rows * 3);
+  const uv = new Float32Array(cols * rows * 2);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const pc = c0 + c * step;
+      const pr = r0 + r * step;
+      const x = Math.min(Math.max(tm.min_x + pc * pxW, b.min_x), b.max_x);
+      const z = Math.min(Math.max(tm.min_z + pr * pxH, b.min_z), b.max_z);
+      const y = tm.elev_offset + hm.data[pr * hm.w + pc] * tm.elev_scale;
+      const k = r * cols + c;
+      pos.set([x, y, z], k * 3);
+      uv.set([(x - b.min_x) / (b.max_x - b.min_x), (z - b.min_z) / (b.max_z - b.min_z)], k * 2);
+    }
+  }
+  const idx = new Uint32Array((cols - 1) * (rows - 1) * 6);
+  let n = 0;
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols - 1; c++) {
+      const a = r * cols + c, bb = a + 1, cc = a + cols, d = cc + 1;
+      idx.set([a, cc, bb, bb, cc, d], n);
+      n += 6;
+    }
+  }
+  const parts = [pos, uv, idx];
+  const pad = (x) => (x + 3) & ~3;
+  let total = 0;
+  const offs = parts.map((p) => {
+    const o = total;
+    total = pad(total + p.byteLength);
+    return o;
+  });
+  const jpegOff = total;
+  if (jpeg) total = pad(total + jpeg.length);
+  const out = new Uint8Array(total);
+  parts.forEach((p, i) => out.set(new Uint8Array(p.buffer, p.byteOffset, p.byteLength), offs[i]));
+  if (jpeg) out.set(jpeg, jpegOff);
+  const mn = [b.min_x, Infinity, b.min_z];
+  const mx = [b.max_x, -Infinity, b.max_z];
+  for (let i = 1; i < pos.length; i += 3) {
+    mn[1] = Math.min(mn[1], pos[i]);
+    mx[1] = Math.max(mx[1], pos[i]);
+  }
+  const g = {
+    asset: { version: '2.0' },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, indices: 2, material: 0 }] }],
+    materials: [{ pbrMetallicRoughness: jpeg ? { baseColorTexture: { index: 0 }, metallicFactor: 0 } : { baseColorFactor: [0.5, 0.5, 0.4, 1] } }],
+    buffers: [{ byteLength: total }],
+    bufferViews: [
+      { buffer: 0, byteOffset: offs[0], byteLength: pos.byteLength, target: 34962 },
+      { buffer: 0, byteOffset: offs[1], byteLength: uv.byteLength, target: 34962 },
+      { buffer: 0, byteOffset: offs[2], byteLength: idx.byteLength, target: 34963 },
+      ...(jpeg ? [{ buffer: 0, byteOffset: jpegOff, byteLength: jpeg.length }] : []),
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: pos.length / 3, type: 'VEC3', min: mn, max: mx },
+      { bufferView: 1, componentType: 5126, count: uv.length / 2, type: 'VEC2' },
+      { bufferView: 2, componentType: 5125, count: idx.length, type: 'SCALAR' },
+    ],
+    ...(jpeg ? { images: [{ bufferView: 3, mimeType: 'image/jpeg' }], textures: [{ source: 0, sampler: 0 }], samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 33071, wrapT: 33071 }] } : {}),
+  };
+  return writeGlb(g, out);
+}
+
 mkdirSync(outDir, { recursive: true });
 const manifest = JSON.parse(readFileSync(join(assets, 'manifest.json'), 'utf8'));
+let tm = null;
+let hm = null;
+try {
+  tm = JSON.parse(readFileSync(join(assets, manifest.terrain_meta ?? 'terrain/terrain_meta.json'), 'utf8'));
+  hm = readPng16(readFileSync(join(assets, tm.heightmap)));
+} catch (e) {
+  console.warn('no heightmap terrain:', e.message);
+}
 const children = [];
 for (const t of manifest.tiles) {
   for (const kind of ['terrain', 'buildings']) {
     if (!t[kind]) continue;
-    const c = convert(t[kind], `${kind}_${t.id}`);
+    // terrain from the heightmap (the contract's engine-neutral copy; tiles may be Draco)
+    const bytes = kind === 'terrain' && tm && hm ? terrainFromHeightmap(t, tm, hm) : null;
+    const c = convert(t[kind], `${kind}_${t.id}`, bytes);
     if (c) children.push(c);
   }
 }

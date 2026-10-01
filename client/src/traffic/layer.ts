@@ -111,6 +111,31 @@ function vehicleMaterial(): THREE.MeshLambertMaterial {
 let sharedCar: THREE.BufferGeometry | null = null;
 let sharedBus: THREE.BufferGeometry | null = null;
 let sharedBar: THREE.BufferGeometry | null = null;
+let sharedBlob: THREE.BufferGeometry | null = null;
+let blobTex: THREE.DataTexture | null = null;
+
+/** Soft elliptical falloff (alpha) for vehicle contact shadows. */
+function blobTexture(): THREE.DataTexture {
+  if (blobTex) return blobTex;
+  const N = 64;
+  const data = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const u = (x + 0.5) / N - 0.5;
+      const v = (y + 0.5) / N - 0.5;
+      const r = Math.min(1, Math.hypot(u * 2, v * 2));
+      const a = Math.pow(1 - r, 1.6);
+      const k = (y * N + x) * 4;
+      data[k] = data[k + 1] = data[k + 2] = 255;
+      data[k + 3] = Math.round(a * 255);
+    }
+  }
+  blobTex = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  blobTex.magFilter = THREE.LinearFilter;
+  blobTex.minFilter = THREE.LinearFilter;
+  blobTex.needsUpdate = true;
+  return blobTex;
+}
 
 /** Optional vehicle meshes from the props library (fallback: procedural boxes). */
 export interface VehicleGeometries {
@@ -165,6 +190,9 @@ export class TrafficLayer {
   private barLabels: CSS2DObject[] = [];
   private barEntrances: Array<{ k: number; x: number; y: number; y0: number; z: number; curb: number }> = [];
   private trails: THREE.LineSegments;
+  /** soft contact shadow under every vehicle (grounds cars on unlit photo tiles too) */
+  private blobs: THREE.InstancedMesh;
+  private fleetSize: Array<[number, number]> = [];
   private trailPos: Float32Array;
   private trailCol: Float32Array;
   private cursors: Int32Array;
@@ -229,6 +257,25 @@ export class TrafficLayer {
       this.group.add(mesh);
       this.fleets.push({ mesh, kind: m.kind, n: 0 });
     });
+
+    // per-model footprint (length along +x, width along z) for the contact shadows
+    this.fleetSize = this.fleets.map((f) => {
+      f.mesh.geometry.computeBoundingBox();
+      const b = f.mesh.geometry.boundingBox!;
+      return [Math.max(1, b.max.x - b.min.x), Math.max(1, b.max.z - b.min.z)];
+    });
+    sharedBlob ??= new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    this.blobs = new THREE.InstancedMesh(
+      sharedBlob,
+      new THREE.MeshBasicMaterial({ map: blobTexture(), color: 0x000000, transparent: true, opacity: 0.55, depthWrite: false, fog: false, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }),
+      Math.max(1, this.nTraj),
+    );
+    this.blobs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.blobs.frustumCulled = false;
+    this.blobs.count = 0;
+    this.blobs.renderOrder = 3;
+    this.blobs.name = 'vehicle-shadows';
+    this.group.add(this.blobs);
 
     const nv = this.nTraj * TRAIL_SEGMENTS * 2;
     this.trailPos = new Float32Array(nv * 3);
@@ -366,6 +413,8 @@ export class TrafficLayer {
     }
 
     for (const f of this.fleets) f.n = 0;
+    const bm = this.blobs.instanceMatrix.array as Float32Array;
+    let nBlob = 0;
     const paint = this.opts.vehicles?.paint;
     const usePaint = this.colorMode === 'paint' && !!paint?.length;
     let nt = 0;
@@ -399,6 +448,27 @@ export class TrafficLayer {
       m[o + 13] = out.y + 0.3;
       m[o + 14] = out.z;
       m[o + 15] = 1;
+      // contact shadow: same pose, flattened, a bit larger than the footprint
+      const sz = this.fleetSize[this.fleetOf[i]!]!;
+      const bo = nBlob++ * 16;
+      const sl = sz[0] * 1.25 * s;
+      const sw = sz[1] * 1.6 * s;
+      bm[bo] = dx * sl;
+      bm[bo + 1] = 0;
+      bm[bo + 2] = dz * sl;
+      bm[bo + 3] = 0;
+      bm[bo + 4] = 0;
+      bm[bo + 5] = 1;
+      bm[bo + 6] = 0;
+      bm[bo + 7] = 0;
+      bm[bo + 8] = -dz * sw;
+      bm[bo + 9] = 0;
+      bm[bo + 10] = dx * sw;
+      bm[bo + 11] = 0;
+      bm[bo + 12] = out.x;
+      bm[bo + 13] = out.y + 0.33;
+      bm[bo + 14] = out.z;
+      bm[bo + 15] = 1;
       const dur = pb.trajExitS[c]! - pb.trajEnterS[c]!;
       const kph = dur > 0 ? (this.net.length[pb.trajEdge[c]!]! / dur) * 3.6 : 0;
       if (fleet.kind !== 'car') {
@@ -422,6 +492,8 @@ export class TrafficLayer {
 
       if (this.ghost) nt = this.writeTrail(i, c, t, kph, nt);
     }
+    this.blobs.count = nBlob;
+    this.blobs.instanceMatrix.needsUpdate = true;
     for (const f of this.fleets) {
       f.mesh.count = f.n;
       f.mesh.instanceMatrix.needsUpdate = true;
@@ -516,6 +588,8 @@ export class TrafficLayer {
       (f.mesh.material as THREE.Material).dispose();
       f.mesh.dispose();
     }
+    (this.blobs.material as THREE.Material).dispose();
+    this.blobs.dispose();
     this.trails.geometry.dispose();
     (this.trails.material as THREE.Material).dispose();
     if (this.bars) {

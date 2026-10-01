@@ -280,6 +280,7 @@ export class SceneController {
     const meta = this.meta!;
     try {
       const manifest = await api.getManifest(meta);
+      void this.loadCredits(manifest.terrain_meta);
       store.set({ worldStatus: 'Loading world…' });
       await this.world.load(manifest, (rel) => api.getAsset(meta, rel), (msg) => store.set({ worldStatus: msg }));
       this.world.applyQuality(QUALITY[store.get().quality]);
@@ -296,6 +297,23 @@ export class SceneController {
     void this.loadProps();
     // re-place school pins on the terrain if their y is missing
     this.openingShot();
+  }
+
+  /** Attribution strings for the open-data base map, from the asset sources (never hardcoded). */
+  private async loadCredits(terrainMetaRel: string | undefined): Promise<void> {
+    const parts = ['© OpenStreetMap contributors (ODbL)'];
+    if (terrainMetaRel) {
+      try {
+        const tm = JSON.parse(new TextDecoder().decode(await api.getAsset(this.meta!, terrainMetaRel))) as { sources?: Array<{ attribution?: string; name?: string }> };
+        for (const src of tm.sources ?? []) {
+          const a = src.attribution ?? src.name;
+          if (a && !parts.includes(a)) parts.push(a);
+        }
+      } catch {
+        /* optional */
+      }
+    }
+    store.set({ openCredits: parts.join(' · ') });
   }
 
   private openingShot(): void {
@@ -477,7 +495,11 @@ export class SceneController {
     const dist = this.viewer.distance;
     if (this.sky) {
       this.sky.update(this.clockT, this.viewer.renderer);
-      this.sky.followTarget(this.viewer.controls.target, dist);
+      this.sky.followTarget(this.viewer.walking ? this.viewer.camera.position : this.viewer.controls.target, this.viewer.walking ? 120 : dist);
+      // keep the sky box centred on the camera and inside the far plane (walk mode uses a short far)
+      const cam = this.viewer.camera;
+      this.sky.sky.position.copy(cam.position);
+      this.sky.sky.scale.setScalar(cam.far * 0.55);
       const dark = Math.max(this.sky.darkness, this.sky.dim);
       vehicleLightUniforms.uHead.value = 1.2 + 4.5 * dark;
       vehicleLightUniforms.uTail.value = 0.9 + 3.2 * dark;
@@ -497,6 +519,8 @@ export class SceneController {
     const h = this.viewer.canvas.clientHeight;
     for (const l of [this.baseline, this.plan]) {
       if (!l || !this.trafficVisible(s)) continue;
+      // queue labels are HTML (not occluded): hide them at street level and in split view
+      l.setLabelsVisible(!this.viewer.walking && !this.viewer.split.enabled);
       l.overlay.setViewport(this.viewer.camera, h);
       l.update(this.clockT, scale);
     }

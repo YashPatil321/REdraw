@@ -317,7 +317,7 @@ def setup_render(width: int, height: int, samples: int = 48) -> bpy.types.Scene:
         sc.view_settings.look = "AgX - Medium High Contrast"
     except TypeError:
         sc.view_settings.view_transform = "Filmic"
-    sc.view_settings.exposure = 0.0
+    sc.view_settings.exposure = -0.45
     return sc
 
 
