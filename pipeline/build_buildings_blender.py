@@ -36,7 +36,7 @@ import numpy as np
 import pandas as pd
 import shapely
 import shapely.ops
-from shapely.geometry import LineString, Polygon
+from shapely.geometry import Polygon
 from shapely.geometry.polygon import orient
 
 REPO = Path(__file__).resolve().parents[1]
@@ -483,7 +483,7 @@ def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
             miss[col] = None
         # roof models for missing buildings come from the same lidar table if present (spatial), else
         # from height columns on the geojson itself
-        for i, row in miss.iterrows():
+        for _i, row in miss.iterrows():
             props = {k: row.get(k) for k in miss.columns if k != "geometry"}
             m = lidar_model(props)
             if m:
@@ -599,8 +599,8 @@ PREVIEW_VIEWS = {"4s_ranch": (1375.0, -775.0), "del_sur": (-1625.0, 225.0)}
 def preview_data(name: str, cx: float, cz: float, radius: float = 320.0, step: float = 1.0) -> Path:
     """DEM heights + NAIP colors on a `step` m grid and road centerlines around (cx, cz) -> npz + json."""
     import rasterio
-    from rasterio.warp import Resampling, reproject
     from affine import Affine
+    from rasterio.warp import Resampling, reproject
 
     o = scene_origin()
     n = int(round(2 * radius / step)) + 1

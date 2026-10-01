@@ -31,11 +31,11 @@ if str(REPO / "blender") not in sys.path:
 import bpy  # noqa: E402
 import numpy as np  # noqa: E402
 import shapely  # noqa: E402
+from rdlib import bl  # noqa: E402
 from shapely.geometry import LineString, Point, box  # noqa: E402
 
 from blender.buildings import build as hd  # noqa: E402
 from blender.buildings import model  # noqa: E402
-from rdlib import bl  # noqa: E402
 
 MAT_DIR = REPO / "client" / "public" / "assets" / "materials"
 PROPS_DIR = REPO / "client" / "public" / "assets" / "props"
@@ -343,7 +343,7 @@ def place_props(T: Terrain, center: tuple[float, float], radius: float, building
     pm = {p["id"]: p for p in json.loads((PROPS_DIR / "props_manifest.json").read_text())}
     rng = np.random.default_rng(5)
     n = 0
-    for x, y, z, ry, s, pi in rec:
+    for x, _y, z, ry, s, pi in rec:
         pr = props[int(pi)]
         f = PROPS_DIR / pr["file"]
         if not f.exists():
@@ -435,8 +435,9 @@ def setup_scene(view: str, samples: int, res: tuple[int, int]) -> tuple[Path, di
         m = (p0 + p1) / 2
         c = m + n * 11 + np.array([-n[1], n[0]]) * 2.5
         log(f"closeup cam {c} target {m} floor {hs[0].floor}")
-        gz = hs[0].floor
-        bl.add_camera((float(c[0]), float(c[1]), gz + 1.7), (float(m[0]), float(m[1]), gz + 2.4), lens=28.0)
+        gz = float(T.sample(c[0], -c[1]))
+        log(f"closeup ground {gz}")
+        bl.add_camera((float(c[0]), float(c[1]), gz + 1.7), (float(m[0]), float(m[1]), hs[0].floor + 2.0), lens=28.0)
     else:
         gz = float(T.sample(cx, cz))
         cam = (cx - 95.0, -(cz + 70.0), gz + 85.0)

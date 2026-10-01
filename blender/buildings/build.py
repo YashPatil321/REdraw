@@ -256,7 +256,7 @@ def draco_tile(tile: str, cli: list[str]) -> bool:
     if st.get("draco"):
         return True
     ok = True
-    for lod, info in st["lods"].items():
+    for info in st["lods"].values():
         if not info.get("file"):
             continue
         src = OUT_DIR / info["file"]
