@@ -135,3 +135,15 @@ Metric ids (fixed): `avg_commute_min`, `avg_dropoff_delay_min`, `max_spillback_m
 `total_vht`, `late_kids`, `cost_upfront_usd`, `cost_per_year_usd`,
 `resident_approval_pct` (added by API from residents), `winners`, `losers`.
 A `MetricBlock` (baseline summary) is `{"metrics": [{id,label,unit,better,value:{median,p10,p90}}], "per_school": [...], "mode_share": [...]}`.
+
+## Additions and clarifications (implemented)
+
+- `resident_approval_pct` metric: `baseline` and `delta` are `{median: null, p10: null, p90: null}` (the status quo has no approval number) and the metric carries a `note`. Clients must render null blocks as "n/a".
+- Plans also return `job_id`, `is_mine`, `my_vote`. `GET /plans` returns `{plans, total}`, accepts `limit` and `offset`, and returns 400 for an unknown `sort`.
+- `PUT /plans/{id}`: author only, body like POST, resets status to draft.
+- `GET /plans/{id}/residents`: 404 until the run is done. Response adds `text_status` (`complete|pending|partial|unavailable`) and `llm_available`. Reaction `deltas` add `kid_trip_min`, `home_vc_delta`, `mode_baseline`, `mode_plan`.
+- `GET /residents/{id}`, `GET /residents/{id}/chat`, `GET /health`.
+- `POST /residents/{id}/chat` body `{message, plan_id?}` -> `{persona_id, reply|null, messages, llm_available, error}`.
+- `POST /plans/{id}/townhall` body `{persona_id?, message?, regenerate?}` -> `{plan_id, speakers: [{persona_id, first_name, side, comment, ...}], followup: {persona_id, message, text}|null, llm_available}`.
+- `POST /tools/custom/preview` body `{description}` -> `{ok, label: "LLM estimated", description, estimate, tool}`; 503 when the LLM is down, 422 when its output fails validation.
+- 503 while the world/sim is not loaded or the baseline is warming up.

@@ -6,6 +6,8 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { PostFX } from './postfx';
+import { QUALITY, type Quality, type QualitySettings } from './quality';
 
 export interface FlyToOptions {
   /** distance from target (m); default keeps the current distance */
@@ -58,19 +60,26 @@ export class Viewer {
   private last = 0;
   private fpsAcc = { frames: 0, time: 0 };
   private flight: {
-    p0: THREE.Vector3;
-    p1: THREE.Vector3;
     t0: THREE.Vector3;
     t1: THREE.Vector3;
+    /** spherical offsets camera - target: [log radius, azimuth, polar] */
+    s0: [number, number, number];
+    s1: [number, number, number];
     start: number;
     duration: number;
     resolve: () => void;
   } | null = null;
   private resizeObserver: ResizeObserver;
+  private post: PostFX | null = null;
+  quality: Quality = 'medium';
+  qs: QualitySettings = QUALITY.medium;
+  /** recent frame-rate samples (for automatic quality downgrade) */
+  readonly fpsHistory: number[] = [];
 
   constructor(private container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', stencil: false });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.6;
@@ -112,9 +121,40 @@ export class Viewer {
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
     this.renderer.setSize(w, h);
+    this.post?.setSize(w, h, this.renderer.getPixelRatio());
     this.labelRenderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Apply a quality preset: pixel ratio, shadows and the post-processing chain. */
+  setQuality(q: Quality): void {
+    this.quality = q;
+    this.qs = QUALITY[q];
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.qs.pixelRatioCap));
+    this.renderer.shadowMap.enabled = this.qs.shadows;
+    this.renderer.shadowMap.needsUpdate = true;
+    this.post?.dispose();
+    this.post = null;
+    if (this.qs.bloom || this.qs.ao || this.qs.grade) {
+      try {
+        this.post = new PostFX(this.renderer, this.scene, this.camera, this.qs);
+      } catch (e) {
+        console.warn('post-processing unavailable', e);
+        this.post = null;
+      }
+    }
+    this.resize();
+    // materials must recompile for shadow map changes
+    this.scene.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(m)) m.forEach((x) => (x.needsUpdate = true));
+      else if (m) m.needsUpdate = true;
+    });
+  }
+
+  setGhostLook(on: boolean): void {
+    this.post?.setGhost(on);
   }
 
   onFrame(fn: FrameFn): () => void {
@@ -144,8 +184,17 @@ export class Viewer {
       const f = this.flight;
       const u = Math.min(1, (now - f.start) / f.duration);
       const e = easeInOutCubic(u);
-      this.camera.position.lerpVectors(f.p0, f.p1, e);
       this.controls.target.lerpVectors(f.t0, f.t1, e);
+      // interpolate the camera offset in spherical coordinates (log radius):
+      // a smooth arcing descent instead of a straight line
+      const r = Math.exp(f.s0[0] + (f.s1[0] - f.s0[0]) * e);
+      const az = f.s0[1] + (f.s1[1] - f.s0[1]) * e;
+      const pol = f.s0[2] + (f.s1[2] - f.s0[2]) * easeInOutCubic(Math.min(1, u * 1.15));
+      this.camera.position.set(
+        this.controls.target.x + r * Math.sin(pol) * Math.sin(az),
+        this.controls.target.y + r * Math.cos(pol),
+        this.controls.target.z + r * Math.sin(pol) * Math.cos(az),
+      );
       if (u >= 1) {
         this.flight = null;
         f.resolve();
@@ -190,6 +239,8 @@ export class Viewer {
       r.render(this.scene, this.camera);
       r.setScissorTest(false);
       this.split.hooks.after();
+    } else if (this.post) {
+      this.post.render(dt);
     } else {
       r.render(this.scene, this.camera);
     }
@@ -203,6 +254,8 @@ export class Viewer {
     this.fpsAcc.time += dt;
     if (this.fpsAcc.time >= 0.5) {
       this.stats.fps = this.fpsAcc.frames / this.fpsAcc.time;
+      this.fpsHistory.push(this.stats.fps);
+      if (this.fpsHistory.length > 20) this.fpsHistory.shift();
       this.fpsAcc.frames = 0;
       this.fpsAcc.time = 0;
     }
@@ -239,12 +292,22 @@ export class Viewer {
         t1.z - lookZ * dist * Math.cos(pitch),
       );
     }
+    const sph = (off: THREE.Vector3): [number, number, number] => {
+      const len = Math.max(off.length(), 1e-3);
+      return [Math.log(len), Math.atan2(off.x, off.z), Math.acos(THREE.MathUtils.clamp(off.y / len, -1, 1))];
+    };
+    const t0 = this.controls.target.clone();
+    const s0 = sph(this.camera.position.clone().sub(t0));
+    const s1 = sph(p1.clone().sub(t1));
+    // shortest way around
+    while (s1[1] - s0[1] > Math.PI) s1[1] -= 2 * Math.PI;
+    while (s1[1] - s0[1] < -Math.PI) s1[1] += 2 * Math.PI;
     return new Promise((resolve) => {
       this.flight = {
-        p0: this.camera.position.clone(),
-        p1,
-        t0: this.controls.target.clone(),
+        t0,
         t1,
+        s0,
+        s1,
         start: performance.now(),
         duration: (opts.duration ?? 1.6) * 1000,
         resolve,
@@ -260,6 +323,7 @@ export class Viewer {
 
   dispose(): void {
     cancelAnimationFrame(this.raf);
+    this.post?.dispose();
     this.resizeObserver.disconnect();
     this.controls.dispose();
     this.scene.traverse((o) => {

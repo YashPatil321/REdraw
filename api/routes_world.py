@@ -54,7 +54,10 @@ def world_meta(state: StateDep) -> dict[str, Any]:
             "timezone": reg.get("timezone"),
             "extent_scene": rm.get("extent_scene"),
         }
-        region_block.update(summary.get("region") or {})
+        region_block.update({k: v for k, v in (summary.get("region") or {}).items() if v is not None})
+        if isinstance(region_block.get("origin"), dict):  # docs/api.md: origin is {lat, lon}
+            region_block["origin"] = {k: region_block["origin"][k] for k in ("lat", "lon")
+                                      if k in region_block["origin"]}
         schools = clean_json(sim.schools())
         hero = summary.get("hero")
         if not hero and schools:

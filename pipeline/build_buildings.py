@@ -7,10 +7,11 @@ synthetic footprints share the code.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import re
-import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -18,14 +19,14 @@ import geopandas as gpd
 import mapbox_earcut as earcut
 import numpy as np
 import pandas as pd
-from shapely.geometry import MultiPolygon, Polygon
+from shapely.geometry import MultiPoint, MultiPolygon, Point, Polygon
 from shapely.geometry.polygon import orient
 
 from pipeline.build_terrain import Terrain
 from pipeline.common import TileGrid, log
 from pipeline.config import assumption
 from pipeline.geo import scene_origin
-from pipeline.glb import MeshData, write_glb
+from pipeline.glb import MeshData, load_glb_meshes, write_glb
 
 HERO_DIR = Path(__file__).resolve().parent / "hero_overrides"
 WALL_SINK_M = 0.5  # walls start this far below the lowest footprint corner so slopes never show gaps
@@ -432,46 +433,182 @@ def write_buildings_geojson(bdf: gpd.GeoDataFrame, path: Path) -> None:
     path.write_text(json.dumps({"type": "FeatureCollection", "features": feats}), encoding="utf-8")
 
 
-def hero_overrides() -> list[dict[str, Any]]:
-    """Hero assets (spec 5.2.6): hero_overrides/<name>.json -> {"glb": "<file>.glb", "replaces_building_ids": [..] | "school_id": ".."}."""
+HERO_JSON = "hero_overrides.json"
+HERO_BLEND_M = 40.0  # terrain blend ring outside a hero footprint when flattening
+
+
+@dataclass
+class Hero:
+    """One hero model placed in the scene (spec 5.2.6, pipeline/hero_overrides/hero_overrides.json)."""
+
+    key: str
+    name: str
+    school_id: str | None
+    x: float
+    z: float
+    rotation_deg: float
+    radius: float
+    glb: Path
+    replaces: list[int]
+    kind: str  # buildings.geojson type for a new entry: school or commercial
+    building_id: int = 0
+    base_y: float = 0.0
+    meshes: list[MeshData] = field(default_factory=list)
+
+
+def load_heroes(hero_dir: Path = HERO_DIR) -> list[Hero]:
+    """Parse hero_overrides.json (a list, or {"heroes": [...]}). Missing json -> []."""
+    from pipeline.geo import latlon_to_scene
+
+    path = hero_dir / HERO_JSON
+    if not path.exists():
+        return []
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"bad {path}: {e}") from e
+    entries = cfg.get("heroes", []) if isinstance(cfg, dict) else cfg
     out = []
-    if not HERO_DIR.exists():
-        return out
-    for js in sorted(HERO_DIR.glob("*.json")):
-        try:
-            cfg = json.loads(js.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as e:
-            raise ValueError(f"bad hero override {js}: {e}") from e
-        glb = HERO_DIR / str(cfg.get("glb", js.stem + ".glb"))
-        if glb.exists():
-            cfg["_glb_path"] = glb
-            cfg["name"] = js.stem
-            out.append(cfg)
+    for e in entries:
+        key = str(e.get("id") or e.get("school_id") or Path(str(e.get("glb", "hero"))).stem)
+        glb = hero_dir / str(e.get("glb", f"{key}.glb"))
+        if not glb.exists():
+            log(f"WARNING hero override {key}: {glb} missing; skipped")
+            continue
+        x, z = latlon_to_scene(float(e["lat"]), float(e["lon"]))
+        rep = e.get("replaces")
+        replaces = [int(i) for i in rep] if isinstance(rep, list) and all(isinstance(i, (int, float)) for i in rep) else []
+        sid = e.get("school_id")
+        out.append(
+            Hero(
+                key=key,
+                name=str(e.get("name") or key.replace("_", " ").title()),
+                school_id=str(sid) if sid else None,
+                x=x,
+                z=z,
+                rotation_deg=float(e.get("rotation_deg", 0.0)),
+                radius=float(e.get("footprint_radius_m", 100.0)),
+                glb=glb,
+                replaces=replaces,
+                kind=str(e.get("type") or ("school" if sid else "commercial")),
+            )
+        )
     return out
 
 
-def build_building_tiles(bdf: gpd.GeoDataFrame, grid: TileGrid, out_dir: Path) -> tuple[dict[str, dict[str, Any]], int, list[dict[str, Any]]]:
+def flatten_terrain_for_heroes(terrain: Terrain, heroes: list[Hero]) -> None:
+    """Flatten the DEM to the center elevation inside each hero footprint (blend ring outside)."""
+    if not heroes:
+        return
+    rows, cols = terrain.elev.shape
+    xs = terrain.extent.min_x + np.arange(cols) * terrain.spacing
+    zs = terrain.extent.min_z + np.arange(rows) * terrain.spacing
+    gx, gz = np.meshgrid(xs, zs)
+    for h in heroes:
+        y0 = float(terrain.sample(h.x, h.z))
+        d = np.hypot(gx - h.x, gz - h.z)
+        w = np.clip(1.0 - (d - h.radius) / HERO_BLEND_M, 0.0, 1.0)
+        terrain.elev[:] = (terrain.elev * (1 - w) + y0 * w).astype(np.float32)
+
+
+def hero_transform(meshes: list[MeshData], x: float, y: float, z: float, rotation_deg: float) -> list[MeshData]:
+    """Place local-meter meshes (origin = campus center, +x east, +y up, +z south) in the scene.
+
+    rotation_deg is a right-handed rotation about +y (three.js `rotation.y` convention):
+    seen from above, positive angles turn the model counter-clockwise (east toward north).
+    """
+    t = math.radians(rotation_deg)
+    c, s = math.cos(t), math.sin(t)
+    R = np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+    out = []
+    for m in meshes:
+        pos = np.asarray(m.positions, dtype=np.float64) @ R.T + np.array([x, y, z])
+        nrm = None if m.normals is None else np.asarray(m.normals, dtype=np.float64) @ R.T
+        out.append(dataclasses.replace(m, positions=pos.astype(np.float32), normals=None if nrm is None else nrm.astype(np.float32)))
+    return out
+
+
+def apply_heroes(bdf: gpd.GeoDataFrame, heroes: list[Hero], terrain: Terrain, grid: TileGrid) -> gpd.GeoDataFrame:
+    """Drop auto footprints under each hero, give the hero a building id and geojson entry.
+
+    School heroes reuse the id of that school's largest footprint (kept in the geojson with the
+    hero outline); others get a new id. Hero meshes are loaded and placed (h.meshes).
+    """
+    if not heroes:
+        return bdf
+    o = scene_origin()
+    bdf = bdf.copy()
+    next_id = int(bdf["id"].max()) + 1 if len(bdf) else 1
+    for h in heroes:
+        h.base_y = float(terrain.sample(h.x, h.z))
+        local = load_glb_meshes(h.glb)
+        h.meshes = hero_transform(local, h.x, h.base_y, h.z, h.rotation_deg)
+        allp = np.concatenate([m.positions for m in h.meshes]) if h.meshes else np.array([[h.x, h.base_y, h.z]])
+        hull = MultiPoint([(float(p[0]), float(p[2])) for p in allp[:: max(1, len(allp) // 4000)]]).convex_hull
+        if not isinstance(hull, Polygon) or hull.area < 1.0:
+            hull = Point(h.x, h.z).buffer(h.radius, 24)
+        hull_utm = Polygon([(px + o.easting, o.northing - pz) for px, pz in np.asarray(hull.exterior.coords)])
+        near = np.hypot(bdf["centroid_x"] - h.x, bdf["centroid_z"] - h.z) <= h.radius
+        drop = near | bdf["id"].isin(h.replaces)
+        keep_id = None
+        if h.school_id:
+            sch = bdf[(bdf["school_id"] == h.school_id)].sort_values("area_m2", ascending=False)
+            if len(sch):
+                keep_id = int(sch["id"].iloc[0])
+        r, c = grid.tile_of(np.array([h.x]), np.array([h.z]))
+        row = {
+            "type": h.kind if h.kind in BUILDING_TYPES else "other",
+            "height_m": float(allp[:, 1].max() - h.base_y),
+            "base_elev_m": h.base_y,
+            "levels": None,
+            "address": None,
+            "name": h.name,
+            "area_m2": float(hull.area),
+            "centroid_x": h.x,
+            "centroid_z": h.z,
+            "block_group": "",
+            "school_id": h.school_id,
+            "tile": grid.tile_id(int(r[0]), int(c[0])),
+            "parcel_apn": None,
+            "parcel_land_use": None,
+            "parcel_year_built": None,
+            "height_rule": "hero",
+            "geometry": hull_utm,
+        }
+        if keep_id is not None:
+            idx = bdf.index[bdf["id"] == keep_id][0]
+            bg = bdf.at[idx, "block_group"]
+            for k, v in row.items():
+                bdf.at[idx, k] = v
+            bdf.at[idx, "block_group"] = bg
+            drop &= bdf["id"] != keep_id
+            h.building_id = keep_id
+        else:
+            h.building_id = next_id
+            next_id += 1
+            new = gpd.GeoDataFrame([{"id": h.building_id, **row}], geometry="geometry", crs=bdf.crs)
+            bdf = gpd.GeoDataFrame(pd.concat([bdf, new], ignore_index=True), geometry="geometry", crs=bdf.crs)
+            drop = np.concatenate([np.asarray(drop), [False]])
+        bdf = bdf[~np.asarray(drop)].reset_index(drop=True)
+        log(f"hero {h.key}: {int(np.asarray(drop).sum())} footprints replaced, building_id {h.building_id}, {sum(m.triangle_count for m in h.meshes):,} triangles")
+    bdf["id"] = bdf["id"].astype(np.int64)
+    return gpd.GeoDataFrame(bdf, geometry="geometry", crs="EPSG:32611")
+
+
+def build_building_tiles(
+    bdf: gpd.GeoDataFrame, grid: TileGrid, out_dir: Path, heroes: list[Hero] | None = None
+) -> tuple[dict[str, dict[str, Any]], int, list[dict[str, Any]]]:
     """Merge buildings into one mesh per tile with `_BUILDING_ID` + `COLOR_0` (spec 5.2.4).
 
-    Returns (tile id -> {path, min_y, max_y, count}, triangles, hero list).
+    Hero models become extra primitives in their tile (own materials/colors, `_BUILDING_ID`).
+    Returns (tile id -> {path, min_y, max_y, count}, triangles, hero list for the manifest).
     """
     roof_h = float(assumption("buildings.hip_roof_height_m"))
-    heroes = hero_overrides()
-    replaced: set[int] = set()
-    hero_out = []
-    for h in heroes:
-        ids = set(int(i) for i in h.get("replaces_building_ids", []))
-        if h.get("school_id"):
-            ids |= set(bdf.loc[bdf["school_id"] == h["school_id"], "id"].astype(int))
-        replaced |= ids
-        dst = out_dir / f"hero_{h['name']}.glb"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(h["_glb_path"], dst)
-        hero_out.append({"name": h["name"], "glb": f"buildings/{dst.name}", "replaces_building_ids": sorted(ids)})
-
+    heroes = heroes or []
+    hero_ids = {h.building_id for h in heroes}
     acc: dict[str, dict[str, list[np.ndarray]]] = {}
     for row in bdf.itertuples(index=False):
-        if int(row.id) in replaced:
+        if int(row.id) in hero_ids:
             continue
         poly = utm_poly_to_scene(row.geometry)
         if poly.area < 1.0:
@@ -488,32 +625,49 @@ def build_building_tiles(bdf: gpd.GeoDataFrame, grid: TileGrid, out_dir: Path) -
         a["nrm"].append(nrm)
         a["col"].append(col)
         a["bid"].append(np.full(len(pos), float(row.id)))
+    hero_by_tile: dict[str, list[MeshData]] = {}
+    hero_out = []
+    for h in heroes:
+        r, c = grid.tile_of(np.array([h.x]), np.array([h.z]))
+        tid = grid.tile_id(int(r[0]), int(c[0]))
+        for k, m in enumerate(h.meshes):
+            m2 = dataclasses.replace(m, name=f"hero_{h.key}_{k}", custom={"_BUILDING_ID": np.full(len(m.positions), float(h.building_id), dtype=np.float32)})
+            hero_by_tile.setdefault(tid, []).append(m2)
+        hero_out.append({"id": h.key, "name": h.name, "building_id": h.building_id, "tile": tid, "school_id": h.school_id, "triangles": sum(m.triangle_count for m in h.meshes)})
     tiles: dict[str, dict[str, Any]] = {}
     total = 0
     for r, c in grid.iter():
         tid = grid.tile_id(r, c)
         path = out_dir / f"buildings_{tid}.glb"
         a = acc.get(tid)
-        if a is None:
-            write_glb(path, [])
-            tiles[tid] = {"path": f"buildings/{path.name}", "min_y": None, "max_y": None, "count": 0}
-            continue
-        pos = np.concatenate(a["pos"]).astype(np.float32)
-        col = np.concatenate(a["col"]).astype(np.uint8)
-        col = np.column_stack([col, np.full(len(col), 255, dtype=np.uint8)])
-        mesh = MeshData(
-            name=f"buildings_{tid}",
-            positions=pos,
-            normals=np.concatenate(a["nrm"]).astype(np.float32),
-            indices=np.concatenate(a["tri"]).reshape(-1).astype(np.uint32),
-            colors=col,
-            custom={"_BUILDING_ID": np.concatenate(a["bid"]).astype(np.float32)},
-            roughness=0.9,
-        )
-        tris = write_glb(path, [mesh])
+        meshes: list[MeshData] = []
+        count = 0
+        if a is not None:
+            col = np.concatenate(a["col"]).astype(np.uint8)
+            col = np.column_stack([col, np.full(len(col), 255, dtype=np.uint8)])
+            meshes.append(
+                MeshData(
+                    name=f"buildings_{tid}",
+                    positions=np.concatenate(a["pos"]).astype(np.float32),
+                    normals=np.concatenate(a["nrm"]).astype(np.float32),
+                    indices=np.concatenate(a["tri"]).reshape(-1).astype(np.uint32),
+                    colors=col,
+                    custom={"_BUILDING_ID": np.concatenate(a["bid"]).astype(np.float32)},
+                    roughness=0.9,
+                )
+            )
+            count = len(a["bid"])
+        meshes += hero_by_tile.get(tid, [])
+        tris = write_glb(path, meshes)
         total += tris
-        tiles[tid] = {"path": f"buildings/{path.name}", "min_y": float(pos[:, 1].min()), "max_y": float(pos[:, 1].max()), "count": int(len(a["bid"]))}
-    log(f"buildings: {len(bdf):,} footprints, {total:,} triangles in {sum(1 for t in tiles.values() if t['count'])} tiles")
+        ys = [m.positions[:, 1] for m in meshes if len(m.positions)]
+        tiles[tid] = {
+            "path": f"buildings/{path.name}",
+            "min_y": float(min(y.min() for y in ys)) if ys else None,
+            "max_y": float(max(y.max() for y in ys)) if ys else None,
+            "count": int(count + len(hero_by_tile.get(tid, []))),
+        }
+    log(f"buildings: {len(bdf):,} footprints, {total:,} triangles in {sum(1 for t in tiles.values() if t['count'])} tiles, {len(heroes)} heroes")
     return tiles, total, hero_out
 
 

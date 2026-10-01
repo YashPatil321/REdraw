@@ -403,7 +403,8 @@ def _load(world: WorldState, trips: Trips, TT: np.ndarray, tt0: np.ndarray, expe
     target_exp = np.full(n, np.nan)
     if S:
         reached = np.isfinite(trips.target_arr) & ok & (tw < n_wp)
-        target_exp[reached] = wp_arrive[rows[reached], tw_c[reached]] - depart[reached]
+        # experienced time until the car reaches the curb (includes the queue wait: parents learn it)
+        target_exp[reached] = (wp_arrive[rows[reached], tw_c[reached]] + wp_wait[rows[reached], tw_c[reached]]) - depart[reached]
     tot_tt = float(np.nansum(trips.weight[ok] * (arrive[ok] - depart[ok])))
     return {
         "counts": counts, "depart": depart, "arrive": arrive, "ok": ok, "wp_arrive": wp_arrive, "wp_leave": wp_leave,

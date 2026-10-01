@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
-from pipeline.build_buildings import build_building_tiles, prepare_buildings, write_buildings_geojson
+from pipeline.build_buildings import apply_heroes, build_building_tiles, flatten_terrain_for_heroes, load_heroes, prepare_buildings, write_buildings_geojson
 from pipeline.build_population import (
     WorkModel,
     fallback_dist,
@@ -169,8 +169,10 @@ def finish(
     road_tris = build_road_ribbons(net.edges, terrain, assets / "roads" / "roads.glb")
 
     bdf = prepare_buildings(footprints, terrain, grid, school_areas, block_groups)
+    hero_list = load_heroes()
+    bdf = apply_heroes(bdf, hero_list, terrain, grid)
     write_buildings_geojson(bdf, processed / "buildings.geojson")
-    btiles, b_tris, heroes = build_building_tiles(bdf, grid, assets / "buildings")
+    btiles, b_tris, heroes = build_building_tiles(bdf, grid, assets / "buildings", hero_list)
 
     schools = resolve_schools(schools_cfg, net.nodes, net.edges, bdf, osm_schools)
     if dists is None:
@@ -277,6 +279,7 @@ def run_synthetic(skip_draco: bool = False) -> dict[str, Any]:
     log("SYNTHETIC MODE: generating a fake stand-in world (not real geography)")
     world = make_world(region_extent(), grid.extent, load_yaml("schools.yaml")["schools"])
     log(f"synthetic world generated in {time.time() - t0:.1f}s")
+    flatten_terrain_for_heroes(world.terrain, load_heroes())
     tiles, tris, _ = write_terrain_outputs(world.terrain, grid, world.albedo, dirs["processed"], dirs["assets"], texture_px=1024)
     net = build_network(world.graph, world.terrain, region())
     sources = [

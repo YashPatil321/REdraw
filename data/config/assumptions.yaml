@@ -214,6 +214,7 @@ residents:
     property: {value: 1.5, unit: ratio, range: [1.0, 2.0], source: "dislikes changes on own street", verified: false}
   safety_tool_bonus: {value: 0.4, unit: utils, range: [0.1, 0.8], source: "bonus per safe_walk/bike tool for safety/community values", verified: false}
   households_sharing_cost: {value: 14500, unit: households, range: [10000, 20000], source: "plan cost per year split across households for cost exposure", verified: false}
+  street_change_vc_delta: {value: 0.1, unit: ratio, range: [0.05, 0.2], source: "rise in max v/c on edges nearest home that counts as a noticeable change on the resident's street; guess", verified: false}
 
 # --- Added by the pipeline (append only). Used by pipeline/build_*.py and pipeline/synthetic.py. ---
 pipeline:

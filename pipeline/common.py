@@ -178,3 +178,50 @@ def tile_grid() -> TileGrid:
 
 def log(msg: str) -> None:
     print(f"[redraw] {msg}", flush=True)
+
+
+def load_env() -> None:
+    """Load .env (CENSUS_API_KEY etc.) if python-dotenv and the file are present."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover
+        return
+    from pipeline.config import REPO_ROOT
+
+    load_dotenv(REPO_ROOT / ".env", override=False)
+
+
+def download(url: str, dest: Path, source: str, how: str, timeout: float = 600.0) -> Path:
+    """Stream url -> dest (atomic). Skips when dest exists. Raises DataSourceUnavailable on failure."""
+    import httpx
+
+    if dest.exists() and dest.stat().st_size > 0:
+        log(f"cached: {dest.name}")
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    log(f"downloading {url}")
+    try:
+        with httpx.stream("GET", url, timeout=timeout, follow_redirects=True) as r:
+            r.raise_for_status()
+            with open(tmp, "wb") as f:
+                for chunk in r.iter_bytes(1 << 20):
+                    f.write(chunk)
+    except Exception as e:  # noqa: BLE001 - any network/HTTP failure means the source is unavailable
+        tmp.unlink(missing_ok=True)
+        raise DataSourceUnavailable(source, url, dest, how, e) from e
+    tmp.replace(dest)
+    return dest
+
+
+def bbox_lonlat_of_extent(ext: Extent, margin_deg: float = 0.002) -> tuple[float, float, float, float]:
+    """(west, south, east, north) WGS84 box covering a scene extent."""
+    from pipeline.geo import scene_to_latlon
+
+    lats, lons = [], []
+    for x in (ext.min_x, ext.max_x):
+        for z in (ext.min_z, ext.max_z):
+            lat, lon = scene_to_latlon(x, z)
+            lats.append(lat)
+            lons.append(lon)
+    return min(lons) - margin_deg, min(lats) - margin_deg, max(lons) + margin_deg, max(lats) + margin_deg

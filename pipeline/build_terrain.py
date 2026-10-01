@@ -268,6 +268,9 @@ def write_terrain_outputs(
 
 
 def run_real(processed: Path, assets: Path, grid: TileGrid, dem_path: Path, naip_path: Path) -> tuple[Terrain, list[dict[str, Any]], int]:
+    from pipeline.build_buildings import flatten_terrain_for_heroes, load_heroes
+
     terrain = terrain_from_raster(dem_path, grid.extent)
+    flatten_terrain_for_heroes(terrain, load_heroes())
     infos, tris, _ = write_terrain_outputs(terrain, grid, raster_albedo(naip_path), processed, assets, texture_px=1536)
     return terrain, infos, tris

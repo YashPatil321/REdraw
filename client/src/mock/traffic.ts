@@ -68,11 +68,11 @@ export function generateMockPlayback(sc: MockScenario): ArrayBuffer {
   const gauss = (): number => (r() + r() + r() + r() - 2) / 0.58;
 
   // commuters toward exits, peak ~07:35
-  for (let k = 0; k < 1500; k++) {
+  for (let k = 0; k < 2200; k++) {
     const from = randNode();
     const to = w.exitNodes[Math.floor(r() * w.exitNodes.length)]!;
     if (from === to) continue;
-    trips.push({ kind: r() < 0.1 ? 4 : 0, depart: 27300 + gauss() * 1700, edges: route(from, to), entrance: -1 });
+    trips.push({ kind: r() < 0.1 ? 4 : 0, depart: 27300 + gauss() * 1300, edges: route(from, to), entrance: -1 });
   }
   // drop-off cars toward schools, arriving 5-20 min before bell
   w.schools.forEach((s, si) => {
@@ -98,8 +98,8 @@ export function generateMockPlayback(sc: MockScenario): ArrayBuffer {
 
   // two passes: free-flow volumes -> BPR-ish slowdown (mock only)
   const vol = new Float32Array(N_BINS * E);
-  const freeSpeed = (e: number): number => (net.edges[e]!.highway === 'residential' ? 11 : 15.5);
-  const cap = (e: number): number => net.edges[e]!.lanes * 40; // vehicles per bin in this downscaled fixture
+  const freeSpeed = (e: number): number => (net.edges[e]!.highway === 'residential' ? 8 : 12.5);
+  const cap = (e: number): number => net.edges[e]!.lanes * 9; // vehicles per bin in this downscaled fixture
   for (const t of trips) {
     let time = t.depart;
     for (const e of t.edges) {
