@@ -291,7 +291,7 @@ export function lodGeometry(full: THREE.BufferGeometry, cls: PropClass, color: T
   } else {
     crown.scale(w * 0.85, h * 0.68, d * 0.85).translate((b.min.x + b.max.x) / 2, b.max.y - h * 0.36, (b.min.z + b.max.z) / 2);
   }
-  parts.push(crown.toNonIndexed());
+  parts.push(crown.index ? crown.toNonIndexed() : crown);
   for (const g of parts) {
     g.deleteAttribute('uv');
     const n = g.getAttribute('position').count;

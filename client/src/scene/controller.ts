@@ -266,14 +266,15 @@ export class SceneController {
   }
 
   /** Ground for the walk camera: photo tiles, else our terrain grid, else the nearest road. */
-  private walkGround(x: number, z: number): number | null {
+  private walkGround(x: number, z: number, fromY?: number): number | null {
+    const dem = this.world.fastHeightAt(x, z) ?? this.net?.nearestEdge(x, z, 300)?.y ?? null;
     if (this.photoreal) {
-      const h = this.photo!.heightAt(x, z);
+      // first step: start just above our DEM (tiles are calibrated to it), never on a canopy
+      const from = fromY ?? (dem !== null ? dem + 4 : 1000);
+      const h = this.photo!.heightAt(x, z, from);
       if (h !== null) return h;
     }
-    const g = this.world.fastHeightAt(x, z);
-    if (g !== null) return g;
-    return this.net?.nearestEdge(x, z, 300)?.y ?? null;
+    return dem;
   }
 
   async loadWorld(): Promise<void> {

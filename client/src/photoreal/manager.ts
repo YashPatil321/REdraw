@@ -76,8 +76,8 @@ export class PhotorealManager {
     return this.tiles.offset;
   }
 
-  heightAt(x: number, z: number): number | null {
-    return this.tiles.heightAt(x, z, 1000);
+  heightAt(x: number, z: number, fromY = 1000): number | null {
+    return this.tiles.heightAt(x, z, fromY);
   }
 
   pick(raycaster: THREE.Raycaster): THREE.Vector3 | null {

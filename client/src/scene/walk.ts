@@ -12,7 +12,8 @@ export const EYE_HEIGHT_M = 1.7;
 export const WALK_SPEED = 1.6; // m/s, brisk walk
 export const RUN_SPEED = 9; // m/s, "run" (more of a jog-bike; the region is 9 km wide)
 
-export type GroundFn = (x: number, z: number) => number | null;
+/** Ground height at x, z; `fromY` (when given) casts down from there, so canopies / bridges overhead are ignored. */
+export type GroundFn = (x: number, z: number, fromY?: number) => number | null;
 
 export interface WalkPose {
   x: number;
@@ -53,6 +54,7 @@ export class WalkControls {
   z = 0;
   eye = EYE_HEIGHT_M;
   private groundY = 0;
+  private hasGround = false;
   private smoothY: number | null = null;
   private keys = new Set<string>();
   private dragging: { x: number; y: number } | null = null;
@@ -86,6 +88,7 @@ export class WalkControls {
     this.smoothY = null;
     const g = ground(this.x, this.z);
     this.groundY = g ?? this.camera.position.y - this.eye;
+    this.hasGround = g !== null;
     if (this.enabled) return;
     this.enabled = true;
     window.addEventListener('keydown', this.onKeyDown);
@@ -181,8 +184,10 @@ export class WalkControls {
     if (turn) this.heading += turn * 1.4 * dt;
     const run = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     const next = walkStep({ x: this.x, z: this.z, heading: this.heading }, { fwd, right, run }, dt);
-    const g = ground(next.x, next.z);
+    // cast from a little above the current ground: walking under a tree must not climb it
+    const g = ground(next.x, next.z, this.hasGround ? this.groundY + 2.5 : undefined);
     if (g !== null) {
+      this.hasGround = true;
       // refuse steps up walls (a jump of more than 1.2 m in one step), allow stairs/slopes
       if (g - this.groundY < 1.2 + (run ? 0.6 : 0) || fwd === 0) {
         this.x = next.x;
