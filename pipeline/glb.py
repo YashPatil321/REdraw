@@ -44,7 +44,8 @@ class MeshData:
     base_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
     roughness: float = 1.0
     double_sided: bool = False
-    texture_repeat: bool = False  # REPEAT wrapping (road markings) instead of CLAMP (terrain)
+    texture_repeat: bool = False  # REPEAT wrapping along v (road markings) instead of CLAMP (terrain)
+    texture_repeat_both: bool = False  # REPEAT in u and v (imported hero model textures)
 
     @property
     def triangle_count(self) -> int:
@@ -122,7 +123,7 @@ def write_glb(path: Path, meshes: list[MeshData], extras: dict[str, Any] | None 
         if m.texture_jpeg is not None:
             img_bv = b.view(m.texture_jpeg, None)
             images.append({"bufferView": img_bv, "mimeType": m.texture_mime})
-            textures.append({"source": len(images) - 1, "sampler": 1 if m.texture_repeat else 0})
+            textures.append({"source": len(images) - 1, "sampler": 2 if m.texture_repeat_both else (1 if m.texture_repeat else 0)})
             mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": len(textures) - 1}
         materials.append(mat)
         gl_meshes.append({"name": m.name, "primitives": [{"attributes": attrs, "indices": idx, "material": len(materials) - 1, "mode": 4}]})
@@ -146,6 +147,7 @@ def write_glb(path: Path, meshes: list[MeshData], extras: dict[str, Any] | None 
         gltf["samplers"] = [
             {"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071},
             {"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 10497},
+            {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497},
         ]
     if extras:
         gltf["asset"]["extras"] = extras
@@ -197,3 +199,119 @@ def read_accessor(gltf: dict[str, Any], binb: bytes, idx: int) -> np.ndarray:
     start = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
     arr = np.frombuffer(binb, dtype=dtype, count=acc["count"] * width, offset=start)
     return arr.reshape(acc["count"], width) if width > 1 else arr
+
+
+_NP_BY_COMPONENT = {5120: np.int8, 5121: np.uint8, 5122: np.int16, 5123: np.uint16, 5125: np.uint32, 5126: np.float32}
+_NORM_DIV = {5120: 127.0, 5121: 255.0, 5122: 32767.0, 5123: 65535.0}
+
+
+def read_accessor_any(gltf: dict[str, Any], binb: bytes, idx: int) -> np.ndarray:
+    """Accessor -> float64/uint array, honoring byteStride and `normalized`."""
+    acc = gltf["accessors"][idx]
+    if "bufferView" not in acc:
+        raise ValueError("sparse / bufferView-less accessors are not supported")
+    bv = gltf["bufferViews"][acc["bufferView"]]
+    if bv.get("buffer", 0) != 0:
+        raise ValueError("only single-buffer GLB files are supported")
+    comp = acc["componentType"]
+    dtype = np.dtype(_NP_BY_COMPONENT[comp])
+    width = _WIDTH_BY_TYPE.get(acc["type"])
+    if width is None:
+        raise ValueError(f"unsupported accessor type {acc['type']}")
+    start = bv.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    count = acc["count"]
+    stride = bv.get("byteStride") or dtype.itemsize * width
+    if stride == dtype.itemsize * width:
+        arr = np.frombuffer(binb, dtype=dtype, count=count * width, offset=start).reshape(count, width)
+    else:
+        raw = np.frombuffer(binb, dtype=np.uint8, count=stride * (count - 1) + dtype.itemsize * width, offset=start)
+        rows = np.lib.stride_tricks.as_strided(raw, shape=(count, dtype.itemsize * width), strides=(stride, 1))
+        arr = np.ascontiguousarray(rows).view(dtype).reshape(count, width)
+    if acc.get("normalized") and comp in _NORM_DIV:
+        return arr.astype(np.float64) / _NORM_DIV[comp]
+    return arr
+
+
+def _node_matrix(node: dict[str, Any]) -> np.ndarray:
+    if "matrix" in node:
+        return np.asarray(node["matrix"], dtype=np.float64).reshape(4, 4).T  # column-major
+    t = np.asarray(node.get("translation", [0, 0, 0]), dtype=np.float64)
+    x, y, z, w = node.get("rotation", [0, 0, 0, 1])
+    r = np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+    s = np.asarray(node.get("scale", [1, 1, 1]), dtype=np.float64)
+    m = np.eye(4)
+    m[:3, :3] = r * s[None, :]
+    m[:3, 3] = t
+    return m
+
+
+def load_glb_meshes(path: Path) -> list[MeshData]:
+    """Read every triangle primitive of a GLB, baked to world space (node transforms applied).
+
+    Keeps per-primitive material base color, roughness, embedded base color texture,
+    vertex colors and UVs. Draco/meshopt compressed files are rejected with a clear error.
+    """
+    gltf, binb = read_glb(path)
+    used = set(gltf.get("extensionsRequired", [])) | set(gltf.get("extensionsUsed", []))
+    for ext in ("KHR_draco_mesh_compression", "EXT_meshopt_compression", "KHR_mesh_quantization"):
+        if ext in used:
+            raise ValueError(f"{path}: {ext} is not supported for hero models; export an uncompressed GLB")
+    out: list[MeshData] = []
+    nodes = gltf.get("nodes", [])
+    scene = gltf.get("scenes", [{}])[gltf.get("scene", 0)] if gltf.get("scenes") else {"nodes": list(range(len(nodes)))}
+
+    def walk(ni: int, parent: np.ndarray) -> None:
+        node = nodes[ni]
+        m = parent @ _node_matrix(node)
+        if "mesh" in node:
+            nm = np.linalg.inv(m[:3, :3]).T
+            for k, prim in enumerate(gltf["meshes"][node["mesh"]]["primitives"]):
+                if prim.get("mode", 4) != 4 or "POSITION" not in prim["attributes"]:
+                    continue
+                a = prim["attributes"]
+                pos = read_accessor_any(gltf, binb, a["POSITION"]).astype(np.float64)
+                pos = pos @ m[:3, :3].T + m[:3, 3]
+                nrm = None
+                if "NORMAL" in a:
+                    nrm = read_accessor_any(gltf, binb, a["NORMAL"]).astype(np.float64) @ nm.T
+                    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
+                uv = read_accessor_any(gltf, binb, a["TEXCOORD_0"]).astype(np.float32) if "TEXCOORD_0" in a else None
+                col = None
+                if "COLOR_0" in a:
+                    c = read_accessor_any(gltf, binb, a["COLOR_0"])
+                    c = c.astype(np.float64) if c.dtype.kind == "f" else c.astype(np.float64)
+                    if c.shape[1] == 3:
+                        c = np.column_stack([c, np.ones(len(c))])
+                    col = np.clip(np.round(c * 255.0), 0, 255).astype(np.uint8)
+                idx = read_accessor_any(gltf, binb, prim["indices"]).reshape(-1).astype(np.uint32) if "indices" in prim else np.arange(len(pos), dtype=np.uint32)
+                if np.linalg.det(m[:3, :3]) < 0:
+                    idx = idx.reshape(-1, 3)[:, [0, 2, 1]].reshape(-1)
+                md = MeshData(name=f"{Path(path).stem}_{ni}_{k}", positions=pos, indices=idx, normals=nrm, uvs=uv, colors=col)
+                if "material" in prim:
+                    mat = gltf["materials"][prim["material"]]
+                    pbr = mat.get("pbrMetallicRoughness", {})
+                    md.base_color = tuple(pbr.get("baseColorFactor", [1, 1, 1, 1]))  # type: ignore[assignment]
+                    md.roughness = float(pbr.get("roughnessFactor", 1.0))
+                    md.double_sided = bool(mat.get("doubleSided", False))
+                    tex = pbr.get("baseColorTexture")
+                    if tex is not None and uv is not None:
+                        img = gltf["images"][gltf["textures"][tex["index"]]["source"]]
+                        if "bufferView" in img:
+                            bv = gltf["bufferViews"][img["bufferView"]]
+                            o = bv.get("byteOffset", 0)
+                            md.texture_jpeg = bytes(binb[o : o + bv["byteLength"]])
+                            md.texture_mime = img.get("mimeType", "image/png")
+                            md.texture_repeat_both = True
+                out.append(md)
+        for ch in node.get("children", []):
+            walk(ch, m)
+
+    for ni in scene.get("nodes", []):
+        walk(ni, np.eye(4))
+    return out
