@@ -344,11 +344,35 @@ props:
     arterial: {value: 50.0, unit: m, range: [35.0, 80.0], source: "arterial davit lights roughly every 120-200 ft, staggered; guess", verified: false}
   lamp_corner_offset_m: {value: 1.0, unit: m, range: [0.5, 2.0], source: "pole setback behind the curb face", verified: false}
   species_mix:
-    residential_street: {value: {tree_street: 0.55, tree_jacaranda: 0.22, tree_palm_queen: 0.13, tree_oak: 0.10}, unit: share, range: null, source: "typical 4S Ranch / Del Sur parkway palette (Brisbane box, Chinese elm, pistache, jacaranda, queen palm accents); guess", verified: false}
-    arterial_street: {value: {tree_street: 0.40, tree_palm_fan: 0.25, tree_palm_queen: 0.15, tree_jacaranda: 0.10, tree_eucalyptus: 0.10}, unit: share, range: null, source: "arterial landscaping: broadleaf canopy trees with Mexican fan / queen palm accents near entries and commercial frontage; guess", verified: false}
-    yard: {value: {tree_street: 0.35, tree_jacaranda: 0.2, tree_palm_queen: 0.2, tree_oak: 0.15, tree_palm_fan: 0.1}, unit: share, range: null, source: guess from aerial imagery, verified: false}
-    commercial: {value: {tree_palm_queen: 0.35, tree_palm_fan: 0.3, tree_street: 0.25, tree_jacaranda: 0.1}, unit: share, range: null, source: guess, verified: false}
+    residential_street: {value: {tree_street: 0.50, tree_jacaranda: 0.20, tree_palm_queen: 0.12, tree_oak: 0.08, tree_ficus: 0.05, tree_pine_canary: 0.05}, unit: share, range: null, source: "typical 4S Ranch / Del Sur parkway palette (Brisbane box, Chinese elm, pistache, jacaranda, queen palm accents); guess", verified: false}
+    arterial_street: {value: {tree_street: 0.34, tree_palm_fan: 0.22, tree_palm_queen: 0.12, tree_jacaranda: 0.08, tree_eucalyptus: 0.08, tree_pine_canary: 0.08, tree_ficus: 0.08}, unit: share, range: null, source: "arterial landscaping: broadleaf canopy trees with Mexican fan / queen palm accents near entries and commercial frontage; guess", verified: false}
+    yard: {value: {tree_street: 0.30, tree_jacaranda: 0.18, tree_palm_queen: 0.18, tree_oak: 0.12, tree_palm_fan: 0.08, tree_ficus: 0.07, tree_pine_canary: 0.07}, unit: share, range: null, source: guess from aerial imagery, verified: false}
+    commercial: {value: {tree_palm_queen: 0.28, tree_palm_fan: 0.25, tree_ficus: 0.22, tree_street: 0.17, tree_jacaranda: 0.08}, unit: share, range: null, source: guess, verified: false}
     slope: {value: {tree_oak: 0.65, tree_eucalyptus: 0.35}, unit: share, range: null, source: "coast live oak dominates native canyons; eucalyptus in older planted windbreaks; guess", verified: false}
+    yard_shrub: {value: {shrub: 0.42, succulent_agave: 0.22, shrub_bougainvillea: 0.14, hedge: 0.22}, unit: share, range: null, source: "front-yard planting mix in 4S Ranch / Del Sur (irrigated shrub masses, xeriscape succulents after the 2015 turf-replacement rebates, bougainvillea on walls, clipped hedges on lot lines); guess", verified: false}
+  hedge_run_segments: {value: [2, 5], unit: segments, range: [1, 8], source: "clipped hedge runs along lot lines / foundation walls, in 2 m prop segments; guess", verified: false}
+  # Real tree positions from the 2014 USGS 3DEP lidar (data/raw/lidar/trees.parquet, pipeline/lidar_features.py).
+  lidar_trees:
+    survey_year: {value: 2014, unit: year, range: [2014, 2015], source: "USGS 3DEP project CA_SanDiegoQL2_2014 (data/raw/lidar/lidar.source.json); houses built later have no lidar trees (gap fill)", verified: false}
+    building_clearance_m: {value: 0.6, unit: m, range: [0.0, 2.0], source: "a lidar tree top closer than this to (or inside) a footprint is a roof/overhang artifact and dropped; real trunks stand next to houses", verified: false}
+    road_clearance_m: {value: 0.6, unit: m, range: [0.0, 1.5], source: "tree tops detected over a travel lane (leaning crowns, footprint offsets) are moved back to curb + this", verified: false}
+    height_weight: {value: 0.7, unit: exponent, range: [0.5, 1.0], source: "uniform instance scale = (h/h0)^w * (r/r0)^(1-w): lidar heights (QL2, ~10 cm) are more reliable than watershed crown radii", verified: false}
+    scale_clamp: {value: [0.35, 2.4], unit: ratio, range: null, source: "limits of the uniform scale applied to a prop model to match a measured tree", verified: false}
+    eucalyptus_min_height_m: {value: 15.0, unit: m, range: [12.0, 20.0], source: "broadleaf trees taller than this in the 4S Ranch / Del Sur area are mostly eucalyptus (windbreaks, canyon rims); guess", verified: false}
+    eucalyptus_tall_share: {value: 0.75, unit: share, range: [0.4, 0.95], source: "share of tall broadleaf lidar trees mapped to eucalyptus (the rest: sycamores, oaks, ficus); guess", verified: false}
+    palm_fan_min_height_m: {value: 12.0, unit: m, range: [10.0, 15.0], source: "palms taller than this are mostly Mexican fan palms (queen palms top out at 12-15 m); guess", verified: false}
+    aspect_sigma: {value: 0.35, unit: ln ratio, range: [0.2, 0.6], source: "within a class, species are weighted by how well their crown/height ratio matches the measured tree (Gaussian in log ratio); model choice", verified: true}
+    open_space_road_m: {value: 15.0, unit: m, range: [8.0, 30.0], source: "a lidar tree this far from road edges (and open_space_building_clearance_m from buildings) is open-space / canyon vegetation", verified: false}
+    street_road_m: {value: 5.0, unit: m, range: [3.0, 8.0], source: "a lidar tree within this distance of a road edge is a parkway / median tree", verified: false}
+    gap_cell_m: {value: 80.0, unit: m, range: [50.0, 150.0], source: "developed cells (>= 3 houses) without any lidar tree are treated as built or replanted after the lidar survey and get procedural trees", verified: false}
+    young_scale: {value: [0.55, 0.85], unit: ratio, range: null, source: "procedural trees in post-survey gaps are young plantings (<= 12 years in 2026)", verified: false}
+    mix:
+      palm: {value: {tree_palm_fan: 0.55, tree_palm_queen: 0.45}, unit: share, range: null, source: "Washingtonia robusta and Syagrus romanzoffiana dominate SoCal suburban palms; guess", verified: false}
+      conifer: {value: {tree_pine_canary: 1.0}, unit: share, range: null, source: "Canary Island / Aleppo / Torrey pines and cypress (only the Canary pine is modeled)", verified: false}
+      broadleaf_street: {value: {tree_street: 0.48, tree_jacaranda: 0.22, tree_ficus: 0.12, tree_oak: 0.10, tree_eucalyptus: 0.08}, unit: share, range: null, source: "parkway / median broadleaf palette; guess", verified: false}
+      broadleaf_yard: {value: {tree_street: 0.34, tree_jacaranda: 0.20, tree_oak: 0.18, tree_ficus: 0.14, tree_eucalyptus: 0.14}, unit: share, range: null, source: "yard broadleaf palette; guess", verified: false}
+      broadleaf_commercial: {value: {tree_ficus: 0.42, tree_street: 0.36, tree_jacaranda: 0.14, tree_eucalyptus: 0.08}, unit: share, range: null, source: "shopping-center / school / office broadleaf palette (Indian laurel fig, Brisbane box, jacaranda); guess", verified: false}
+      broadleaf_open: {value: {tree_oak: 0.72, tree_eucalyptus: 0.28}, unit: share, range: null, source: "coast live oak woodland in canyons, eucalyptus groves on rims; guess", verified: false}
   vehicle_paint_shares: {value: {white: 0.25, black: 0.21, gray: 0.18, silver: 0.12, blue: 0.09, red: 0.08, pearl_white: 0.03, green: 0.02, beige: 0.02}, unit: share, range: null, source: "US new-car color popularity (PPG / Axalta / iSeeCars 2023-2025 reports: white, black, gray, silver ~75 percent); assumed similar for SoCal suburbs", verified: false}
   vehicle_type_shares: {value: {car_sedan: 0.30, car_suv: 0.30, car_crossover_ev: 0.12, car_minivan: 0.12, car_pickup: 0.16}, unit: share, range: null, source: "suburban San Diego light-vehicle mix (crossovers/SUVs dominant, high Tesla share in 4S Ranch / Del Sur); guess", verified: false}
   parking_stall_width_m: {value: 2.75, unit: m, range: [2.6, 2.9], source: "9 ft standard stall (City of San Diego Land Development Code 142.0560)", verified: false}
@@ -411,3 +435,11 @@ lidar:
   missing_building_min_area_m2: {value: 40.0, unit: m2, range: [25.0, 60.0], source: "task spec: smallest lidar-only building kept (a one-car garage is ~25 m2)", verified: true}
   tree_min_height_m: {value: 4.0, unit: m, range: [3.0, 5.0], source: "below this, canopy is chaparral/sage scrub shrubland on the open-space slopes rather than trees", verified: false}
   ground_change_m: {value: 1.5, unit: m, range: [1.0, 3.0], source: "|3DEP 2024 DEM - lidar 2014 ground| above this marks land regraded after 2014 (lidar objects there are stale)", verified: false}
+
+# HD world build (pipeline/build_buildings.py, build_terrain.py, build_landcover.py), appended by the
+# pipeline agent. Thresholds for using lidar measurements and land-cover cues in the render layers.
+hd_world:
+  lidar_height_min_m: {value: 2.2, unit: m, range: [1.8, 3.0], source: "lidar ridge heights below this are treated as measurement errors (sheds/walls) and the tag/default height is kept", verified: false}
+  lidar_height_max_m: {value: 60.0, unit: m, range: [30.0, 80.0], source: "lidar ridge heights above this are treated as errors (tallest building in the area is well under 30 m)", verified: false}
+  ndsm_shrub_max_m: {value: 1.5, unit: m, range: [0.8, 2.5], source: "height above ground below which vegetation counts as lawn/groundcover rather than shrub (lidar nDSM, 2014)", verified: false}
+  ndsm_canopy_min_m: {value: 3.0, unit: m, range: [2.0, 5.0], source: "height above ground above which vegetation counts as tree canopy (lidar nDSM, 2014)", verified: false}

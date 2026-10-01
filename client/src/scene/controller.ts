@@ -17,13 +17,13 @@ import { adjTexture, buildRoadOverlayGeometry } from '../traffic/roadOverlay';
 import { browserGoogleKey } from '../photoreal/key';
 import type { PhotorealManager } from '../photoreal/manager';
 import type { TileSource } from '../photoreal/tiles';
-import type { School, WorldMeta } from '../types';
+import type { Manifest, School, WorldMeta } from '../types';
 import { applyMapClick, setParam, type MapType } from '../ui/formgen';
 import { ArterialLabels, BASELINE_COLOR, EdgeHighlight, LocationPin, PLAN_COLOR, PlanOverlay, SchoolMarkers } from './markers';
 import { QUALITY, initialQuality, lowerQuality, saveQuality, type Quality } from './quality';
 import { SkySystem } from './sky';
 import { RoadDetails } from './roadDetails';
-import { loadStaticProps, loadVehicleProps, type StaticProps } from './props';
+import { loadStaticProps, loadVehicleProps, windUniforms, type StaticProps } from './props';
 import { Viewer } from './viewer';
 import { World } from './world';
 import { buildingUniforms } from './buildingMaterial';
@@ -65,6 +65,7 @@ export class SceneController {
   private roadDetails: RoadDetails | null = null;
   private staticProps: StaticProps | null = null;
 
+  private manifest: Manifest | null = null;
   /** PBR atlases (assets/materials), loaded with the world */
   materials: MaterialLibrary | null = null;
   private netResolve: () => void = () => undefined;
@@ -234,7 +235,7 @@ export class SceneController {
   private ensurePhotoreal(): Promise<void> {
     if (this.photo || !this.tileSource || !this.meta || !this.origin) return Promise.resolve();
     if (this.photoLoading) return this.photoLoading;
-    store.set((s) => ({ photoreal: { ...s.photoreal, status: 'Loading photoreal 3D tiles…' } }));
+    store.set((s) => ({ photoreal: { ...s.photoreal, status: 'Streaming 3D world…' } }));
     this.photoLoading = import('../photoreal/manager')
       .then(({ PhotorealManager }) => {
         const ext = this.meta!.region.extent_scene;
@@ -312,6 +313,7 @@ export class SceneController {
     const meta = this.meta!;
     try {
       const manifest = await api.getManifest(meta);
+      this.manifest = manifest;
       void this.loadCredits(manifest.terrain_meta);
       store.set({ worldStatus: 'Loading world…' });
       const fetchAsset = this.materialFetcher(meta);
@@ -376,6 +378,11 @@ export class SceneController {
     store.set({ openCredits: parts.join(' · ') });
   }
 
+  /**
+   * Cinematic opening: from high over the whole region, a continuous sweeping
+   * descent that ends on the hero school (Del Norte). Any user input cancels
+   * it; `?intro=0` (or reduced motion) goes straight to the final view.
+   */
   private openingShot(): void {
     const meta = this.meta!;
     const hero = meta.hero;
@@ -383,7 +390,27 @@ export class SceneController {
     const y = this.world.heightAt(hero.x, hero.z, 0);
     this.viewer.groundY = y;
     const target = new THREE.Vector3(hero.x, y, hero.z);
-    void this.viewer.flyTo(target, { distance: 900, pitchDeg: 38, headingDeg: -20, duration: 4.0 });
+    const final = { target, distance: 900, pitchDeg: 38, headingDeg: -20 };
+    const params = new URLSearchParams(location.search);
+    const reduced = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (params.get('intro') === '0' || reduced || location.hash.includes('plan=')) {
+      void this.viewer.flyTo(target, { ...final, duration: 2.0 });
+      return;
+    }
+    const ext = meta.region.extent_scene;
+    const cx = (ext.min_x + ext.max_x) / 2;
+    const cz = (ext.min_z + ext.max_z) / 2;
+    const span = Math.max(ext.max_x - ext.min_x, ext.max_z - ext.min_z);
+    const at = (x: number, z: number): THREE.Vector3 => new THREE.Vector3(x, this.world.heightAt(x, z, y), z);
+    const mid = at((cx + hero.x) / 2, (cz + hero.z) / 2);
+    const keys = [
+      { target: at(cx, cz), distance: span * 0.95, pitchDeg: 58, headingDeg: 35 },
+      { target: mid, distance: span * 0.42, pitchDeg: 36, headingDeg: 75 },
+      { target: at(hero.x + 350, hero.z + 250), distance: 1700, pitchDeg: 26, headingDeg: 20 },
+      final,
+    ];
+    this.viewer.jumpTo(keys[0]!.target, { distance: keys[0]!.distance, pitchDeg: keys[0]!.pitchDeg, headingDeg: keys[0]!.headingDeg });
+    void this.viewer.flyPath(keys, 13);
   }
 
   setNetwork(net: RoadNetwork): void {
@@ -424,7 +451,7 @@ export class SceneController {
       console.warn('vehicle props unavailable', e);
     }
     try {
-      const sp = await loadStaticProps(fetchAsset, (x, z) => this.world.fastHeightAt(x, z), vehicleMaterial);
+      const sp = await loadStaticProps(fetchAsset, (x, z) => this.world.fastHeightAt(x, z), vehicleMaterial, this.manifest?.grid ?? null);
       if (sp) {
         this.staticProps = sp;
         const qs = QUALITY[store.get().quality];
@@ -441,6 +468,8 @@ export class SceneController {
   /** Lane markings + sidewalks (open-data mode) once both the terrain and the network are in. */
   private buildRoadDetails(): void {
     if (!this.net || !this.worldLoaded || this.roadDetails) return;
+    // the HD pipeline ships real road surfaces, markings and sidewalks
+    if (this.world.hasStreets) return;
     try {
       this.roadDetails = new RoadDetails(this.net, (x, z) => this.world.fastHeightAt(x, z));
       this.roadDetails.group.visible = !this.photoreal;
@@ -553,6 +582,7 @@ export class SceneController {
       }
     }
     this.world.updateCulling(this.viewer.camera);
+    windUniforms.uWindTime.value = now / 1000;
     const dist = this.viewer.distance;
     if (this.sky) {
       this.sky.postAtmosphere = this.viewer.postActive;

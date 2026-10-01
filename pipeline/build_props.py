@@ -12,6 +12,17 @@ Outputs (format documented in blender/README.md):
     client/public/assets/props/placements.json   header: props table, record layout, spatial cells
     client/public/assets/props/placements.bin    little-endian float32 records (x, y, z, rot_y, scale, prop_index)
 
+Trees come from the real world when the lidar step has run: data/raw/lidar/trees.parquet
+(pipeline/lidar_features.py; individual trees from the 2014 USGS 3DEP point cloud with
+height, crown radius and a crude palm / broadleaf / conifer guess). Every lidar tree inside
+the region bbox becomes an instance at its real position, scaled to its measured height and
+crown, species mapped from the class + context (street / yard / commercial / open space,
+props.lidar_trees.*) with seeded variety. The rules below then only add trees in GAPS the
+lidar cannot know about (houses built after the survey, developed cells without any lidar
+tree, outside the lidar coverage) plus everything below tree size (shrubs, hedges, agave,
+grass), street lamps and parked cars. Without trees.parquet every tree is rule-based (logged
+and recorded in the header as trees_source = "procedural").
+
 Rules (all densities in data/config/assumptions.yaml -> props.*):
 - street trees along residential and arterial curbs, offset from the centerline by
   lanes * lane_width (+ parking / bike lane) + parkway, both sides, fixed spacing with jitter
@@ -20,7 +31,11 @@ Rules (all densities in data/config/assumptions.yaml -> props.*):
 - oaks / eucalyptus and scrub on steep undeveloped slopes (canyons), away from buildings
 - street lamps at intersections (two at signals) and mid-block along streets
 - hero campuses: skip generic props inside each hero radius; add the hero's own trees,
-  lot lights and parked cars from <hero>_trees.json
+  lot lights and parked cars from <hero>_trees.json (with lidar: real trees outside the
+  hero's keep-out polygons - buildings, fields, courts, track, parking - and layout trees
+  only in lidar gaps)
+- everything is clipped to the region bbox (data/config/region.yaml); the run refuses to
+  start while data/processed/region_meta.json was built for a different bbox
 Fixed seed (props.seed): identical inputs give identical bytes.
 """
 
@@ -37,7 +52,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pipeline.config import assets_dir, assumption, processed_dir  # noqa: E402
+from pipeline.config import assets_dir, assumption, processed_dir, raw_dir, region  # noqa: E402
 
 FORMAT_VERSION = 1
 RECORD_FIELDS = ["x", "y", "z", "rot_y", "scale", "prop_index"]
@@ -49,6 +64,9 @@ HERO_DIR = Path(__file__).resolve().parent / "hero_overrides"
 ARTERIAL = {"primary", "secondary", "tertiary", "primary_link", "secondary_link", "tertiary_link", "trunk"}
 RESIDENTIAL = {"residential", "living_street", "unclassified"}
 NO_TREES = {"motorway", "motorway_link", "trunk_link"}
+LIDAR_CLASSES = ("palm", "broadleaf", "conifer")
+HERO_KEEPOUT_CLASSES = {"building", "turf_field", "track_red", "court_blue", "dirt_infield", "asphalt", "asphalt_light",
+                        "rubber_play"}
 
 
 def log(msg: str) -> None:
@@ -100,6 +118,87 @@ def _need(p: Path, hint: str) -> Path:
     if not p.exists():
         raise Fail(f"missing {p}\n{hint}")
     return p
+
+
+def region_polygon(n: int = 24) -> Any:
+    """The region bbox (region.yaml, lat/lon) as a scene-coordinate polygon (edges densified:
+    a lat/lon box is slightly curved / rotated in UTM)."""
+    from shapely.geometry import Polygon
+
+    from pipeline.geo import latlon_to_scene
+
+    bb = region()["bbox"]
+    s_, n_, w, e = (float(bb[k]) for k in ("south", "north", "west", "east"))
+    t = np.linspace(0.0, 1.0, n, endpoint=False)
+    ll = ([(s_, w + (e - w) * k) for k in t] + [(s_ + (n_ - s_) * k, e) for k in t]
+          + [(n_, e - (e - w) * k) for k in t] + [(n_ - (n_ - s_) * k, w) for k in t])
+    return Polygon([latlon_to_scene(lat, lon) for lat, lon in ll])
+
+
+def check_region(meta: dict[str, Any], allow_mismatch: bool = False) -> None:
+    """region_meta.json must describe the bbox in region.yaml (same scene origin as the lidar trees)."""
+    want = region()["bbox"]
+    got = meta.get("bbox") or {}
+    bad = [k for k in ("south", "north", "west", "east") if k not in got or abs(float(got[k]) - float(want[k])) > 1e-6]
+    if not bad:
+        return
+    msg = (f"data/processed/region_meta.json bbox {got} does not match data/config/region.yaml bbox {want}: the "
+           "processed world (terrain, buildings, roads) is stale or being rebuilt. Rebuild it first: "
+           ".venv/bin/python pipeline/build_all.py")
+    if not allow_mismatch:
+        raise Fail(msg)
+    log(f"WARNING {msg} (continuing: --allow-region-mismatch)")
+
+
+def load_lidar_trees(path: Path) -> tuple[Any, dict[str, int]]:
+    """trees.parquet (docs/data_contract.md "Lidar features") -> DataFrame x, z, h, r, cls in the CURRENT
+    scene frame (recomputed from easting / northing when present). Trees on ground regraded since the
+    survey (|ground_y - ground_lidar_m| > lidar.ground_change_m) are stale and dropped."""
+    import pandas as pd
+
+    if not path.exists():
+        return None, {}
+    df = pd.read_parquet(path)
+    need = {"height_m", "crown_radius_m", "species_guess"}
+    if not need <= set(df.columns) or not ({"easting", "northing"} <= set(df.columns) or {"x", "z"} <= set(df.columns)):
+        raise Fail(f"{path}: expected columns {sorted(need)} + easting/northing (or x/z), got {list(df.columns)}")
+    stats = {"lidar_trees_in_file": int(len(df))}
+    if {"easting", "northing"} <= set(df.columns):
+        from pipeline.geo import scene_origin
+
+        o = scene_origin()
+        x = df["easting"].to_numpy(np.float64) - o.easting
+        z = -(df["northing"].to_numpy(np.float64) - o.northing)
+    else:
+        x, z = df["x"].to_numpy(np.float64), df["z"].to_numpy(np.float64)
+    keep = np.isfinite(x) & np.isfinite(z) & np.isfinite(df["height_m"].to_numpy(np.float64))
+    if {"ground_y", "ground_lidar_m"} <= set(df.columns):
+        dg = np.abs(df["ground_y"].to_numpy(np.float64) - df["ground_lidar_m"].to_numpy(np.float64))
+        stale = np.nan_to_num(dg, nan=0.0) > float(assumption("lidar.ground_change_m"))
+        stats["lidar_trees_stale_regraded"] = int((stale & keep).sum())
+        keep &= ~stale
+    cls = df["species_guess"].astype(str).str.lower().to_numpy()
+    cls = np.where(np.isin(cls, LIDAR_CLASSES), cls, "broadleaf")
+    r = np.nan_to_num(df["crown_radius_m"].to_numpy(np.float64), nan=2.0)
+    out = pd.DataFrame({"x": x[keep], "z": z[keep], "h": df["height_m"].to_numpy(np.float64)[keep],
+                        "r": np.clip(r[keep], 0.5, 15.0), "cls": cls[keep]})
+    return out, stats
+
+
+def lidar_coverage(raw: Path) -> Any:
+    """Scene polygon of the lidar AOI (lidar.source.json aoi_utm), or None."""
+    from shapely.geometry import box
+
+    p = raw / "lidar" / "lidar.source.json"
+    if not p.exists():
+        return None
+    aoi = json.loads(p.read_text()).get("aoi_utm")
+    if not aoi:
+        return None
+    from pipeline.geo import scene_origin
+
+    o = scene_origin()
+    return box(aoi["minx"] - o.easting, -(aoi["maxy"] - o.northing), aoi["maxx"] - o.easting, -(aoi["miny"] - o.northing))
 
 
 def load_inputs(proc: Path, assets: Path) -> dict[str, Any]:
@@ -168,6 +267,13 @@ class Placer:
             self.road_half.append(self._half_width(r))
         self.rtree = STRtree(self.road_lines)
         self.heroes = self._load_heroes()
+        self.region_poly = inp.get("region_poly")
+        self.coverage = inp.get("lidar_coverage")
+        self.lidar_xz: np.ndarray | None = None  # kept lidar trees (scene x, z) once lidar_trees() ran
+        self.lidar_kd: Any = None
+        self.gap_cells: set[tuple[int, int]] = set()
+        self.gap_houses: set[int] = set()
+        self.gap_m = float(assumption("props.lidar_trees.gap_cell_m"))
 
     # -- helpers -----------------------------------------------------------------
     def _two_way(self, r: Any) -> bool:
@@ -192,14 +298,78 @@ class Placer:
         for h in cfg if isinstance(cfg, list) else cfg.get("heroes", []):
             x, z = latlon_to_scene(float(h["lat"]), float(h["lon"]))
             tj = HERO_DIR / str(h.get("trees") or f"{h['id']}_trees.json")
-            out.append({"id": h["id"], "x": x, "z": z, "r": float(h["footprint_radius_m"]),
-                        "rot": float(h.get("rotation_deg", 0.0)), "trees": json.loads(tj.read_text()) if tj.exists() else None})
+            hd = {"id": h["id"], "x": x, "z": z, "r": float(h["footprint_radius_m"]),
+                  "rot": float(h.get("rotation_deg", 0.0)), "trees": json.loads(tj.read_text()) if tj.exists() else None}
+            hd["keepout"] = self._hero_keepout(hd)
+            out.append(hd)
         return out
+
+    @staticmethod
+    def _hero_local_to_scene(h: dict[str, Any], lx: np.ndarray, ly: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Hero local (x east, y north) -> scene (x, z = -y), rotated by rotation_deg about the center."""
+        th = math.radians(h["rot"])
+        c, s = math.cos(th), math.sin(th)
+        px, pz = np.asarray(lx, float), -np.asarray(ly, float)
+        return h["x"] + px * c + pz * s, h["z"] - px * s + pz * c
+
+    def _hero_keepout(self, h: dict[str, Any]) -> Any:
+        """Union of the hero's keep-out polygons (buildings, fields, courts, track, parking) in scene coords."""
+        from shapely.geometry import Polygon
+        from shapely.ops import unary_union
+
+        t = h["trees"] or {}
+        polys = []
+        for k in t.get("keepout", []):
+            if k.get("cls") not in HERO_KEEPOUT_CLASSES:
+                continue
+            ext = np.asarray(k["exterior"], float)
+            if len(ext) < 3:
+                continue
+            ex, ez = self._hero_local_to_scene(h, ext[:, 0], ext[:, 1])
+            holes = []
+            for hr in k.get("holes", []):
+                hh = np.asarray(hr, float)
+                if len(hh) >= 3:
+                    hx, hz = self._hero_local_to_scene(h, hh[:, 0], hh[:, 1])
+                    holes.append(list(zip(hx, hz, strict=True)))
+            g = Polygon(list(zip(ex, ez, strict=True)), holes).buffer(0)
+            if not g.is_empty:
+                polys.append(g.buffer(1.0) if k["cls"] == "building" else g)
+        return unary_union(polys) if polys else None
 
     def in_hero(self, x: float, z: float) -> bool:
         return any(math.hypot(x - h["x"], z - h["z"]) <= h["r"] + 5.0 for h in self.heroes)
 
-    def clear(self, x: float, z: float, bld: float, road: float) -> bool:
+    def hero_at(self, x: float, z: float) -> dict[str, Any] | None:
+        for h in self.heroes:
+            if math.hypot(x - h["x"], z - h["z"]) <= h["r"] + 5.0:
+                return h
+        return None
+
+    # -- lidar gaps ----------------------------------------------------------------
+    def covered(self, x: float, z: float) -> bool:
+        """Inside the lidar survey (trees there come from trees.parquet, not from rules)."""
+        if self.lidar_xz is None:
+            return False
+        if self.coverage is None:
+            return True
+        from shapely import contains_xy
+
+        return bool(contains_xy(self.coverage, x, z))
+
+    def _cell(self, x: float, z: float) -> tuple[int, int]:
+        return int(math.floor(x / self.gap_m)), int(math.floor(z / self.gap_m))
+
+    def tree_gap(self, x: float, z: float, near_m: float = 6.0) -> bool:
+        """May a rule-based tree go here? Always without lidar; with lidar only outside the survey or in
+        a gap cell (developed after the survey / no lidar tree at all), and never next to a real tree."""
+        if self.lidar_xz is None or not self.covered(x, z):
+            return True
+        if self._cell(x, z) not in self.gap_cells:
+            return False
+        return not self.lidar_kd.query_ball_point([x, z], near_m)
+
+    def clear(self, x: float, z: float, bld: float, road: float, allow_hero: bool = False) -> bool:
         from shapely.geometry import Point
 
         pt = Point(x, z)
@@ -209,7 +379,17 @@ class Placer:
         for i in self.rtree.query(pt.buffer(road + 25.0)):
             if self.road_lines[i].distance(pt) < self.road_half[i] + road:
                 return False
-        return not self.in_hero(x, z)
+        return allow_hero or not self.in_hero(x, z)
+
+    def young(self, pid: str) -> float:
+        """Scale of a rule-based tree: mature range without lidar; young planting in a lidar gap."""
+        e = self.manifest[self.ids.index(pid)] if pid in self.ids else {}
+        lo, hi = e.get("suggested_scale_range", [1.0, 1.0])
+        s = float(self.rng.uniform(lo, hi))
+        if self.lidar_xz is not None:
+            ylo, yhi = (float(v) for v in assumption("props.lidar_trees.young_scale"))
+            s *= float(self.rng.uniform(ylo, yhi))
+        return s
 
     def pick(self, mix_key: str) -> str:
         mix = assumption(f"props.species_mix.{mix_key}")
@@ -227,6 +407,154 @@ class Placer:
         r = float(self.rng.uniform(-math.pi, math.pi)) if rot is None else rot
         self.recs.append((x, z, 0.0, r, s, pid))
         self.hero_y.append(y)
+
+    # -- real trees ----------------------------------------------------------------
+    def _species_weights(self, mix_key: str) -> tuple[list[str], np.ndarray, np.ndarray]:
+        mix = assumption(f"props.lidar_trees.mix.{mix_key}")
+        keys = [k for k in mix if k in self.ids]
+        if not keys:
+            raise Fail(f"assumptions props.lidar_trees.mix.{mix_key}: none of {list(mix)} is in props_manifest.json")
+        w = np.array([mix[k] for k in keys], float)
+        asp = np.array([math.log(max(self._dims(k)[1], 0.3) / max(self._dims(k)[0], 0.5)) for k in keys])
+        return keys, w / w.sum(), asp
+
+    def _dims(self, pid: str) -> tuple[float, float]:
+        """(height_m, crown_radius_m) of a tree prop model."""
+        e = self.manifest[self.ids.index(pid)]
+        return float(e.get("height_m", 8.0)), float(e.get("crown_radius_m") or e.get("footprint_radius_m", 3.0))
+
+    def lidar_trees(self, df: Any) -> dict[str, int]:
+        """Real trees: one instance per lidar tree, scaled to its measured height / crown."""
+        import shapely
+        from scipy.spatial import cKDTree
+
+        stats = {"lidar_trees": 0, "lidar_outside_region": 0, "lidar_dropped_building": 0, "lidar_dropped_road": 0,
+                 "lidar_moved_off_road": 0, "lidar_dropped_hero_keepout": 0}
+        x, z = df["x"].to_numpy(), df["z"].to_numpy()
+        h, r, cls = df["h"].to_numpy(), df["r"].to_numpy(), df["cls"].to_numpy()
+        inside = shapely.contains_xy(self.region_poly, x, z) if self.region_poly is not None else np.ones(len(x), bool)
+        stats["lidar_outside_region"] = int((~inside).sum())
+        x, z, h, r, cls = x[inside], z[inside], h[inside], r[inside], cls[inside]
+        n = len(x)
+        pts = shapely.points(x, z)
+        # nearest building: distance + type
+        bd = np.full(n, np.inf)
+        btyp = np.full(n, "", dtype=object)
+        if self.bgeoms:
+            res, dist = self.btree.query_nearest(pts, max_distance=250.0, return_distance=True, all_matches=False)
+            bd[res[0]] = dist
+            btyp[res[0]] = np.asarray(self.btype, dtype=object)[res[1]]
+        # road edge distance (centerline distance - half width), nearest road
+        rd = np.full(n, np.inf)
+        rj = np.full(n, -1, dtype=np.int64)
+        pairs = self.rtree.query(pts, predicate="dwithin", distance=60.0)
+        if pairs.shape[1]:
+            lines = np.asarray(self.road_lines, dtype=object)
+            half = np.asarray(self.road_half, float)
+            d = shapely.distance(pts[pairs[0]], lines[pairs[1]]) - half[pairs[1]]
+            order = np.lexsort((d, pairs[0]))
+            first = order[np.r_[True, pairs[0][order][1:] != pairs[0][order][:-1]]]
+            rd[pairs[0][first]] = d[first]
+            rj[pairs[0][first]] = pairs[1][first]
+        b_clear = float(assumption("props.lidar_trees.building_clearance_m"))
+        r_clear = float(assumption("props.lidar_trees.road_clearance_m"))
+        open_b = float(assumption("props.open_space_building_clearance_m"))
+        open_r = float(assumption("props.lidar_trees.open_space_road_m"))
+        street_r = float(assumption("props.lidar_trees.street_road_m"))
+        hw = float(assumption("props.lidar_trees.height_weight"))
+        s_lo, s_hi = (float(v) for v in assumption("props.lidar_trees.scale_clamp"))
+        euc_h = float(assumption("props.lidar_trees.eucalyptus_min_height_m"))
+        euc_p = float(assumption("props.lidar_trees.eucalyptus_tall_share"))
+        fan_h = float(assumption("props.lidar_trees.palm_fan_min_height_m"))
+        sig = float(assumption("props.lidar_trees.aspect_sigma"))
+        mixes = {k: self._species_weights(k) for k in
+                 ("palm", "conifer", "broadleaf_street", "broadleaf_yard", "broadleaf_commercial", "broadleaf_open")}
+        kept: list[tuple[float, float]] = []
+        from shapely.geometry import Point
+
+        for i in range(n):
+            xi, zi = float(x[i]), float(z[i])
+            hero = self.hero_at(xi, zi)
+            if hero is not None and hero["keepout"] is not None:
+                if hero["keepout"].contains(Point(xi, zi)):
+                    stats["lidar_dropped_hero_keepout"] += 1
+                    continue
+            elif bd[i] < b_clear:
+                stats["lidar_dropped_building"] += 1
+                continue
+            if rd[i] < r_clear and hero is None:
+                ln = self.road_lines[int(rj[i])]
+                p0 = ln.interpolate(ln.project(Point(xi, zi)))
+                v = np.array([xi - p0.x, zi - p0.y])
+                lv = float(np.linalg.norm(v))
+                if lv < 0.3:
+                    stats["lidar_dropped_road"] += 1
+                    continue
+                q = np.array([p0.x, p0.y]) + v / lv * (self.road_half[int(rj[i])] + r_clear)
+                if not self.clear(float(q[0]), float(q[1]), b_clear, r_clear * 0.5, allow_hero=True):
+                    stats["lidar_dropped_road"] += 1
+                    continue
+                xi, zi = float(q[0]), float(q[1])
+                stats["lidar_moved_off_road"] += 1
+            hi, ri = float(h[i]), float(r[i])
+            c = str(cls[i])
+            if c == "palm":
+                keys, w, asp = mixes["palm"]
+                f = 1.0 / (1.0 + math.exp(-(hi - fan_h) / 1.2))
+                w = w * np.array([f if k == "tree_palm_fan" else (1.0 - f if k == "tree_palm_queen" else 1.0) for k in keys])
+            elif c == "conifer":
+                keys, w, asp = mixes["conifer"]
+            else:
+                if hero is not None or (btyp[i] in ("commercial", "apartments", "school", "other") and bd[i] < 30.0):
+                    ctx = "broadleaf_commercial"
+                elif bd[i] > open_b and rd[i] > open_r:
+                    ctx = "broadleaf_open"
+                elif rd[i] < street_r:
+                    ctx = "broadleaf_street"
+                else:
+                    ctx = "broadleaf_yard"
+                keys, w, asp = mixes[ctx]
+                if hi >= euc_h and "tree_eucalyptus" in self.ids and self.rng.random() < euc_p:
+                    keys, w, asp = ["tree_eucalyptus"], np.ones(1), np.zeros(1)
+            if len(keys) > 1:
+                la = math.log(max(ri, 0.3) / max(hi, 0.5))
+                w = w * np.exp(-((la - asp) ** 2) / (2 * sig * sig))
+            w = w / w.sum() if w.sum() > 0 else np.full(len(keys), 1.0 / len(keys))
+            pid = keys[int(self.rng.choice(len(keys), p=w))]
+            h0, r0 = self._dims(pid)
+            sc = (hi / h0) ** hw * (max(ri, 0.5) / r0) ** (1.0 - hw)
+            self.add(pid, xi, zi, scale=float(np.clip(sc, s_lo, s_hi)))
+            kept.append((xi, zi))
+            stats["lidar_trees"] += 1
+        self.lidar_xz = np.asarray(kept, float).reshape(-1, 2)
+        self.lidar_kd = cKDTree(self.lidar_xz) if len(self.lidar_xz) else cKDTree(np.zeros((1, 2)) + 1e9)
+        self._find_gaps()
+        stats["lidar_gap_cells"] = len(self.gap_cells)
+        stats["lidar_gap_houses"] = len(self.gap_houses)
+        return stats
+
+    def _find_gaps(self) -> None:
+        """Gap cells: developed cells (>= 3 houses) without any lidar tree, and cells of houses built after
+        the survey (parcel_year_built > props.lidar_trees.survey_year): rule-based trees fill those."""
+        survey = int(assumption("props.lidar_trees.survey_year"))
+        tree_cells: set[tuple[int, int]] = {self._cell(float(a), float(b)) for a, b in self.lidar_xz}
+        houses: dict[tuple[int, int], int] = {}
+        years = self.inp["buildings"].get("parcel_year_built")
+        yv = None
+        if years is not None:
+            import pandas as pd
+
+            yv = pd.to_numeric(years, errors="coerce").to_numpy()
+        for k, (g, typ) in enumerate(zip(self.bgeoms, self.btype, strict=True)):
+            if typ != "house" or g is None or g.is_empty:
+                continue
+            c = g.centroid
+            cell = self._cell(c.x, c.y)
+            houses[cell] = houses.get(cell, 0) + 1
+            if yv is not None and np.isfinite(yv[k]) and yv[k] > survey:
+                self.gap_houses.add(k)
+                self.gap_cells.add(cell)
+        self.gap_cells |= {c for c, nh in houses.items() if nh >= 3 and c not in tree_cells}
 
     # -- rules -------------------------------------------------------------------
     def street_trees(self) -> dict[str, int]:
@@ -264,8 +592,9 @@ class Placer:
                         tan = seg[k] / max(L[k], 1e-6)
                         nrm = np.array([-tan[1], tan[0]]) * side
                         q = p + nrm * off + tan * self.rng.normal(0, 0.6)
-                        if self.clear(q[0], q[1], clear_b, clear_r):
-                            self.add(self.pick(f"{cls}_street"), float(q[0]), float(q[1]))
+                        if self.clear(q[0], q[1], clear_b, clear_r) and self.tree_gap(float(q[0]), float(q[1])):
+                            pid = self.pick(f"{cls}_street")
+                            self.add(pid, float(q[0]), float(q[1]), scale=self.young(pid))
                     t += spacing * self.rng.uniform(0.85, 1.15)
         return {"street_trees": len(self.recs) - n0}
 
@@ -278,17 +607,27 @@ class Placer:
         spacing = float(assumption("props.commercial_palm_spacing_m"))
         clear_b = float(assumption("props.tree_building_clearance_m"))
         clear_r = float(assumption("props.tree_road_clearance_m"))
-        counts = {"yard_trees": 0, "shrubs": 0, "grass": 0, "commercial_trees": 0}
-        for g, typ in zip(self.bgeoms, self.btype, strict=True):
+        counts = {"yard_trees": 0, "shrubs": 0, "hedge_segments": 0, "grass": 0, "commercial_trees": 0}
+        lidar = self.lidar_xz is not None
+        for k_b, (g, typ) in enumerate(zip(self.bgeoms, self.btype, strict=True)):
             if g is None or g.is_empty:
                 continue
             c = g.centroid
             if self.in_hero(c.x, c.y):
                 continue
             if typ == "house":
+                # with lidar, yard trees only for houses the survey could not see (built later / gap cells)
+                gap_house = not lidar or k_b in self.gap_houses or self.tree_gap(c.x, c.y, near_m=0.0)
                 for kind, rate in per_house.items():
+                    if kind == "yard" and not gap_house:
+                        continue
                     n = int(rate) + (1 if self.rng.random() < rate - int(rate) else 0)
                     for _ in range(n):
+                        if kind == "shrub":
+                            sp = self.pick("yard_shrub")
+                            if sp == "hedge":
+                                counts["hedge_segments"] += self.hedge_run(g, c)
+                                continue
                         for _try in range(6):
                             d = self.rng.uniform(clear_b + 0.5, clear_b + 6.0) if kind == "yard" else self.rng.uniform(0.9, 2.5)
                             ring = g.exterior
@@ -299,10 +638,13 @@ class Placer:
                             bl = clear_b if kind == "yard" else 0.6
                             if self.clear(q[0], q[1], bl, clear_r if kind == "yard" else 0.8):
                                 if kind == "yard":
-                                    self.add(self.pick("yard"), q[0], q[1])
+                                    if lidar and self.lidar_kd.query_ball_point([q[0], q[1]], 5.0):
+                                        break
+                                    pid = self.pick("yard")
+                                    self.add(pid, q[0], q[1], scale=self.young(pid))
                                     counts["yard_trees"] += 1
                                 else:
-                                    self.add(kind, q[0], q[1])
+                                    self.add(sp if kind == "shrub" else kind, q[0], q[1])
                                     counts["shrubs" if kind == "shrub" else "grass"] += 1
                                 break
             elif typ in ("commercial", "apartments"):
@@ -310,11 +652,40 @@ class Placer:
                 n = int(ring.length // spacing)
                 for k in range(n):
                     p = ring.interpolate((k + self.rng.uniform(0.2, 0.8)) * spacing)
-                    if self.clear(p.x, p.y, clear_b + 2.0, clear_r):
-                        self.add(self.pick("commercial"), p.x, p.y)
+                    if self.clear(p.x, p.y, clear_b + 2.0, clear_r) and self.tree_gap(p.x, p.y):
+                        pid = self.pick("commercial")
+                        self.add(pid, p.x, p.y, scale=self.young(pid))
                         counts["commercial_trees"] += 1
         del Point
         return counts
+
+    def hedge_run(self, g: Any, c: Any) -> int:
+        """A clipped hedge run (2 m prop segments end to end) parallel to a house wall, 1.2 m out."""
+        lo, hi = (int(v) for v in assumption("props.hedge_run_segments"))
+        ring = g.exterior
+        seg_len = 2.0
+        if "hedge" not in self.ids:
+            return 0
+        for _try in range(4):
+            s0 = float(self.rng.uniform(0, ring.length))
+            p = ring.interpolate(s0)
+            p2 = ring.interpolate(min(ring.length, s0 + 0.5))
+            t = np.array([p2.x - p.x, p2.y - p.y])
+            if np.linalg.norm(t) < 1e-6:
+                continue
+            t /= np.linalg.norm(t)
+            nrm = np.array([t[1], -t[0]])
+            if nrm @ np.array([p.x - c.x, p.y - c.y]) < 0:
+                nrm = -nrm
+            n_seg = int(self.rng.integers(lo, hi + 1))
+            start = np.array([p.x, p.y]) + nrm * 1.2
+            pts = [start + t * seg_len * (k + 0.5) for k in range(n_seg)]
+            if all(self.clear(float(q[0]), float(q[1]), 0.7, 0.6) for q in pts):
+                rot = float(math.atan2(-t[1], t[0]))  # prop local +x along the wall
+                for q in pts:
+                    self.add("hedge", float(q[0]), float(q[1]), rot=rot, scale=1.0)
+                return n_seg
+        return 0
 
     def slopes(self) -> dict[str, int]:
         terr: Terrain = self.inp["terrain"]
@@ -346,6 +717,8 @@ class Placer:
                     if not self.clear(qx, qz, b_clear, 3.0):
                         continue
                     if kind == "tree":
+                        if self.covered(qx, qz):  # lidar knows the real canyon trees
+                            continue
                         self.add(self.pick("slope"), qx, qz)
                         counts["slope_trees"] += 1
                     else:
@@ -436,6 +809,11 @@ class Placer:
 
             for tr in t.get("trees", []):
                 x, z = to_scene(tr["x"], tr["y"])
+                # with lidar: a layout tree survives only where no real tree stands within 20 m
+                # (post-survey planting, or trees too small for the 2014 survey)
+                if self.lidar_xz is not None and self.covered(x, z) and self.lidar_kd.query_ball_point([x, z], 20.0):
+                    counts["hero_layout_trees_replaced_by_lidar"] = counts.get("hero_layout_trees_replaced_by_lidar", 0) + 1
+                    continue
                 self.add(tr["species"], x, z, rot=math.radians(tr["rot_deg"]), scale=float(tr["scale"]), y=y0)
                 counts["hero_trees"] += 1
             for lp in t.get("lamps", []):
@@ -472,6 +850,13 @@ class Placer:
         inside = (xs >= terr.min_x) & (xs <= terr.max_x) & (zs >= terr.min_z) & (zs <= terr.max_z)
         if (~inside).any():
             log(f"dropped {int((~inside).sum())} props outside the terrain extent")
+        if self.region_poly is not None:
+            from shapely import contains_xy
+
+            reg = contains_xy(self.region_poly, xs, zs)
+            if (inside & ~reg).any():
+                log(f"dropped {int((inside & ~reg).sum())} props outside the region bbox")
+            inside &= reg
         return arr[inside]
 
 
@@ -518,7 +903,7 @@ def cells_index(arr: np.ndarray, ext: dict[str, float], n_props: int) -> tuple[n
     return arr, grid, sections
 
 
-def write_outputs(out_dir: Path, arr: np.ndarray, placer: Placer, stats: dict[str, int], meta: dict[str, Any]) -> Path:
+def write_outputs(out_dir: Path, arr: np.ndarray, placer: Placer, stats: dict[str, Any], meta: dict[str, Any]) -> Path:
     ext = meta.get("terrain_extent_scene") or meta.get("extent_scene")
     arr, grid, sections = cells_index(arr, ext, len(placer.ids))
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -551,6 +936,10 @@ def write_outputs(out_dir: Path, arr: np.ndarray, placer: Placer, stats: dict[st
                   for i, pid in enumerate(placer.ids)],
         "cells": grid,
         "stats": stats,
+        "trees_source": stats.get("trees_source", "procedural"),
+        "region_bbox": region()["bbox"],
+        "scale_note": "trees from lidar carry scale = measured size / model size (props.lidar_trees.scale_clamp), "
+                      "which can exceed the manifest suggested_scale_range; everything else stays inside it",
         "tint_note": "vehicle records (parked cars) carry no color: pick paint_colors from props_manifest.json by share, "
                      "seeded by the record index, for a stable look",
     }
@@ -562,17 +951,35 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--processed", type=Path, default=None, help="data/processed directory (default from config)")
     ap.add_argument("--assets", type=Path, default=None, help="client/public/assets directory (default from config)")
-    ap.add_argument("--skip", nargs="*", default=[], choices=["street", "yards", "slopes", "lamps", "heroes"])
+    ap.add_argument("--skip", nargs="*", default=[], choices=["lidar", "street", "yards", "slopes", "lamps", "heroes"])
+    ap.add_argument("--lidar-trees", type=Path, default=None, help="trees.parquet (default data/raw/lidar/trees.parquet)")
+    ap.add_argument("--allow-region-mismatch", action="store_true",
+                    help="dev only: run although region_meta.json was built for another bbox than region.yaml")
     a = ap.parse_args(argv)
     proc = a.processed or processed_dir()
     assets = a.assets or assets_dir()
     inp = load_inputs(proc, assets)
     meta = inp["meta"]
+    check_region(meta, a.allow_region_mismatch)
+    inp["region_poly"] = region_polygon()
+    stats: dict[str, Any] = {}
+    lidar_df = None
+    trees_p = a.lidar_trees or raw_dir() / "lidar" / "trees.parquet"
     if meta.get("synthetic"):
-        log("WARNING region_meta.json says synthetic: placements follow the SYNTHETIC dev world (labeled in the header)")
+        log("WARNING region_meta.json says synthetic: placements follow the SYNTHETIC dev world (labeled in the header); "
+            "lidar trees are not used")
+    elif "lidar" not in a.skip:
+        lidar_df, lst = load_lidar_trees(trees_p)
+        stats.update(lst)
+        if lidar_df is None:
+            log(f"NOTE {trees_p} not found: every tree is rule-based (trees_source = procedural). Produce it with "
+                ".venv/bin/python pipeline/fetch_lidar.py && .venv/bin/python pipeline/lidar_features.py")
+        else:
+            inp["lidar_coverage"] = lidar_coverage(raw_dir())
+            log(f"lidar trees: {len(lidar_df)} usable of {lst.get('lidar_trees_in_file')} in {trees_p}")
     placer = Placer(inp, int(assumption("props.seed")))
-    stats: dict[str, int] = {}
-    steps = [("street", placer.street_trees), ("yards", placer.yards), ("slopes", placer.slopes),
+    steps = [("lidar", lambda: placer.lidar_trees(lidar_df)) if lidar_df is not None else ("lidar", dict),
+             ("street", placer.street_trees), ("yards", placer.yards), ("slopes", placer.slopes),
              ("lamps", placer.lamps), ("heroes", placer.hero_props)]
     for name, fn in steps:
         if name in a.skip:
@@ -581,6 +988,8 @@ def main(argv: list[str] | None = None) -> int:
         stats.update(s)
         log(f"{name}: {s}")
     arr = placer.finalize()
+    stats["trees_source"] = "lidar+gaps" if lidar_df is not None else "procedural"
+    stats["lidar_file"] = trees_p.name if lidar_df is not None else None
     binp = write_outputs(assets / "props", arr, placer, stats, meta)
     log(f"wrote {len(arr)} records -> {binp} ({binp.stat().st_size / 1e6:.1f} MB) + placements.json")
     return 0

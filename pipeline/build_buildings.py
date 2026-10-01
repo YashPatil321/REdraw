@@ -484,6 +484,10 @@ def prepare_buildings(
     gdf["address"] = addr
     gdf["name"] = [_clean(v) for v in _col(gdf, "name")]
     gdf["school_id"] = [_clean(v) for v in gdf["school_id"]]
+    # provenance: footprint dataset + its own id (Overture GERS id / OSM id / lidar_id)
+    gdf["source"] = [_clean(v) for v in _col(gdf, "source")]
+    sid = _col(gdf, "source_id") if "source_id" in gdf.columns else (_col(gdf, "id") if "element" in gdf.columns else _col(gdf, "osmid"))
+    gdf["source_id"] = [_clean(v) for v in sid]
 
     # Stable ids: by OSM id when present (real), else input order (synthetic).
     if "osm_sort_key" in gdf.columns:
@@ -492,7 +496,7 @@ def prepare_buildings(
     gdf["parcel_apn"] = None
     gdf["parcel_land_use"] = None
     gdf["parcel_year_built"] = None
-    keep = ["id", "type", "height_m", "base_elev_m", "levels", "address", "name", "area_m2", "centroid_x", "centroid_z", "block_group", "school_id", "tile", "parcel_apn", "parcel_land_use", "parcel_year_built", *INTERNAL_COLUMNS, "geometry"]
+    keep = ["id", "type", "height_m", "base_elev_m", "levels", "address", "name", "area_m2", "centroid_x", "centroid_z", "block_group", "school_id", "tile", "parcel_apn", "parcel_land_use", "parcel_year_built", "source", "source_id", *INTERNAL_COLUMNS, "geometry"]
     return gpd.GeoDataFrame(gdf[keep], geometry="geometry", crs="EPSG:32611")
 
 
@@ -501,7 +505,18 @@ INTERNAL_COLUMNS = ["height_rule", "building_tag", "levels_est", "roof_shape", "
 
 
 def write_buildings_geojson(bdf: gpd.GeoDataFrame, path: Path) -> None:
-    out = bdf.drop(columns=[c for c in INTERNAL_COLUMNS if c in bdf.columns]).to_crs("EPSG:4326")
+    """buildings.geojson (docs/data_contract.md). Lidar roof fields (LIDAR_GEOJSON_FIELDS) are
+    written only when the build had lidar data; other internal columns are dropped."""
+    out = bdf.copy()
+    has_lidar = any(c.startswith("lidar_") for c in out.columns)
+    for f, prop in LIDAR_GEOJSON_FIELDS.items():
+        col = f"lidar_{f}"
+        if has_lidar:
+            out[prop] = out[col] if col in out.columns else None
+    if has_lidar:
+        out["height_source"] = out["height_rule"] if "height_rule" in out.columns else None
+    drop = [c for c in out.columns if c in INTERNAL_COLUMNS or c.startswith("lidar_")]
+    out = out.drop(columns=drop).to_crs("EPSG:4326")
     feats = []
     for row in out.itertuples(index=False):
         d = row._asdict()
@@ -858,7 +873,13 @@ def building_shapes(bdf: gpd.GeoDataFrame, terrain: Terrain, heroes: list[Hero] 
         if kind != "flat":
             w_max = max(min(np.hypot(*(r[1] - r[0])), np.hypot(*(r[2] - r[1]))) for r in rects)
             rise = (w_max / 2.0) * t
-            if rule == "height":
+            eave = getattr(row, "lidar_eave_height_m", None)
+            eave = float(eave) if eave is not None and np.isfinite(pd.to_numeric(eave, errors="coerce")) else None
+            if rule == "lidar" and eave is not None and 2.2 <= eave < h_tag:
+                # measured eave line (lidar heights are above the bare-earth ground under the roof)
+                wall_top = base_y - slab + eave
+                levels = max(1, int(round(eave / story)))
+            elif rule in ("height", "lidar"):
                 levels = max(1, int(round((h_tag - rise) / story)))
                 wall_top = base_y + max(2.6, h_tag - rise)
             else:
@@ -1145,14 +1166,19 @@ def load_osm_buildings(raw_geojson: Path, landuse: gpd.GeoDataFrame | None = Non
 # ---------------------------------------------------------------------------
 
 LIDAR_DIR = "lidar"
-LIDAR_ROOF_FIELDS = ("eave_height_m", "ridge_height_m", "eave_m", "ridge_m", "height_m", "roof_type", "roof_shape", "roof_pitch_deg", "roof_azimuth_deg", "ground_elev_m", "n_points", "quality")
+# lidar roof fields copied onto buildings (prefixed `lidar_` internally; see LIDAR_GEOJSON_FIELDS)
+LIDAR_ROOF_FIELDS = ("eave_height_m", "ridge_height_m", "height_p50_m", "height_max_m", "roof_type", "roof_pitch_deg", "ridge_azimuth_deg", "n_planes", "quality", "lidar_status")
+# buildings.geojson property <- lidar field (added when buildings_roofs.parquet exists)
+LIDAR_GEOJSON_FIELDS = {"eave_height_m": "eave_height_m", "ridge_height_m": "ridge_height_m", "roof_type": "roof_type", "roof_pitch_deg": "roof_pitch_deg", "ridge_azimuth_deg": "ridge_azimuth_deg", "quality": "lidar_quality", "lidar_status": "lidar_status"}
+LIDAR_USABLE_QUALITY = ("good", "fair")
+LIDAR_ROOF_SHAPE = {"flat": "flat", "gable": "gabled", "gabled": "gabled", "hip": "hipped", "hipped": "hipped", "shed": "skillion", "skillion": "skillion", "mansard": "mansard", "dome": "dome", "complex": "hipped", "pyramid": "pyramidal", "pyramidal": "pyramidal"}
 
 
 def add_lidar_missing_buildings(gdf: gpd.GeoDataFrame, raw: Path) -> gpd.GeoDataFrame:
-    """Append lidar-detected footprints missing from OSM/Overture (data/raw/lidar/
-    missing_buildings.geojson) as new footprints (`building` = their `type`/`building`
-    property, else house; `source` = lidar). Their osm_sort_key sorts after every mapped
-    footprint so existing building ids stay stable."""
+    """Append lidar-detected buildings missing from the map footprints (data/raw/lidar/
+    missing_buildings.geojson) as new house footprints (`source` = lidar, `source_id` =
+    lidar_id). Their roof model columns ride along (`lidar_*`). Their osm_sort_key sorts after
+    every mapped footprint so existing building ids stay stable."""
     p = raw / LIDAR_DIR / "missing_buildings.geojson"
     if not p.exists():
         return gdf
@@ -1160,74 +1186,70 @@ def add_lidar_missing_buildings(gdf: gpd.GeoDataFrame, raw: Path) -> gpd.GeoData
     if not len(extra):
         return gdf
     extra = extra.to_crs("EPSG:32611")
-    btag = extra["building"] if "building" in extra.columns else (extra["type"] if "type" in extra.columns else pd.Series(["house"] * len(extra)))
-    add = gpd.GeoDataFrame(
-        {
-            "building": [str(v) if v else "house" for v in btag],
-            "height": extra["height_m"].astype(str) if "height_m" in extra.columns else None,
-            "source": "lidar",
-            "osm_sort_key": [f"~lidar:{i:08d}" for i in range(len(extra))],
-        },
-        geometry=extra.geometry.to_numpy(),
-        crs="EPSG:32611",
-    )
+    n = len(extra)
+    lid = extra["lidar_id"].astype(str).to_numpy() if "lidar_id" in extra.columns else np.array([f"lidar_{i:05d}" for i in range(n)])
+    cols: dict[str, Any] = {
+        "building": ["house"] * n,
+        "source": ["lidar"] * n,
+        "source_id": lid,
+        "osm_sort_key": [f"~lidar:{v}" for v in lid],
+    }
+    for f in LIDAR_ROOF_FIELDS:
+        if f in extra.columns:
+            cols[f"lidar_{f}"] = extra[f].to_numpy()
+    if "lidar_lidar_status" not in cols:
+        cols["lidar_lidar_status"] = ["present"] * n
+    add = gpd.GeoDataFrame(cols, geometry=extra.geometry.to_numpy(), crs="EPSG:32611")
     add = tag_landuse(add, None)
     add["estate_context"] = False
-    log(f"buildings: +{len(add):,} lidar-detected footprints missing from the map data ({p.name})")
+    log(f"buildings: +{n:,} lidar-detected buildings missing from the map footprints ({p.name}), type house")
     return gpd.GeoDataFrame(pd.concat([gdf, add], ignore_index=True), geometry="geometry", crs="EPSG:32611")
 
 
-def lidar_roof_join(bdf: gpd.GeoDataFrame, raw: Path) -> gpd.GeoDataFrame:
-    """Copy lidar roof measurements (data/raw/lidar/buildings_roofs.parquet) onto buildings.
+def lidar_roof_join(bdf: gpd.GeoDataFrame, raw: Path, footprints: gpd.GeoDataFrame | None = None) -> gpd.GeoDataFrame:
+    """Copy lidar roof measurements (data/raw/lidar/buildings_roofs.parquet, one row per map
+    footprint, `building_id` = the footprint's source id, e.g. the Overture GERS id) onto
+    buildings by `source_id`. Lidar-only buildings already carry their `lidar_*` columns.
 
-    Joins on `building_id` (== buildings.geojson id) when present, else spatially (each lidar
-    record's point / polygon centroid inside a footprint). Fields from LIDAR_ROOF_FIELDS are
-    added as `lidar_<field>`; a measured ridge height (or height) becomes height_m with
-    height_rule 'lidar', and a lidar roof type replaces the roof:shape tag."""
-    p = raw / LIDAR_DIR / "buildings_roofs.parquet"
-    if not p.exists():
-        return bdf
-    try:
-        lr = gpd.read_parquet(p)
-        has_geom = True
-    except Exception:  # noqa: BLE001 - plain (non-geo) parquet
-        lr = pd.read_parquet(p)
-        has_geom = False
-    fields = [f for f in LIDAR_ROOF_FIELDS if f in lr.columns]
-    if not fields:
-        log(f"WARNING {p.name}: none of {LIDAR_ROOF_FIELDS} present; lidar roofs ignored")
-        return bdf
+    Adds `lidar_<field>` columns (LIDAR_ROOF_FIELDS). Where the roof is present in the 2014
+    lidar with quality good/fair, the measured ridge height becomes height_m (height_rule
+    'lidar') and the lidar roof type replaces the roof:shape tag."""
     bdf = bdf.copy()
-    if "building_id" in lr.columns:
-        m = lr.set_index(lr["building_id"].astype(np.int64))[fields]
-        m = m[~m.index.duplicated()]
-        joined = m.reindex(bdf["id"].to_numpy())
-    elif has_geom:
-        pts = gpd.GeoDataFrame(lr[fields], geometry=lr.geometry.to_crs("EPSG:32611").representative_point(), crs="EPSG:32611")
-        j = gpd.sjoin(pts, bdf[["id", "geometry"]], how="inner", predicate="within")
-        j = j[~j["id"].duplicated()].set_index("id")
-        joined = j[fields].reindex(bdf["id"].to_numpy())
-    else:
-        log(f"WARNING {p.name}: no building_id and no geometry; lidar roofs ignored")
+    if footprints is not None:
+        # lidar columns of lidar-only footprints (added by add_lidar_missing_buildings)
+        lcols = [c for c in footprints.columns if c.startswith("lidar_")]
+        if lcols and "source_id" in footprints.columns:
+            m = footprints.loc[footprints["source"].astype(str) == "lidar", ["source_id", *lcols]].drop_duplicates("source_id").set_index("source_id")
+            for c in lcols:
+                bdf[c] = bdf["source_id"].map(m[c]) if len(m) else np.nan
+    p = raw / LIDAR_DIR / "buildings_roofs.parquet"
+    if p.exists():
+        lr = pd.read_parquet(p)
+        fields = [f for f in LIDAR_ROOF_FIELDS if f in lr.columns]
+        if "building_id" not in lr.columns or not fields:
+            log(f"WARNING {p.name}: no building_id or none of {LIDAR_ROOF_FIELDS}; lidar roofs ignored")
+        else:
+            m = lr.assign(building_id=lr["building_id"].astype(str)).drop_duplicates("building_id").set_index("building_id")[fields]
+            key = bdf["source_id"].astype(str)
+            hit = key.isin(m.index) & (bdf["source"].astype(str) != "lidar")
+            for f in fields:
+                col = f"lidar_{f}"
+                vals = key.map(m[f])
+                bdf[col] = np.where(hit, vals, bdf[col]) if col in bdf.columns else np.where(hit, vals, None)
+            log(f"buildings: lidar roof records matched {int(hit.sum()):,}/{len(bdf):,} footprints by source id")
+    if "lidar_quality" not in bdf.columns:
         return bdf
-    joined.index = bdf.index
-    for f in fields:
-        bdf[f"lidar_{f}"] = joined[f].to_numpy()
-    top = None
-    for f in ("ridge_height_m", "ridge_m", "height_m"):
-        if f in fields:
-            top = pd.to_numeric(joined[f], errors="coerce")
-            break
-    n = 0
-    if top is not None:
-        ok = top.notna() & (top > 2.0) & (top < 80.0)
-        bdf.loc[ok, "height_m"] = top[ok].to_numpy()
-        bdf.loc[ok, "height_rule"] = "lidar"
-        n = int(ok.sum())
-    for f in ("roof_type", "roof_shape"):
-        if f in fields:
-            rt = joined[f]
-            bdf["roof_shape"] = np.where(rt.notna(), rt.astype(str).str.lower(), bdf["roof_shape"])
-            break
-    log(f"buildings: lidar roof measurements joined for {int(joined.notna().any(axis=1).sum()):,} footprints ({n:,} heights from lidar)")
+    q = bdf["lidar_quality"].astype(str)
+    status = bdf["lidar_lidar_status"].astype(str) if "lidar_lidar_status" in bdf.columns else pd.Series("present", index=bdf.index)
+    usable = q.isin(LIDAR_USABLE_QUALITY) & (status == "present")
+    lo, hi = float(assumption("hd_world.lidar_height_min_m")), float(assumption("hd_world.lidar_height_max_m"))
+    ridge = pd.to_numeric(bdf["lidar_ridge_height_m"], errors="coerce") if "lidar_ridge_height_m" in bdf.columns else pd.Series(np.nan, index=bdf.index)
+    ok = usable & ridge.between(lo, hi) & (bdf.get("height_rule", "") != "hero")
+    bdf.loc[ok, "height_m"] = ridge[ok].to_numpy()
+    bdf.loc[ok, "height_rule"] = "lidar"
+    if "lidar_roof_type" in bdf.columns:
+        rt = bdf["lidar_roof_type"].astype(str).str.lower().map(LIDAR_ROOF_SHAPE)
+        use = usable & rt.notna()
+        bdf["roof_shape"] = np.where(use, rt, bdf["roof_shape"])
+    log(f"buildings: lidar heights used for {int(ok.sum()):,} buildings, roof types for {int(usable.sum()):,} (quality good/fair, present in the 2014 flight)")
     return bdf

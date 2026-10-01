@@ -28,6 +28,7 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 
 from pipeline.common import Extent, TileGrid, log
+from pipeline.config import assumption
 
 CHANNELS = ("lawn", "chaparral", "dirt", "paved", "water", "canopy")
 
@@ -61,6 +62,43 @@ def classify_imagery(img: np.ndarray) -> np.ndarray:
     return out
 
 
+# Overture land_cover subtype -> (channel indices, weights) added to the imagery memberships
+LANDCOVER_PRIOR: dict[str, tuple[tuple[int, ...], tuple[float, ...]]] = {
+    "forest": ((5,), (0.35,)),
+    "shrub": ((1,), (0.35,)),
+    "grass": ((1, 2), (0.2, 0.1)),
+    "barren": ((2,), (0.4,)),
+    "crop": ((0, 2), (0.15, 0.15)),
+    "wetland": ((4, 5), (0.1, 0.2)),
+}
+
+
+def _raster_band(path: Path, b: Extent, size: int) -> np.ndarray:
+    """First band of an EPSG:32611 GeoTIFF warped onto a tile (size x size, north up), NaN -> 0."""
+    import rasterio
+    from rasterio.transform import from_bounds
+    from rasterio.warp import Resampling, reproject
+
+    from pipeline.geo import scene_origin
+
+    o = scene_origin()
+    dst_t = from_bounds(o.easting + b.min_x, o.northing - b.max_z, o.easting + b.max_x, o.northing - b.min_z, size, size)
+    out = np.full((size, size), np.nan, dtype=np.float32)
+    with rasterio.open(path) as src:
+        if src.crs is not None and src.crs.to_epsg() == 32611:
+            from rasterio.enums import Resampling as R
+            from rasterio.windows import from_bounds as win_from_bounds
+
+            win = win_from_bounds(o.easting + b.min_x, o.northing - b.max_z, o.easting + b.max_x, o.northing - b.min_z, src.transform)
+            a = src.read(1, window=win, out_shape=(size, size), resampling=R.average, boundless=True, fill_value=np.nan, masked=False).astype(np.float32)
+            if src.nodata is not None:
+                a[a == src.nodata] = np.nan
+            return np.nan_to_num(a, nan=0.0)
+        reproject(source=rasterio.band(src, 1), destination=out, src_transform=src.transform, src_crs=src.crs, src_nodata=src.nodata,
+                  dst_transform=dst_t, dst_crs="EPSG:32611", dst_nodata=np.nan, resampling=Resampling.average)
+    return np.nan_to_num(out, nan=0.0)
+
+
 def _raster(polys: list[Any], b: Extent, size: int) -> np.ndarray:
     """Binary mask (size, size) float of polygons (scene coords, holes honored)."""
     if not polys:
@@ -92,12 +130,23 @@ def write_splat_masks(
     water: list[Any],
     landuse: list[tuple[Any, str]],
     lawn_extra: list[Any] | None = None,
+    landcover: list[tuple[Any, str]] | None = None,
+    lidar: dict[str, Path] | None = None,
 ) -> dict[str, list[str]]:
     """Write splat_{tid}_a.png / _b.png for every tile. `paved` is a (multi)polygon (scene),
-    `water` a list of polygons, `landuse` (polygon, class) pairs. Returns tile id -> paths."""
+    `water` a list of polygons, `landuse` (polygon, class) pairs, `landcover` Overture
+    land_cover (polygon, subtype) pairs (weak 10 m prior), `lidar` optional paths of the lidar
+    canopy-height / nDSM rasters ({"chm": ..., "ndsm": ...}, 0.5 m) that sharpen tree canopy and
+    shrub vs lawn. Returns tile id -> paths."""
     import shapely
 
     out: dict[str, list[str]] = {}
+    lc = landcover or []
+    lc_geoms = [g for g, _ in lc]
+    lc_tree = shapely.STRtree(lc_geoms) if lc_geoms else None
+    lidar = {k: v for k, v in (lidar or {}).items() if v is not None and Path(v).exists()}
+    shrub_max = float(assumption("hd_world.ndsm_shrub_max_m"))
+    canopy_min = float(assumption("hd_world.ndsm_canopy_min_m"))
     lu_geoms = [g for g, _ in landuse]
     lu_tree = shapely.STRtree(lu_geoms) if lu_geoms else None
     w_tree = shapely.STRtree(water) if water else None
@@ -131,6 +180,33 @@ def write_splat_masks(
             m = _raster(groups["wild"], b, size)
             wts[..., 1] += m * wts[..., 0] * 0.8
             wts[..., 0] *= 1 - 0.8 * m
+        if lc_tree is not None:
+            # Overture land_cover (ESA WorldCover 10 m): a weak prior under the imagery classes.
+            # In late-summer SoCal "grass" is dry annual grassland, so it leans chaparral / dirt.
+            groups_c: dict[str, list[Any]] = {}
+            for i in lc_tree.query(bx, predicate="intersects"):
+                groups_c.setdefault(lc[int(i)][1], []).append(lc_geoms[int(i)])
+            for st, (ch, w) in LANDCOVER_PRIOR.items():
+                if st in groups_c:
+                    m = ndimage.gaussian_filter(_raster(groups_c[st], b, size), 2.0)
+                    for k, wk in zip(ch, w, strict=True):
+                        wts[..., k] += wk * m
+        if lidar:
+            # lidar 2014 heights above ground: trees are tall, shrubs are knee-to-head high,
+            # lawn / bare ground is flat. Buildings are removed by the paved override below.
+            chm = _raster_band(lidar["chm"], b, size) if "chm" in lidar else None
+            ndsm = _raster_band(lidar["ndsm"], b, size) if "ndsm" in lidar else chm
+            if chm is not None:
+                tree = _smooth(chm, canopy_min * 0.8, canopy_min * 1.2)
+                wts[..., 5] = np.maximum(wts[..., 5], 1.5 * tree)
+                wts[..., :5] *= (1 - 0.8 * tree)[..., None]
+            if ndsm is not None:
+                shrub = _smooth(ndsm, shrub_max * 0.5, shrub_max) * (1 - _smooth(ndsm, canopy_min, canopy_min * 1.5))
+                flat = 1 - _smooth(ndsm, 0.2, shrub_max * 0.5)
+                wts[..., 1] += 0.6 * shrub * (1 - wts[..., 0].clip(0, 1))
+                wts[..., 0] *= 1 - 0.5 * shrub
+                wts[..., 5] *= 1 - 0.7 * flat  # imagery "dark green" on flat ground is lawn, not canopy
+                wts[..., 0] += 0.5 * flat * wts[..., 5]
         if lx_tree is not None:
             m = _raster([lawn_extra[int(i)] for i in lx_tree.query(bx, predicate="intersects")], b, size)  # type: ignore[index]
             wts[..., 0] = np.maximum(wts[..., 0], m * 0.7)
@@ -213,4 +289,58 @@ def load_water_scene(raw: Path) -> list[Any]:
         if g.geom_type not in ("Polygon", "MultiPolygon"):
             continue
         out.append(shapely.affinity.affine_transform(g, [1, 0, 0, -1, -o.easting, o.northing]))
+    return out
+
+
+LAND_COVER_RAW = "overture/land_cover.parquet"
+
+
+def fetch_land_cover(raw: Path) -> Path | None:
+    """Overture base/land_cover (ESA WorldCover-derived 10 m cover classes) for the cached
+    land_use extent and release, cached as data/raw/overture/land_cover.parquet. Optional
+    detail input for the splat masks: returns None (with a logged note and the URL) when the
+    Overture bucket is unreachable, since imagery + land_use already cover every pixel."""
+    import json
+
+    import pyarrow.parquet as pq
+
+    p = raw / LAND_COVER_RAW
+    lu = raw / "overture" / "land_use.parquet"
+    if not lu.exists():
+        return p if p.exists() else None
+    key = json.loads((pq.read_schema(lu).metadata or {}).get(b"redraw_key", b"{}").decode() or "{}")
+    if not key.get("release") or not key.get("bbox"):
+        return p if p.exists() else None
+    from pipeline import fetch_aws
+
+    try:
+        fetch_aws.configure_network()
+        tab = fetch_aws.overture_cached(raw, fetch_aws.overture_s3(), key["release"], "base", "land_cover", tuple(key["bbox"]), ["id", "geometry", "bbox", "subtype", "cartography"], False)
+    except Exception as e:  # noqa: BLE001 - optional layer: any network/S3 failure just skips it
+        log(f"land_cover: Overture base/land_cover unavailable ({type(e).__name__}: {e}); "
+            f"URL {fetch_aws.OVERTURE_URL}/release/{key['release']}/theme=base/type=land_cover/ ; splat masks use imagery + land_use only")
+        return None
+    return p if tab is not None and p.exists() else None
+
+
+def load_land_cover_scene(raw: Path) -> list[tuple[Any, str]]:
+    """Overture land_cover polygons (scene coordinates) with their subtype (forest, shrub,
+    grass, crop, barren, urban, wetland, ...); [] if not cached."""
+    p = raw / LAND_COVER_RAW
+    if not p.exists():
+        return []
+    import geopandas as gpd
+    import pyarrow.parquet as pq
+    import shapely
+
+    from pipeline.geo import scene_origin
+
+    t = pq.read_table(p, columns=["geometry", "subtype"]).to_pandas()
+    gdf = gpd.GeoDataFrame({"subtype": t["subtype"].astype(str)}, geometry=shapely.from_wkb(t["geometry"].to_numpy()), crs="EPSG:4326").to_crs("EPSG:32611")
+    o = scene_origin()
+    out = []
+    for g, st in zip(gdf.geometry, gdf["subtype"], strict=True):
+        if g is None or g.geom_type not in ("Polygon", "MultiPolygon"):
+            continue
+        out.append((shapely.affinity.affine_transform(g, [1, 0, 0, -1, -o.easting, o.northing]), st))
     return out

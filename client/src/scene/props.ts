@@ -366,6 +366,8 @@ interface Kind {
   cells: Map<number, Placement[]>;
   layers: KindLayer[];
   paint: Array<[number, number, number]> | null;
+  /** full-model distance (m) at draw-distance 1.0 */
+  near: number;
 }
 
 /** Instanced static props with two LODs and distance budgets on a coarse grid. */
@@ -396,6 +398,7 @@ export class StaticProps {
     list: Placement[],
     heightAt: (x: number, z: number) => number | null,
     paint: Array<[number, number, number]> | null = null,
+    nearOverride?: number,
   ): void {
     const cells = new Map<number, Placement[]>();
     for (const p of list) {
@@ -420,7 +423,7 @@ export class StaticProps {
     };
     const layers = [mk(full.geometry, full.material, false, cls === 'vehicle' ? 600 : 4000)];
     if (lod && FAR[cls] > 0) layers.push(mk(lod.geometry, lod.material, true, 20000));
-    this.kinds.push({ id, cls, cells, layers, paint });
+    this.kinds.push({ id, cls, cells, layers, paint, near: nearOverride ? Math.max(nearOverride * 1.15, 90) : NEAR[cls] });
     this.lastPos.set(Infinity, 0, 0);
   }
 
@@ -442,7 +445,7 @@ export class StaticProps {
     const alt = Math.max(0, cam.y - groundY);
     let tris = 0;
     for (const k of this.kinds) {
-      const near = NEAR[k.cls] * this.scaleDist;
+      const near = k.near * this.scaleDist;
       const far = FAR[k.cls] * this.scaleDist;
       const maxD = Math.max(near, far);
       const counts = k.layers.map(() => 0);
@@ -502,11 +505,19 @@ export class StaticProps {
   }
 }
 
+/** Placements built for another world extent (their cell grid does not start at the manifest grid). Pure; unit tested. */
+export function placementsStale(meta: Record<string, unknown>, grid: { min_x: number; min_z: number } | null): boolean {
+  const cells = meta['cells'] as { min_x?: unknown; min_z?: unknown } | undefined;
+  if (!grid || !cells || typeof cells.min_x !== 'number' || typeof cells.min_z !== 'number') return false;
+  return Math.abs(cells.min_x - grid.min_x) > 1 || Math.abs(cells.min_z - grid.min_z) > 1;
+}
+
 /** Load trees / shrubs / lamps / parked cars from the manifest + placements; null if absent or not understood. */
 export async function loadStaticProps(
   fetchAsset: AssetFetcher,
   heightAt: (x: number, z: number) => number | null,
   vehicleMaterial: () => THREE.Material,
+  grid: { min_x: number; min_z: number } | null = null,
 ): Promise<StaticProps | null> {
   let raw: Record<string, unknown> | unknown[];
   try {
@@ -523,6 +534,10 @@ export async function loadStaticProps(
     const binRel = (meta['bin'] ?? meta['file'] ?? meta['data'] ?? 'placements.bin') as string;
     bin = await fetchAsset(binRel.startsWith('props/') ? binRel : `props/${binRel}`);
   } catch {
+    return null;
+  }
+  if (placementsStale(meta, grid)) {
+    console.warn('props: placements.bin is from an older world build (different tile grid); trees and lamps skipped until the props are rebuilt');
     return null;
   }
   const placements = parsePlacements(meta, bin);
@@ -544,32 +559,123 @@ export async function loadStaticProps(
         if (g) sp.add(id, cls, { geometry: g, material: vehicleMaterial() }, null, list, heightAt, info.paint.length ? info.paint : null);
         continue;
       }
-      const gltf = await gltfLoader().parseAsync(buf, '');
-      const geoms: THREE.BufferGeometry[] = [];
-      let material: THREE.Material | null = null;
-      gltf.scene.updateMatrixWorld(true);
-      gltf.scene.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
-        const g = m.geometry.clone().applyMatrix4(m.matrixWorld);
-        for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
-        geoms.push(g.index ? g : g);
-        material ??= Array.isArray(m.material) ? m.material[0]! : m.material;
-      });
-      if (!geoms.length || !material) continue;
-      const merged = mergeGeometries(geoms, false);
-      if (!merged) continue;
-      const mat = material as THREE.MeshStandardMaterial;
+      const full = await loadFoliage(buf);
+      if (!full) continue;
+      const mat = full.material as THREE.MeshStandardMaterial;
       if (mat.map) mat.map.anisotropy = 4;
+      if (cls !== 'lamp' && cls !== 'other') addWind(mat, full.geometry);
       let lod: { geometry: THREE.BufferGeometry; material: THREE.Material } | null = null;
-      if (FAR[cls] > 0) {
-        const avg = averageTextureColor(mat.map) ?? new THREE.Color(0.22, 0.3, 0.14);
-        lod = { geometry: lodGeometry(merged, cls, avg), material: new THREE.MeshLambertMaterial({ vertexColors: true }) };
+      // baked impostor (crossed quads) from the prop library, else a colored crown
+      const lodFile = (e['lod1_file'] as string | undefined) ?? (Array.isArray(e['lods']) ? ((e['lods'] as Array<{ level?: number; file?: string }>).find((x) => x.level === 1)?.file ?? null) : null);
+      if (lodFile && FAR[cls] > 0) {
+        try {
+          const imp = await loadFoliage(await fetchAsset(lodFile.startsWith('props/') ? lodFile : `props/${lodFile}`));
+          if (imp) {
+            addWind(imp.material as THREE.MeshStandardMaterial, imp.geometry);
+            lod = imp;
+          }
+        } catch (err) {
+          console.warn(`impostor ${id} failed`, err);
+        }
       }
-      sp.add(id, cls, { geometry: merged, material: mat }, lod, list, heightAt);
+      if (!lod && FAR[cls] > 0) {
+        const avg = averageTextureColor(mat.map) ?? new THREE.Color(0.22, 0.3, 0.14);
+        lod = { geometry: lodGeometry(full.geometry, cls, avg), material: new THREE.MeshLambertMaterial({ vertexColors: true }) };
+      }
+      const lods = e['lods'] as Array<{ level?: number; max_distance_m?: number }> | undefined;
+      const near = lods?.find((x) => x.level === 0)?.max_distance_m;
+      const merged = full.geometry;
+      const mat2 = full.material;
+      sp.add(id, cls, { geometry: merged, material: mat2 }, lod, list, heightAt, null, lod && near ? near : undefined);
     } catch (err) {
       console.warn(`prop ${id} failed`, err);
     }
   }
   return sp;
+}
+
+/** shared uniforms of the foliage wind (time in seconds, gust strength 0..1) */
+export const windUniforms = {
+  uWindTime: { value: 0 },
+  uWindStrength: { value: 0.5 },
+  uWindDir: { value: new THREE.Vector2(0.8, 0.6) },
+};
+
+/**
+ * Wind sway in the vertex shader: displacement grows with height above the
+ * prop origin (trunk stays put), phase from the instance position so trees do
+ * not move in lockstep, plus a faster leaf flutter.
+ */
+export function addWind(mat: THREE.MeshStandardMaterial, g: THREE.BufferGeometry): void {
+  if ((mat.userData as { rdWind?: boolean }).rdWind) return;
+  (mat.userData as { rdWind?: boolean }).rdWind = true;
+  g.computeBoundingBox();
+  const h = Math.max(0.5, g.boundingBox!.max.y);
+  const prev = mat.onBeforeCompile;
+  mat.onBeforeCompile = (shader, r) => {
+    prev.call(mat, shader, r);
+    Object.assign(shader.uniforms, windUniforms, { uWindH: { value: h } });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWindTime;\nuniform float uWindStrength;\nuniform vec2 uWindDir;\nuniform float uWindH;')
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+{
+  #ifdef USE_INSTANCING
+    vec3 rdIp = instanceMatrix[3].xyz;
+  #else
+    vec3 rdIp = vec3(0.0);
+  #endif
+  float rdPh = dot(rdIp.xz, vec2(0.071, 0.113));
+  float rdK = clamp(transformed.y / uWindH, 0.0, 1.2);
+  rdK *= rdK;
+  float rdSway = sin(uWindTime * 0.9 + rdPh) * 0.6 + sin(uWindTime * 2.1 + rdPh * 1.7) * 0.25;
+  float rdFl = sin(uWindTime * 7.0 + dot(transformed, vec3(3.1, 2.3, 4.7))) * 0.035 * clamp(transformed.y / uWindH * 2.0, 0.0, 1.0);
+  float rdA = uWindStrength * uWindH * 0.012;
+  transformed.xz += uWindDir * (rdSway * rdA * rdK) + vec2(rdFl, -rdFl) * uWindStrength;
+}`,
+      );
+  };
+  const key = mat.customProgramCacheKey.bind(mat);
+  mat.customProgramCacheKey = () => `${key()}-rdwind`;
+}
+
+/**
+ * One merged geometry + material from a foliage glb: positions / normals / uvs
+ * and the baked crown AO (COLOR_0, multiplied into the base color).
+ */
+async function loadFoliage(buf: ArrayBuffer): Promise<{ geometry: THREE.BufferGeometry; material: THREE.Material } | null> {
+  const gltf = await gltfLoader().parseAsync(buf, '');
+  const geoms: THREE.BufferGeometry[] = [];
+  let material: THREE.Material | null = null;
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const g = m.geometry.clone().applyMatrix4(m.matrixWorld);
+    for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'color'].includes(name)) g.deleteAttribute(name);
+    geoms.push(g);
+    material ??= Array.isArray(m.material) ? m.material[0]! : m.material;
+  });
+  if (!geoms.length || !material) return null;
+  const anyColor = geoms.some((g) => g.getAttribute('color'));
+  for (const g of geoms) {
+    const c = g.getAttribute('color');
+    if (anyColor && !c) g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(g.getAttribute('position').count * 3).fill(1), 3));
+    else if (c && c.itemSize === 4) {
+      const rgb = new Float32Array(c.count * 3);
+      for (let i = 0; i < c.count; i++) {
+        rgb[i * 3] = c.getX(i);
+        rgb[i * 3 + 1] = c.getY(i);
+        rgb[i * 3 + 2] = c.getZ(i);
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
+    }
+  }
+  const merged = geoms.length === 1 ? geoms[0]! : mergeGeometries(geoms, false);
+  if (!merged) return null;
+  const mat = material as THREE.MeshStandardMaterial;
+  if (anyColor) mat.vertexColors = true;
+  mat.needsUpdate = true;
+  return { geometry: merged, material: mat };
 }

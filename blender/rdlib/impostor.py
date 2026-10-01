@@ -4,8 +4,8 @@ The LOD0 plant is rendered orthographically under a uniform white sky (Standard 
 transform, no sun), so the texture holds albedo x ambient occlusion and the client's sun
 lighting stays consistent with LOD0. Atlas: 2*res x res RGBA, left square = side view
 (aspect-fit, centered), right square = top view. Geometry: three vertical quads at 0/60/120
-degrees through the trunk plus one horizontal quad at crown height, normals bent outward from
-the crown center like the LOD0 cards.
+degrees through the trunk plus one horizontal quad at crown height, each doubled back to back and
+split into a few cells carrying ellipsoid-crown normals (see lod1_part).
 """
 
 from __future__ import annotations
@@ -119,32 +119,68 @@ def _bleed(im):  # noqa: ANN001, ANN202
     return Image.fromarray(np.concatenate([rgb, a[..., 3:4]], axis=-1).astype(np.uint8), "RGBA")
 
 
-def lod1_part(info: dict, crown_z: float) -> tuple[Part, np.ndarray]:
-    """Crossed quads (3 vertical + 1 horizontal) with bent normals; material key 'foliage_impostor'.
-    Every quad is doubled back to back (single-sided material): a double-sided quad would flip the
-    bent normal on its back face and shade half the impostor black."""
+def lod1_part(info: dict, crown_z: float, cols: int = 2, rows: int = 3) -> tuple[Part, np.ndarray]:
+    """Crossed quads (3 vertical + 1 horizontal) with sphere normals; material key 'foliage_impostor'.
+
+    Every quad is doubled back to back (single-sided material) so each side carries its own normal
+    field: the normal of an ellipsoidal crown seen from that side (lateral offset -> sideways,
+    height -> up / down, the rest toward the viewer). Quads are split into cols x rows cells so the
+    field interpolates smoothly (88 triangles). The impostor then shades like the LOD0 card cloud from
+    any view and sun direction instead of turning half black on the side facing away from the sun."""
     W, H, zb = info["W"], info["H"], info["zb"]
     su0, sv0, su1, sv1 = info["side_uv"]
     tu0, tv0, tu1, tv1 = info["top_uv"]
-    p = Part()
+    top = zb + H
+    hz = max(0.25 * H, top - crown_z)  # crown half height (ellipsoid around crown_z)
+    up = np.array([0.0, 0.0, 1.0])
+    V: list[np.ndarray] = []
+    N: list[np.ndarray] = []
+    F: list[list[int]] = []
+    U: list[list[tuple[float, float]]] = []
+
+    def grid(origin: np.ndarray, ax_u: np.ndarray, ax_v: np.ndarray, uv_rect: tuple[float, float, float, float],
+             nrm_fn, nu: int, nv: int, flip: bool) -> None:  # noqa: ANN001
+        u0, v0, u1, v1 = uv_rect
+        base = len(V)
+        for j in range(nv + 1):
+            for i in range(nu + 1):
+                a, b = i / nu, j / nv
+                V.append(origin + ax_u * a + ax_v * b)
+                N.append(nrm_fn(a, b))
+        for j in range(nv):
+            for i in range(nu):
+                q = [base + j * (nu + 1) + i, base + j * (nu + 1) + i + 1, base + (j + 1) * (nu + 1) + i + 1,
+                     base + (j + 1) * (nu + 1) + i]
+                uv = [(u0 + (u1 - u0) * (i + di) / nu, v0 + (v1 - v0) * (j + dj) / nv) for di, dj in ((0, 0), (1, 0), (1, 1), (0, 1))]
+                if flip:
+                    q, uv = q[::-1], uv[::-1]
+                F.append(q)
+                U.append(uv)
+
     for k in range(3):
-        a = math.pi * k / 3
-        dx, dy = math.cos(a) * W / 2, math.sin(a) * W / 2
-        V = np.array([(-dx, -dy, zb), (dx, dy, zb), (dx, dy, zb + H), (-dx, -dy, zb + H)])
-        uv = [(su0, sv0), (su1, sv0), (su1, sv1), (su0, sv1)]
-        p += Part(V, [[0, 1, 2, 3]], ["foliage_impostor"], [uv])
-        p += Part(V[[1, 0, 3, 2]].copy(), [[0, 1, 2, 3]], ["foliage_impostor"], [[uv[1], uv[0], uv[3], uv[2]]])
+        ang = math.pi * k / 3
+        ax = np.array([math.cos(ang), math.sin(ang), 0.0])
+        face = np.array([-math.sin(ang), math.cos(ang), 0.0])
+        for side in (1.0, -1.0):
+            def nf(a: float, b: float, ax: np.ndarray = ax, face: np.ndarray = face, side: float = side) -> np.ndarray:
+                uu = 2.0 * a - 1.0
+                z = zb + H * b
+                vv = float(np.clip((z - crown_z) / hz, -0.45, 1.0))
+                w = math.sqrt(max(0.08, 1.0 - uu * uu - vv * vv))
+                n = uu * ax + vv * up + w * side * face
+                n = n / np.linalg.norm(n) + 0.25 * up
+                return n / np.linalg.norm(n)
+
+            # unflipped cells wind along ax then up: geometric normal ax x up = -face, so the +face copy flips
+            grid(np.array([0.0, 0.0, zb]) - ax * W / 2, ax * W, up * H, (su0, sv0, su1, sv1), nf, cols, rows, side > 0)
     h = W / 2
-    V = np.array([(-h, -h, crown_z), (h, -h, crown_z), (h, h, crown_z), (-h, h, crown_z)])
-    uv = [(tu0, tv0), (tu1, tv0), (tu1, tv1), (tu0, tv1)]
-    p += Part(V, [[0, 1, 2, 3]], ["foliage_impostor"], [uv])
-    p += Part(V[[3, 2, 1, 0]].copy(), [[0, 1, 2, 3]], ["foliage_impostor"], [[uv[3], uv[2], uv[1], uv[0]]])
-    c = np.array([0.0, 0.0, crown_z])
-    N = []
-    for v in p.V:
-        r = v - c
-        r[2] *= 0.7
-        r = r / (np.linalg.norm(r) + 1e-9)
-        m = 0.65 * r + 0.35 * np.array([0, 0, 1.0])
-        N.append(m / np.linalg.norm(m))
+    for side in (1.0, -1.0):
+        def nt(a: float, b: float, side: float = side) -> np.ndarray:
+            r = np.array([2 * a - 1, 2 * b - 1, 0.0]) * 0.45
+            n = r + side * up
+            return n / np.linalg.norm(n)
+
+        grid(np.array([-h, -h, crown_z]), np.array([W, 0.0, 0.0]), np.array([0.0, W, 0.0]), (tu0, tv0, tu1, tv1), nt, 2, 2,
+             side < 0)
+    p = Part(np.array(V, float), F, ["foliage_impostor"] * len(F), U)
     return p, np.array(N)

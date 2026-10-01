@@ -2,6 +2,7 @@
 
 import { initActions, loadBaselinePlayback, openPlan } from './actions';
 import { api, initApi, with503Retry } from './api';
+import { latLonToScene, originFromLatLon } from './geo';
 import { parseHash } from './router';
 import { SceneController } from './scene/controller';
 import { store, toast } from './state';
@@ -14,7 +15,15 @@ async function boot(): Promise<void> {
   const scene = new SceneController(container);
   appCtx.scene = scene;
   // expose for debugging and automated screenshots
-  (window as unknown as { redraw: unknown }).redraw = { store, scene };
+  (window as unknown as { redraw: unknown }).redraw = {
+    store,
+    scene,
+    /** lat/lon -> scene meters for the loaded region (screenshot scripts) */
+    ll: (lat: number, lon: number) => {
+      const m = store.get().meta;
+      return m ? latLonToScene(lat, lon, originFromLatLon(m.region.origin.lat, m.region.origin.lon)) : null;
+    },
+  };
 
   await initApi();
   initActions();

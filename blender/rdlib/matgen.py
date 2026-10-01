@@ -618,7 +618,7 @@ def roof_s_tile(pal: list[str], seed: int, aged: float = 0.0, flash: float = 0.2
         dirt = smoothstep(0.35, 0.0, across) * (0.5 + 0.5 * cv.noise(seed + 1, 1.0))
         col = col * (1 - 0.18 * dirt * (0.4 + aged))[..., None] * (1 - 0.25 * lock)[..., None]
         if aged > 0:
-            lich = smoothstep(1.4, 2.2, cv.noise(seed + 2, 0.12, beta=1.5)) * aged
+            lich = smoothstep(0.9, 1.9, cv.noise(seed + 2, 0.12, beta=1.5)) * aged * 0.8
             col = col * (1 - 0.35 * aged) + hex_rgb("#8D8B79") * 0.35 * aged
             col = col * (1 - lich[..., None]) + hex_rgb("#B8B49E")[None, None] * lich[..., None]
             efflo = smoothstep(1.2, 2.0, cv.noise(seed + 3, 0.6, beta=2.0)) * 0.25 * aged
@@ -939,7 +939,8 @@ def grass(cv: Canvas, seed: int, dry: float = 0.0) -> None:
     cv.mask[:] = 0
 
 
-def scrub(cv: Canvas, seed: int, pal: list[str], soil: str, cover: float, size: tuple[int, int], crown_r: float = 0.62) -> None:
+def scrub(cv: Canvas, seed: int, pal: list[str], soil: str, cover: float, size: tuple[int, int], crown_r: float = 0.62,
+          contrast: float = 1.0) -> None:
     """Top-down chaparral / coastal sage scrub: leafy shrub crowns (Worley blobs with twig/leaf texture,
     sunlit tops, dark undersides) over dry soil and leaf litter."""
     sh = cv.shape
@@ -961,6 +962,7 @@ def scrub(cv: Canvas, seed: int, pal: list[str], soil: str, cover: float, size: 
     which = np.where(np.sqrt(k1) >= 0.8 * np.sqrt(k2), c1.rnd, c2.rnd)
     base = _palette_pick(pal, (which * 7.31) % 1.0)
     shade = (0.5 + 0.6 * dome) * (0.65 + 0.5 * smoothstep(-1.5, 1.5, leaf))
+    shade = 1.0 - contrast * (1.0 - shade)  # soft grey-green sage reads lighter than glossy chaparral
     col = base * shade[..., None]
     soilc = hex_rgb(soil) * (1 + 0.08 * cv.noise(seed + 3, 0.5, beta=1.6, octaves_m=0.01))[..., None]
     litter = smoothstep(0.3, 1.4, cv.noise(seed + 4, 0.12, beta=1.2)) * 0.5
@@ -1137,7 +1139,7 @@ ROOFS = [
     CellDef("s_tile_terracotta", 0, 0, roof_s_tile(SPANISH["terracotta"], 201, flash=0.12), (4, 4), desc="Spanish S tile, terracotta"),
     CellDef("s_tile_blend", 1, 0, roof_s_tile(SPANISH["blend"], 202, flash=0.3), (4, 4), desc="Spanish S tile, mixed red/brown/orange flashed blend"),
     CellDef("s_tile_brown", 2, 0, roof_s_tile(SPANISH["brown"], 203, flash=0.25), (4, 4), desc="Spanish S tile, brown blend"),
-    CellDef("s_tile_aged", 3, 0, roof_s_tile(SPANISH["terracotta"], 204, aged=0.5, flash=0.2), (4, 4), desc="Spanish S tile, sun-faded with lichen / efflorescence"),
+    CellDef("s_tile_aged", 3, 0, roof_s_tile(SPANISH["terracotta"], 204, aged=0.85, flash=0.2), (4, 4), desc="Spanish S tile, sun-faded with lichen / efflorescence"),
     CellDef("flat_tile_brown", 0, 1, roof_flat_tile(["#5E4636", "#6F5341", "#4F3A2E", "#7A5C46", "#664B39"], 211), (4, 4), desc="flat concrete tile, brown blend"),
     CellDef("flat_tile_grey", 1, 1, roof_flat_tile(["#6D6E6C", "#7C7D7A", "#5E5F5E", "#888884", "#727370"], 212), (4, 4), desc="flat concrete tile, grey blend"),
     CellDef("flat_tile_charcoal", 2, 1, roof_flat_tile(["#3E3F40", "#4A4A4B", "#353637", "#555557"], 213), (4, 4), desc="flat concrete tile, charcoal slate"),
@@ -1168,7 +1170,8 @@ GROUND = [
     CellDef("grass_patchy", 1, 2, lambda cv: grass(cv, 312, dry=0.7), (2, 2), desc="summer-stressed lawn with dormant patches"),
     CellDef("chaparral", 2, 2, lambda cv: scrub(cv, 313, ["#4F5A3A", "#5F6745", "#3F4A2F", "#6E7650", "#565E3E"], "#8A7456", 0.95, (6, 6), 0.85), (4, 4),
             desc="dense chaparral (chamise / scrub oak) seen from above", ao_r=0.6),
-    CellDef("coastal_sage", 3, 2, lambda cv: scrub(cv, 314, ["#8C9474", "#A0A585", "#7A8064", "#93977A", "#6E7358"], "#B49B78", 0.7, (7, 7), 0.6), (4, 4),
+    CellDef("coastal_sage", 3, 2, lambda cv: scrub(cv, 314, ["#8C9474", "#A0A585", "#7A8064", "#93977A", "#6E7358"], "#B49B78", 0.62, (7, 7), 0.6,
+                                                     contrast=0.55), (4, 4),
             desc="coastal sage scrub: grey-green clumps over tan soil", ao_r=0.5),
     CellDef("decomposed_granite", 0, 3, lambda cv: dirt(cv, 321, "#C2A47C", 0.35, grain=1.4), (2, 2), desc="decomposed granite paths / xeriscape"),
     CellDef("bare_dirt", 1, 3, lambda cv: dirt(cv, 322, "#9C7B58", 0.2), (4, 4), desc="bare graded soil / trail"),

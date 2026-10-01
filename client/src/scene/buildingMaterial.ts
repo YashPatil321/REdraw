@@ -267,6 +267,15 @@ const WALL_FRAG_MAIN = /* glsl */ `
     rdAlbedo = mix(rdAlbedo, vec3(0.01), rdGlass);
     rdRough = mix(rdRough, 0.04, rdGlass);
   }
+  if (mat >= 6) {
+    // pipeline / Blender extensions: 6 ground, 7 vertex color only
+    rdAlbedo = tint;
+    rdNT = vec3(0.0, 0.0, 1.0);
+    rdGlass = 0.0;
+    rdEmiss = vec3(0.0);
+    rdRough = 0.85;
+    rdAO = 1.0;
+  }
   diffuseColor.rgb = rdAlbedo;
 }
 `;

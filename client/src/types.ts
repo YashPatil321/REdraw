@@ -372,19 +372,45 @@ export interface PlanListItem {
   headline: Record<string, number>;
 }
 
+export interface ManifestTerrainLod {
+  lod: number;
+  path: string;
+  triangles?: number;
+  spacing_m?: number;
+  texture_px?: number;
+}
+
+export interface ManifestTile {
+  id: string;
+  row: number;
+  col: number;
+  bounds: { min_x: number; max_x: number; min_z: number; max_z: number; min_y: number; max_y: number };
+  terrain?: string;
+  buildings?: string;
+  /** HD build: terrain LODs (0 = finest, RTIN; 1, 2 = coarser grids) */
+  terrain_lods?: ManifestTerrainLod[];
+  albedo?: string;
+  /** HD build: landcover splat masks [a (lawn, chaparral, dirt), b (paved, water, canopy)] */
+  splat?: string[];
+  /** HD build: road surfaces + markings, and sidewalks / driveways / medians / pools */
+  roads?: string | null;
+  ground?: string | null;
+}
+
 export interface Manifest {
   contract_version: number;
+  hd_version?: number;
   synthetic: boolean;
   draco: boolean;
-  tiles: Array<{
-    id: string;
-    row: number;
-    col: number;
-    bounds: { min_x: number; max_x: number; min_z: number; max_z: number; min_y: number; max_y: number };
-    terrain?: string;
-    buildings?: string;
-  }>;
+  tiles: ManifestTile[];
+  /** HD build: the shared tile grid (scene meters) */
+  grid?: { rows: number; cols: number; min_x: number; max_x: number; min_z: number; max_z: number };
   roads: string[];
   terrain_meta?: string;
-  triangles?: Record<string, number>;
+  triangles?: Record<string, unknown>;
+  terrain_lod?: { suggested_switch_distance_m?: Record<string, number> };
+  splat?: { channels?: Record<string, string[]>; suggested_ground_cells?: Record<string, string> };
+  materials?: string | null;
+  /** path (under assets/) of the Blender HD buildings manifest, when built */
+  buildings_hd?: string;
 }

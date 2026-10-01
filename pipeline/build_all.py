@@ -85,6 +85,7 @@ PROCESSED_OUTPUTS = [
 ]
 
 SYNTHETIC_TEXTURE_PX = 512
+SPLAT_PX_LIDAR = 1024  # splat mask size per tile when the 0.5 m lidar rasters exist (~1.1 m/px)
 SYNTHETIC_TERRAIN_BUDGET = 400_000  # the synthetic DEM is a smooth 10 m grid: no need for 2M
 POPULATION_SOURCES = ("acs", "footprints")
 POPULATION_SOURCE_LABEL = {"acs": "acs_lodes", "footprints": "footprint_estimate", "synthetic": "synthetic"}
@@ -201,7 +202,13 @@ def finish(
     `raw` (real mode) enables the Overture-based render layers (service roads, pools, bridges,
     land use) and the lidar building attributes."""
     from pipeline.build_buildings import building_shapes, lidar_roof_join, materials_manifest
-    from pipeline.build_landcover import load_landuse_scene, load_water_scene, write_splat_masks
+    from pipeline.build_landcover import (
+        fetch_land_cover,
+        load_land_cover_scene,
+        load_landuse_scene,
+        load_water_scene,
+        write_splat_masks,
+    )
     from pipeline.build_streets import (
         Draper,
         Materials,
@@ -222,7 +229,7 @@ def finish(
 
     bdf = prepare_buildings(footprints, render, grid, school_areas, block_groups)
     if raw is not None:
-        bdf = lidar_roof_join(bdf, raw)
+        bdf = lidar_roof_join(bdf, raw, footprints)
     hero_list = load_heroes()
     bdf = apply_heroes(bdf, hero_list, render, grid)
     shapes = building_shapes(bdf, render, hero_list, manifest_mat)
@@ -274,8 +281,15 @@ def finish(
     paved = unary_union([layout.roads_poly, *layout.sidewalks, *[d for d, _ in layout.driveways], *[sh.walls for sh in shapes.values()]])
     water = (load_water_scene(raw) if raw is not None else []) + list(pools)
     landuse = load_landuse_scene(raw) if raw is not None else []
-    splat_px = min(1024, max(256, texture_px))
-    splats = write_splat_masks(grid, tb.albedo, assets / "terrain", splat_px, paved, water, landuse, lawn_extra=layout.medians)
+    landcover: list[Any] = []
+    lidar_rasters: dict[str, Path] = {}
+    if raw is not None:
+        fetch_land_cover(raw)
+        landcover = load_land_cover_scene(raw)
+        lidar_rasters = {k: raw / "lidar" / f for k, f in (("chm", "chm_0p5m.tif"), ("ndsm", "ndsm_0p5m.tif")) if (raw / "lidar" / f).exists()}
+    splat_px = SPLAT_PX_LIDAR if lidar_rasters else min(1024, max(256, texture_px))
+    splats = write_splat_masks(grid, tb.albedo, assets / "terrain", splat_px, paved, water, landuse, lawn_extra=layout.medians, landcover=landcover, lidar=lidar_rasters)
+    splat_inputs = ["imagery", "vector overrides (roads, sidewalks, driveways, roofs, water, pools)"] + (["overture land_use"] if landuse else []) + (["overture land_cover"] if landcover else []) + ([f"lidar {k}" for k in lidar_rasters])
     timings["splat"] = time.time() - t1
 
     schools = resolve_schools(schools_cfg, net.nodes, net.edges, bdf, osm_schools)
@@ -361,6 +375,7 @@ def finish(
             "channels": {"a": ["lawn", "chaparral", "dirt"], "b": ["paved", "water", "canopy"]},
             "px": splat_px,
             "encoding": "RGB PNG, 8-bit weights summing to 255 over the 6 channels; north up like the albedo",
+            "inputs": splat_inputs,
             "suggested_ground_cells": {"lawn": "grass_lawn", "chaparral": "chaparral", "dirt": "bare_dirt", "paved": "asphalt_worn", "water": "pool_water", "canopy": "mulch"},
         },
         "materials": "materials/materials_manifest.json" if manifest_mat is not None else None,

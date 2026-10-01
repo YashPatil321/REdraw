@@ -283,7 +283,7 @@ def _srgb8_to_float(h: str) -> tuple[float, float, float]:
 def part_to_object(part: Part, name: str, collection: bpy.types.Collection | None = None, *,
                    smooth_angle: float | None = None, split_materials: bool = False,
                    vehicle_attrs: bool = False, color_jitter: float = 0.0, seed: int = 0,
-                   ao_ground: float = 0.0) -> bpy.types.Object:
+                   ao_ground: float = 0.0, atlas_man: dict | None = None) -> bpy.types.Object:
     """Build a Blender mesh object from a Part.
 
     smooth_angle: shade smooth with sharp edges above this angle (deg); None = flat.
@@ -292,6 +292,9 @@ def part_to_object(part: Part, name: str, collection: bpy.types.Collection | Non
     vehicle_attrs: add `_LIGHT` and `_TINT` float vertex attributes (see materials.Mat).
     color_jitter / ao_ground: vertex-color mode only; per-face brightness jitter and a
         darkening of faces near the ground (cheap ambient occlusion baked into COLOR_0).
+    atlas_man: materials_manifest.json (heroes): add `_MAT` / `_VARIANT` float point attributes
+        and atlas-convention TEXCOORD_0 from each palette key (`atlas.KEY_MAT`); vertices are
+        split between faces of different (_MAT, _VARIANT) so the point attributes are exact.
     """
     me = bpy.data.meshes.new(name)
     me.from_pydata(part.V.tolist(), [], part.F)
@@ -321,6 +324,11 @@ def part_to_object(part: Part, name: str, collection: bpy.types.Collection | Non
         face_slot[i] = slot_of[mname]
     me.polygons.foreach_set("material_index", face_slot)
 
+    face_mv = None
+    if atlas_man is not None:
+        face_mv, auv = _atlas_faces(part, atlas_man)
+        if all(u is None for u in part.U):
+            part = Part(part.V, part.F, part.M, auv)
     if any(u is not None for u in part.U):
         uv = me.uv_layers.new(name="UVMap")
         uvs = np.zeros((len(me.loops), 2), dtype=np.float32)
@@ -370,6 +378,8 @@ def part_to_object(part: Part, name: str, collection: bpy.types.Collection | Non
         bmesh.ops.split_edges(bm, edges=edges)
         bm.to_mesh(me)
         bm.free()
+    if face_mv is not None:
+        _atlas_point_attrs(me, face_mv)
     if vehicle_attrs:
         n = len(me.vertices)
         light = np.zeros(n, dtype=np.float32)
@@ -397,6 +407,55 @@ def part_to_object(part: Part, name: str, collection: bpy.types.Collection | Non
         al = me.attributes.new("_ALBEDO", "FLOAT_VECTOR", "POINT")
         al.data.foreach_set("vector", alb.ravel())
     return obj
+
+
+def _atlas_faces(part: Part, man: dict) -> tuple[np.ndarray, list]:
+    """Per-face (_MAT, _VARIANT) from palette keys and atlas UVs (rdlib/atlas.py conventions)."""
+    from . import atlas
+
+    mv = np.zeros((len(part.F), 2), dtype=np.int32)
+    uvs: list = []
+    cache: dict[str, tuple[int, int, float]] = {}
+    for i, (f, key) in enumerate(zip(part.F, part.M, strict=True)):
+        if key not in cache:
+            mat, var = atlas.mat_of_key(key)
+            vi = atlas.variant_index(man, mat, var) if var is not None else 0
+            ws = atlas.cell(man, "ground", var)["world_size_m"] if mat == atlas.MAT_GROUND else 4.0
+            size = ws[0] if isinstance(ws, list) else ws
+            cache[key] = (mat, vi, float(size))
+        mat, vi, size = cache[key]
+        mv[i] = (mat, vi)
+        uvs.append([tuple(map(float, x)) for x in atlas.face_uv(part.V[f], mat, ground_size=size)])
+    return mv, uvs
+
+
+def _atlas_point_attrs(me: bpy.types.Mesh, face_mv: np.ndarray) -> None:
+    import bmesh
+
+    gid = face_mv[:, 0] * 256 + face_mv[:, 1]
+    fa = me.attributes.new("_grp", "INT", "FACE")
+    fa.data.foreach_set("value", gid.astype(np.int32))
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    lay = bm.faces.layers.int.get("_grp")
+    edges = [e for e in bm.edges if len(e.link_faces) >= 2 and len({f[lay] for f in e.link_faces}) > 1]
+    bmesh.ops.split_edges(bm, edges=edges)
+    bm.to_mesh(me)
+    bm.free()
+    n = len(me.vertices)
+    g = np.zeros(len(me.polygons), dtype=np.int32)
+    me.attributes["_grp"].data.foreach_get("value", g)
+    mat = np.full(n, 7.0, dtype=np.float32)
+    var = np.zeros(n, dtype=np.float32)
+    for poly, gg in zip(me.polygons, g, strict=True):
+        for vi in poly.vertices:
+            mat[vi] = gg // 256
+            var[vi] = gg % 256
+    me.attributes.remove(me.attributes["_grp"])
+    a = me.attributes.new("_MAT", "FLOAT", "POINT")
+    a.data.foreach_set("value", mat)
+    b = me.attributes.new("_VARIANT", "FLOAT", "POINT")
+    b.data.foreach_set("value", var)
 
 
 def set_custom_normals(obj: bpy.types.Object, normals: np.ndarray) -> None:

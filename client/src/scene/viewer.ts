@@ -261,7 +261,8 @@ export class Viewer {
   }
 
   private orbitFrame(now: number): void {
-    if (this.flight) {
+    if (this.path) this.pathFrame(now);
+    else if (this.flight) {
       const f = this.flight;
       const u = Math.min(1, (now - f.start) / f.duration);
       const e = easeInOutCubic(u);
@@ -372,7 +373,69 @@ export class Viewer {
     return this.walk.enabled;
   }
 
+  private path: { keys: Array<{ t: THREE.Vector3; s: [number, number, number] }>; start: number; duration: number; resolve: () => void } | null = null;
+
+  /**
+   * Cinematic camera path through keyframes (target + distance / pitch /
+   * heading), Catmull-Rom interpolated in target space and log-spherical
+   * offset space with one global ease: a continuous move, no stops.
+   */
+  flyPath(keys: Array<{ target: THREE.Vector3; distance: number; pitchDeg: number; headingDeg: number }>, durationS: number): Promise<void> {
+    this.cancelFlight();
+    const ks = keys.map((k) => {
+      const pitch = THREE.MathUtils.degToRad(k.pitchDeg);
+      const heading = THREE.MathUtils.degToRad(k.headingDeg);
+      // camera offset opposite the look direction (heading 0 = looking north / -z)
+      const off = new THREE.Vector3(-Math.sin(heading) * Math.cos(pitch), Math.sin(pitch), Math.cos(heading) * Math.cos(pitch));
+      return { t: k.target.clone(), s: [Math.log(k.distance), Math.atan2(off.x, off.z), Math.acos(THREE.MathUtils.clamp(off.y, -1, 1))] as [number, number, number] };
+    });
+    for (let i = 1; i < ks.length; i++) {
+      while (ks[i]!.s[1] - ks[i - 1]!.s[1] > Math.PI) ks[i]!.s[1] -= 2 * Math.PI;
+      while (ks[i]!.s[1] - ks[i - 1]!.s[1] < -Math.PI) ks[i]!.s[1] += 2 * Math.PI;
+    }
+    return new Promise((resolve) => {
+      this.path = { keys: ks, start: performance.now(), duration: durationS * 1000, resolve };
+      this.pathFrame(performance.now());
+    });
+  }
+
+  get flyingPath(): boolean {
+    return this.path !== null;
+  }
+
+  private pathFrame(now: number): void {
+    const p = this.path;
+    if (!p) return;
+    const u = Math.min(1, (now - p.start) / p.duration);
+    const e = 0.5 - 0.5 * Math.cos(Math.PI * u);
+    const n = p.keys.length - 1;
+    const x = e * n;
+    const i = Math.min(n - 1, Math.floor(x));
+    const f = x - i;
+    const k = (j: number): (typeof p.keys)[number] => p.keys[Math.max(0, Math.min(n, j))]!;
+    const cr = (a: number, b: number, c: number, d: number): number => 0.5 * (2 * b + (-a + c) * f + (2 * a - 5 * b + 4 * c - d) * f * f + (-a + 3 * b - 3 * c + d) * f * f * f);
+    const k0 = k(i - 1);
+    const k1 = k(i);
+    const k2 = k(i + 1);
+    const k3 = k(i + 2);
+    const t = this.controls.target;
+    t.set(cr(k0.t.x, k1.t.x, k2.t.x, k3.t.x), cr(k0.t.y, k1.t.y, k2.t.y, k3.t.y), cr(k0.t.z, k1.t.z, k2.t.z, k3.t.z));
+    const r = Math.exp(cr(k0.s[0], k1.s[0], k2.s[0], k3.s[0]));
+    const az = cr(k0.s[1], k1.s[1], k2.s[1], k3.s[1]);
+    const pol = THREE.MathUtils.clamp(cr(k0.s[2], k1.s[2], k2.s[2], k3.s[2]), 0.05, Math.PI / 2 - 0.02);
+    this.camera.position.set(t.x + r * Math.sin(pol) * Math.sin(az), t.y + r * Math.cos(pol), t.z + r * Math.sin(pol) * Math.cos(az));
+    if (u >= 1) {
+      this.path = null;
+      p.resolve();
+    }
+  }
+
   cancelFlight(): void {
+    if (this.path) {
+      const pp = this.path;
+      this.path = null;
+      pp.resolve();
+    }
     if (this.flight) {
       const f = this.flight;
       this.flight = null;

@@ -239,6 +239,39 @@ def fit_plane_lsq(p: np.ndarray) -> tuple[np.ndarray, float, float]:
     return n, d, rmse
 
 
+def point_normals(p: np.ndarray, k: int = 10) -> np.ndarray:
+    """Per-point unit normals (up >= 0) from PCA of the k nearest neighbours in 3D (3D, not
+    plan-view, neighbours keep a low roof next to a high wall from mixing with the upper roof)."""
+    from scipy.spatial import cKDTree
+
+    n = len(p)
+    if n < 4:
+        return np.tile(np.array([0.0, 0.0, 1.0]), (n, 1))
+    k = min(k, n)
+    _, idx = cKDTree(p).query(p, k=k)
+    nb = p[idx]
+    c = nb - nb.mean(axis=1, keepdims=True)
+    cov = np.einsum("nki,nkj->nij", c, c) / k
+    _, v = np.linalg.eigh(cov)
+    nrm = v[:, :, 0].copy()
+    nrm[nrm[:, 2] < 0] *= -1.0
+    return nrm
+
+
+def largest_component(xy: np.ndarray, cell: float) -> np.ndarray:
+    """Mask of the points in the largest 8-connected cluster of occupied `cell` m cells."""
+    if len(xy) == 0:
+        return np.zeros(0, dtype=bool)
+    ij = np.floor((xy - xy.min(axis=0)) / cell).astype(np.int64)
+    occ = np.zeros(tuple(ij.max(axis=0) + 1), dtype=bool)
+    occ[ij[:, 0], ij[:, 1]] = True
+    lab, n = ndi.label(occ, structure=np.ones((3, 3)))
+    if n <= 1:
+        return np.ones(len(xy), dtype=bool)
+    lp = lab[ij[:, 0], ij[:, 1]]
+    return lp == int(np.argmax(np.bincount(lp)))
+
+
 def ransac_planes(
     p: np.ndarray,
     threshold: float,
@@ -247,44 +280,77 @@ def ransac_planes(
     n_hyp: int = 300,
     max_slope_deg: float = 65.0,
     rng: np.random.Generator | None = None,
+    normals: np.ndarray | None = None,
+    normal_tol_deg: float = 30.0,
+    cell: float | None = None,
 ) -> list[Plane]:
     """Sequential RANSAC: repeatedly take the plane with most inliers, refine by least squares,
-    remove its inliers. Planes steeper than max_slope_deg (walls, tree flanks) are rejected."""
+    remove its inliers. An inlier must lie within `threshold` of the plane and, when per-point
+    `normals` are given, have a normal within `normal_tol_deg` of the plane's (so planes cannot
+    cut across ridges); with `cell`, only the largest spatially connected inlier patch is kept.
+    Planes steeper than max_slope_deg (walls, tree flanks) are rejected."""
     rng = rng or np.random.default_rng(SEED)
     remaining = np.arange(len(p))
     planes: list[Plane] = []
     cos_max = math.cos(math.radians(max_slope_deg))
-    while len(remaining) >= max(min_inliers, 3) and len(planes) < max_planes:
+    cos_n = math.cos(math.radians(normal_tol_deg))
+
+    def inliers(q: np.ndarray, qn: np.ndarray | None, nb: np.ndarray, db: float) -> np.ndarray:
+        m = np.abs(q @ nb - db) < threshold
+        if qn is not None:
+            m &= np.abs(qn @ nb) >= cos_n
+        return m
+
+    fails = 0
+    while len(remaining) >= max(min_inliers, 3) and len(planes) < max_planes and fails < 3:
         q = p[remaining]
-        score_idx = rng.choice(len(q), size=min(len(q), 3000), replace=False) if len(q) > 3000 else np.arange(len(q))
+        qn = normals[remaining] if normals is not None else None
+        score_idx = rng.choice(len(q), size=3000, replace=False) if len(q) > 3000 else np.arange(len(q))
         s = q[score_idx]
-        tri = rng.integers(0, len(q), size=(n_hyp, 3))
-        a, b, c = q[tri[:, 0]], q[tri[:, 1]], q[tri[:, 2]]
-        n = np.cross(b - a, c - a)
-        norm = np.linalg.norm(n, axis=1)
-        good = norm > 1e-6
-        n = n[good] / norm[good, None]
-        a = a[good]
+        if qn is not None:
+            # 1-point hypotheses: seed point + its local PCA normal (finds small facets that
+            # random global triples almost never land on)
+            seeds = rng.choice(len(q), size=min(n_hyp, len(q)), replace=False)
+            a, n = q[seeds], qn[seeds].copy()
+        else:
+            tri = rng.integers(0, len(q), size=(n_hyp, 3))
+            a, b, c = q[tri[:, 0]], q[tri[:, 1]], q[tri[:, 2]]
+            n = np.cross(b - a, c - a)
+            norm = np.linalg.norm(n, axis=1)
+            good = norm > 1e-6
+            n = n[good] / norm[good, None]
+            a = a[good]
         n[n[:, 2] < 0] *= -1.0
         keep = n[:, 2] >= cos_max
         n, a = n[keep], a[keep]
         if len(n) == 0:
             break
         d = np.einsum("ij,ij->i", n, a)
-        counts = (np.abs(s @ n.T - d[None, :]) < threshold).sum(axis=0)
+        ok = np.abs(s @ n.T - d[None, :]) < threshold
+        if qn is not None:
+            ok &= np.abs(qn[score_idx] @ n.T) >= cos_n
+        counts = ok.sum(axis=0)
         best = int(np.argmax(counts))
         scale = len(q) / len(s)
         if counts[best] * scale < min_inliers:
-            break
+            fails += 1
+            continue
         nb, db = n[best], float(d[best])
-        inl = np.abs(q @ nb - db) < threshold
+        inl = inliers(q, qn, nb, db)
         for _ in range(2):  # refine
             if inl.sum() < 3:
                 break
             nb, db, _ = fit_plane_lsq(q[inl])
-            inl = np.abs(q @ nb - db) < threshold
+            inl = inliers(q, qn, nb, db)
+        if cell is not None and inl.sum() >= 3:
+            ii = np.nonzero(inl)[0]
+            inl = np.zeros(len(q), dtype=bool)
+            inl[ii[largest_component(q[ii, :2], cell)]] = True
+            if inl.sum() >= 3:
+                nb, db, _ = fit_plane_lsq(q[inl])
         if inl.sum() < min_inliers or nb[2] < cos_max:
-            break
+            fails += 1
+            continue
         rmse = float(np.sqrt(np.mean((q[inl] @ nb - db) ** 2)))
         planes.append(Plane(normal=nb, d=db, inliers=remaining[inl], rmse=rmse))
         remaining = remaining[~inl]
@@ -304,6 +370,33 @@ def merge_planes(planes: list[Plane], p: np.ndarray, angle_deg: float = 8.0, off
         else:
             out.append(Plane(pl.normal.copy(), pl.d, pl.inliers.copy(), pl.rmse))
     return sorted(out, key=lambda q: -len(q.inliers))
+
+
+def absorb_points(planes: list[Plane], p: np.ndarray, threshold: float, radius: float = 1.5) -> list[Plane]:
+    """Give each point left unassigned by RANSAC to the closest plane (within `threshold`)
+    among the planes of its labelled neighbours (within `radius` m in plan view)."""
+    from scipy.spatial import cKDTree
+
+    if not planes:
+        return planes
+    lab = np.full(len(p), -1, dtype=np.int64)
+    for i, pl in enumerate(planes):
+        lab[pl.inliers] = i
+    free = np.nonzero(lab < 0)[0]
+    if not len(free) or len(free) == len(p):
+        return planes
+    done = np.nonzero(lab >= 0)[0]
+    tree = cKDTree(p[done, :2])
+    new = lab.copy()
+    for j, nb in zip(free, tree.query_ball_point(p[free, :2], radius), strict=True):
+        cand = np.unique(lab[done[nb]])
+        if not len(cand):
+            continue
+        dist = np.array([abs(float(p[j] @ planes[c].normal) - planes[c].d) for c in cand])
+        k = int(np.argmin(dist))
+        if dist[k] < threshold:
+            new[j] = cand[k]
+    return [Plane(pl.normal, pl.d, np.nonzero(new == i)[0], pl.rmse) for i, pl in enumerate(planes)]
 
 
 def angle_diff(a: float, b: float) -> float:
@@ -334,31 +427,65 @@ def ridge_azimuth(n1: np.ndarray, n2: np.ndarray) -> float:
     return float(np.degrees(np.arctan2(line[0], line[1])) % 180.0)
 
 
-def eave_perimeter_fraction(
-    footprint_xy: np.ndarray, pts: np.ndarray, eave_h: float, ridge_h: float, step: float = 1.0, radius: float = 1.6
-) -> float:
-    """Fraction of the (shrunk) footprint outline where nearby roof points sit near eave height.
-    ~1.0 for hip roofs (every wall has an eave), ~0.75 or less for gables (gable ends rise)."""
-    from scipy.spatial import cKDTree
-
-    if len(pts) < 10 or len(footprint_xy) < 3:
-        return float("nan")
-    ring = np.asarray(footprint_xy, dtype=np.float64)
+def outline_samples(ring_xy: np.ndarray, step: float = 1.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Points every ~`step` m along a closed ring -> (xy (M,2), outward unit normals (M,2),
+    sample lengths (M,)). Works for either ring orientation."""
+    ring = np.asarray(ring_xy, dtype=np.float64)[:, :2]
     if not np.allclose(ring[0], ring[-1]):
         ring = np.vstack([ring, ring[:1]])
     seg = np.diff(ring, axis=0)
     lens = np.hypot(seg[:, 0], seg[:, 1])
-    samples = []
+    area2 = float(np.sum(ring[:-1, 0] * ring[1:, 1] - ring[1:, 0] * ring[:-1, 1]))
+    sign = 1.0 if area2 > 0 else -1.0  # CCW: outward normal of edge (dx, dy) is (dy, -dx)
+    xy, nrm, w = [], [], []
     for (x0, y0), (dx, dy), length in zip(ring[:-1], seg, lens, strict=True):
-        k = max(int(length / step), 1)
+        if length < 1e-6:
+            continue
+        k = max(int(round(length / step)), 1)
         t = (np.arange(k) + 0.5) / k
-        samples.append(np.column_stack([x0 + t * dx, y0 + t * dy]))
-    s = np.vstack(samples)
+        xy.append(np.column_stack([x0 + t * dx, y0 + t * dy]))
+        nrm.append(np.tile(sign * np.array([dy, -dx]) / length, (k, 1)))
+        w.append(np.full(k, length / k))
+    if not xy:
+        return np.zeros((0, 2)), np.zeros((0, 2)), np.zeros(0)
+    return np.vstack(xy), np.vstack(nrm), np.concatenate(w)
+
+
+def eave_perimeter_fraction(
+    footprint_xy: np.ndarray, pts: np.ndarray, planes: list[Plane], flat_max_slope: float,
+    radius: float = 1.5, max_eave_angle_deg: float = 50.0,
+) -> float:
+    """Share of the outline (next to sloped roof planes) that is an eave: the adjacent plane
+    drains outward across that edge (plane aspect within `max_eave_angle_deg` of the edge's
+    outward normal). Rakes (gable ends) and high sides have the plane aspect across or against
+    the edge. Hip roofs ~0.9-1.0; gables ~L/(L+W) ~0.6-0.7. NaN if undetermined."""
+    from scipy.spatial import cKDTree
+
+    if len(pts) < 10 or footprint_xy is None or len(footprint_xy) < 3 or not planes:
+        return float("nan")
+    lab = np.full(len(pts), -1, dtype=np.int64)
+    for i, pl in enumerate(planes):
+        lab[pl.inliers] = i
+    sloped = np.array([pl.slope_deg >= flat_max_slope for pl in planes])
+    asp = np.array([pl.normal[:2] / max(float(np.hypot(*pl.normal[:2])), 1e-9) for pl in planes])
+    s, o, w = outline_samples(footprint_xy)
+    if not len(s):
+        return float("nan")
     tree = cKDTree(pts[:, :2])
-    tol = max(0.6, 0.25 * (ridge_h - eave_h))
-    near = tree.query_ball_point(s, radius)
-    flags = [float(np.median(pts[ix, 2]) <= eave_h + tol) for ix in near if len(ix) >= 2]
-    return float(np.mean(flags)) if flags else float("nan")
+    cos_e = math.cos(math.radians(max_eave_angle_deg))
+    eave = tot = 0.0
+    for j, ix in enumerate(tree.query_ball_point(s, radius)):
+        ll = lab[ix]
+        ll = ll[ll >= 0]
+        if len(ll) < 2:
+            continue
+        top = int(np.bincount(ll).argmax())
+        if not sloped[top]:
+            continue
+        tot += w[j]
+        if float(asp[top] @ o[j]) >= cos_e:
+            eave += w[j]
+    return eave / tot if tot > 0 else float("nan")
 
 
 @dataclass
@@ -378,14 +505,18 @@ class RoofModel:
     planes: list[dict[str, Any]] = field(default_factory=list)
 
 
+ROOF_TYPES = ("flat", "gable", "hip", "complex", "shed", "unknown")
+
+
 def classify_roof(
-    planes: list[Plane], n_points: int, eave_frac: float, flat_max_slope: float
+    planes: list[Plane], n_points: int, eave_frac: float, flat_max_slope: float, hip_min_eave_frac: float = 0.75
 ) -> tuple[str, float, float]:
     """(roof_type, pitch_deg, ridge_azimuth_deg or NaN) from fitted planes.
 
     flat: low-slope planes hold >= 60 % of plane points. shed: one facing direction.
-    gable: (mostly) two opposite facing directions. hip: >= 3 facing directions and an eave on
-    (nearly) every wall. complex: anything else (cross gables, mixed, non-orthogonal).
+    gable: two opposite facing directions hold >= 85 % of the sloped area. hip: >= 3 facing
+    directions and eaves on (nearly) the whole outline (no gable ends). complex: anything else
+    (cross gables, hip + gable mixes, multi-level, non-orthogonal).
     """
     if not planes:
         return "unknown", float("nan"), float("nan")
@@ -407,19 +538,17 @@ def classify_roof(
                 if share > pair_share:
                     pair_share, az = share, ridge_azimuth(a.normal, b.normal)
     if flat_share >= 0.6 or not sloped:
-        return "flat", pitch, az
+        return "flat", pitch, float("nan")
     dirs = [c for c in aspect_clusters(sloped) if c[1] >= 0.07 * sw]
-    if math.isnan(az) and sloped:
+    if math.isnan(az):
         az = float((sloped[0].aspect_deg + 90.0) % 180.0)
-    if len(dirs) == 1:
+    if len(dirs) <= 1:
         return "shed", pitch, az
-    two_opposite = len(dirs) >= 2 and angle_diff(dirs[0][0], dirs[1][0]) >= 145.0
-    top2 = (dirs[0][1] + dirs[1][1]) / sw if len(dirs) >= 2 else 0.0
-    if len(dirs) == 2:
-        return ("gable" if two_opposite else "complex"), pitch, az
-    if not math.isnan(eave_frac) and eave_frac >= 0.85:
+    two_opposite = angle_diff(dirs[0][0], dirs[1][0]) >= 145.0
+    top2 = (dirs[0][1] + dirs[1][1]) / sw
+    if len(dirs) >= 3 and not math.isnan(eave_frac) and eave_frac >= hip_min_eave_frac:
         return "hip", pitch, az
-    if two_opposite and top2 >= 0.85:
+    if two_opposite and (len(dirs) == 2 or top2 >= 0.85):
         return "gable", pitch, az
     return "complex", pitch, az
 
@@ -431,6 +560,8 @@ def analyze_roof(
     threshold: float = 0.18,
     flat_max_slope: float = 8.0,
     min_points: int = 12,
+    hip_min_eave_frac: float = 0.75,
+    normal_tol_deg: float = 15.0,
     rng: np.random.Generator | None = None,
 ) -> RoofModel:
     """Roof model from building points in a local frame: pts (N,3) = (east m, north m, height
@@ -451,18 +582,23 @@ def analyze_roof(
     eave_h = float(np.percentile(h, 5))
     ridge_h = float(np.percentile(h, 99))
     min_inl = max(6, int(0.05 * n))
-    planes = merge_planes(ransac_planes(pts, threshold, min_inl, rng=rng), pts)
-    inl = int(sum(len(p.inliers) for p in planes))
-    rmse = float(np.sqrt(sum(p.rmse**2 * len(p.inliers) for p in planes) / inl)) if inl else float("nan")
-    ef = eave_perimeter_fraction(footprint_xy, pts, eave_h, ridge_h) if footprint_xy is not None else float("nan")
-    rtype, pitch, az = classify_roof(planes, n, ef, flat_max_slope)
-    if rtype == "flat":
-        eave_h = ridge_h = float(np.percentile(h, 90))
-    area_per_pt = None
+    area = None
     if footprint_xy is not None and len(footprint_xy) >= 3:
         from shapely.geometry import Polygon
 
-        area_per_pt = Polygon(footprint_xy).area / n
+        area = float(Polygon(footprint_xy).area)
+    density = n / area if area else 4.0
+    cell = max(1.0, 1.8 / math.sqrt(max(density, 0.5)))
+    normals = point_normals(pts, k=10)
+    planes = merge_planes(ransac_planes(pts, threshold, min_inl, rng=rng, normals=normals, normal_tol_deg=normal_tol_deg, cell=cell), pts)
+    planes = absorb_points(planes, pts, threshold)
+    inl = int(sum(len(p.inliers) for p in planes))
+    rmse = float(np.sqrt(sum(p.rmse**2 * len(p.inliers) for p in planes) / inl)) if inl else float("nan")
+    ef = eave_perimeter_fraction(footprint_xy, pts, planes, flat_max_slope) if footprint_xy is not None else float("nan")
+    rtype, pitch, az = classify_roof(planes, n, ef, flat_max_slope, hip_min_eave_frac)
+    if rtype == "flat":
+        eave_h = ridge_h = float(np.percentile(h, 90))
+    area_per_pt = area / n if area else None
     plist = [
         {
             "normal": [round(float(v), 5) for v in p.normal],
@@ -477,6 +613,8 @@ def analyze_roof(
     ]
     return RoofModel(rtype, eave_h, ridge_h, float(np.median(h)), float(h.max()), pitch, az, len(planes),
                      inl / n, rmse, ef, n, plist)
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -772,21 +910,19 @@ def surface_features(grid: Grid, P: dict[str, np.ndarray]) -> tuple[np.ndarray, 
 
 
 def process_tile(job: TileJob) -> dict[str, Any]:
-    """Compute rasters, roof models, lidar-only building candidates and trees for one tile."""
+    """Compute rasters, lidar-only building candidates and trees for one tile (roofs are a
+    separate pass, process_roofs, that reads the mosaicked DTM)."""
     import pandas as pd
-    import shapely
     from rasterio.features import shapes as rio_shapes
     from shapely.geometry import shape
 
     out_npz = work_dir() / f"tile_{job.ckm}_{job.rkm}.npz"
-    out_b = work_dir() / f"roofs_{job.ckm}_{job.rkm}.parquet"
     out_t = work_dir() / f"trees_{job.ckm}_{job.rkm}.parquet"
     out_m = work_dir() / f"missing_{job.ckm}_{job.rkm}.parquet"
-    if not job.force and all(p.exists() for p in (out_npz, out_b, out_t, out_m)):
+    if not job.force and all(p.exists() for p in (out_npz, out_t, out_m)):
         return {"tile": (job.ckm, job.rkm), "cached": True}
     t0 = time.time()
     res = float(assumption("lidar.raster_res_m"))
-    shrink = float(assumption("lidar.footprint_shrink_m"))
     min_h = float(assumption("lidar.roof_min_height_m"))
     cfg = {"thr": float(assumption("lidar.ransac_threshold_m")), "flat": float(assumption("lidar.flat_roof_max_slope_deg"))}
     mb_h = float(assumption("lidar.missing_building_min_height_m"))
@@ -815,40 +951,6 @@ def process_tile(job: TileJob) -> dict[str, Any]:
     veg = (ndsm >= VEG_MIN_H_M) & ~(bld_lidar | fp_mask) & ~((resid_s < PLANE_RESID_MAX_M * 0.75) & (pen < 0.1))
     chm = np.where(veg, ndsm, 0.0).astype(np.float32)
 
-    # --- roofs for footprints whose centroid is in this tile ---
-    recs = []
-    if job.footprints:
-        lab_grid = Grid.from_box(work, 1.0)
-        r, c, ok = lab_grid.rc(P["x"], P["y"])
-        cell = np.where(ok, r * lab_grid.ncols + c, -1)
-        order = np.argsort(cell, kind="stable")
-        cs = cell[order]
-        for row_idx, poly in job.footprints:
-            minx, miny, maxx, maxy = poly.bounds
-            r0, c0 = int((lab_grid.y1 - maxy) // 1), int((minx - lab_grid.x0) // 1)
-            r1, c1 = int((lab_grid.y1 - miny) // 1), int((maxx - lab_grid.x0) // 1)
-            r0, c0 = max(r0, 0), max(c0, 0)
-            r1, c1 = min(r1, lab_grid.nrows - 1), min(c1, lab_grid.ncols - 1)
-            sel = []
-            for rr in range(r0, r1 + 1):
-                a = np.searchsorted(cs, rr * lab_grid.ncols + c0, "left")
-                b = np.searchsorted(cs, rr * lab_grid.ncols + c1, "right")
-                sel.append(order[a:b])
-            idx = np.concatenate(sel) if sel else np.zeros(0, dtype=np.int64)
-            rec = building_roof(poly, P["x"][idx], P["y"][idx], ph[idx], shrink, min_h, cfg, rng)
-            ins = shapely.contains_xy(poly, P["x"][idx], P["y"][idx]) & np.isin(P["cls"][idx], GROUND_CLASSES)
-            gi = idx[ins]
-            rec["ground_elev_lidar_m"] = float(np.median(P["z"][gi])) if len(gi) else float("nan")
-            # footprint-wide medians from rasters
-            pr, pc, pok = grid.rc(np.array([poly.centroid.x]), np.array([poly.centroid.y]))
-            win = _poly_window_values(grid, poly, [dtm, change, ndsm] + ([dem] if dem is not None else []))
-            rec["ground_elev_lidar_m"] = float(win[0]) if np.isfinite(win[0]) else rec["ground_elev_lidar_m"]
-            rec["ground_change_m"] = float(win[1])
-            rec["ndsm_p90_m"] = float(win[2])
-            rec["ground_elev_m"] = float(win[3]) if dem is not None else rec["ground_elev_lidar_m"]
-            rec["row"] = row_idx
-            recs.append(rec)
-    pd.DataFrame(recs).to_parquet(out_b, index=False)
 
     # --- lidar-only buildings ---
     core_r0 = int(round((work.maxy - job.core.maxy) / res))
@@ -926,11 +1028,83 @@ def process_tile(job: TileJob) -> dict[str, Any]:
     cls_map[ndsm > VEG_MIN_H_M] = 3
     cls_map[veg] = 2
     cls_map[bld_lidar] = 1
-    np.savez(out_npz, dsm=dsm[sl], dtm=dtm[sl], ndsm=ndsm[sl], chm=chm[sl], change=change[sl],
-             cls=cls_map[sl], pen=pen[sl], resid=resid_s[sl], count=rasterize_stat(grid, P["x"], P["y"], P["z"], "count")[sl].astype(np.uint16),
-             core=np.array([job.core.minx, job.core.miny, job.core.maxx, job.core.maxy]))
-    return {"tile": (job.ckm, job.rkm), "cached": False, "points": len(P["x"]), "buildings": len(recs),
+    tmp_npz = out_npz.with_suffix(".part")
+    with open(tmp_npz, "wb") as fh:
+        np.savez(fh, dsm=dsm[sl], dtm=dtm[sl], ndsm=ndsm[sl], chm=chm[sl], change=change[sl],
+                 cls=cls_map[sl], pen=pen[sl], resid=resid_s[sl], count=rasterize_stat(grid, P["x"], P["y"], P["z"], "count")[sl].astype(np.uint16),
+                 core=np.array([job.core.minx, job.core.miny, job.core.maxx, job.core.maxy]))
+    tmp_npz.replace(out_npz)
+    return {"tile": (job.ckm, job.rkm), "cached": False, "points": len(P["x"]),
             "missing": len(mrecs), "trees": len(tdf), "trees_dropped": n_dropped, "seconds": time.time() - t0}
+
+
+def _read_mosaic(name: str, grid: Grid) -> np.ndarray:
+    """Window of a mosaicked lidar GeoTIFF on `grid` (NaN outside the raster)."""
+    import rasterio
+    from rasterio.windows import from_bounds
+
+    b = grid.box
+    with rasterio.open(lidar_dir() / name) as src:
+        w = from_bounds(b.minx, b.miny, b.maxx, b.maxy, transform=src.transform)
+        a = src.read(1, window=w, boundless=True, fill_value=np.nan, out_shape=grid.shape)
+    return a.astype(np.float32)
+
+
+def process_roofs(job: TileJob) -> dict[str, Any]:
+    """Roof models for the footprints whose centroid is in this tile, from the tile points and
+    the mosaicked DTM / nDSM / ground-change rasters (so roofs can be re-run on their own)."""
+    import pandas as pd
+
+    out_b = work_dir() / f"roofs_{job.ckm}_{job.rkm}.parquet"
+    if not job.force and out_b.exists():
+        return {"tile": (job.ckm, job.rkm), "cached": True}
+    t0 = time.time()
+    res = float(assumption("lidar.raster_res_m"))
+    shrink = float(assumption("lidar.footprint_shrink_m"))
+    min_h = float(assumption("lidar.roof_min_height_m"))
+    cfg = {"thr": float(assumption("lidar.ransac_threshold_m")), "flat": float(assumption("lidar.flat_roof_max_slope_deg"))}
+    rng = np.random.default_rng(SEED + job.ckm * 1000 + job.rkm)
+    recs = []
+    if job.footprints:
+        bnds = np.array([p.bounds for _, p in job.footprints])
+        b = Box(float(bnds[:, 0].min()), float(bnds[:, 1].min()), float(bnds[:, 2].max()), float(bnds[:, 3].max()))
+        work = Box(math.floor(b.minx) - 2, math.floor(b.miny) - 2, math.ceil(b.maxx) + 2, math.ceil(b.maxy) + 2)
+        P = load_points(Box(work.minx - job.shift[0], work.miny - job.shift[1], work.maxx - job.shift[0], work.maxy - job.shift[1]))
+        P["x"] = P["x"] + job.shift[0]
+        P["y"] = P["y"] + job.shift[1]
+        grid = Grid.from_box(work, res)
+        dtm = fill_nan(_read_mosaic("dtm_0p5m.tif", grid))
+        ndsm = _read_mosaic("ndsm_0p5m.tif", grid)
+        change = _read_mosaic("ground_change_0p5m.tif", grid)
+        ph = P["z"] - sample_bilinear(grid, dtm, P["x"], P["y"])
+        lab_grid = Grid.from_box(work, 1.0)
+        r, c, ok = lab_grid.rc(P["x"], P["y"])
+        cell = np.where(ok, r * lab_grid.ncols + c, -1)
+        order = np.argsort(cell, kind="stable")
+        cs = cell[order]
+        for row_idx, poly in job.footprints:
+            minx, miny, maxx, maxy = poly.bounds
+            r0, c0 = max(int((lab_grid.y1 - maxy) // 1), 0), max(int((minx - lab_grid.x0) // 1), 0)
+            r1 = min(int((lab_grid.y1 - miny) // 1), lab_grid.nrows - 1)
+            c1 = min(int((maxx - lab_grid.x0) // 1), lab_grid.ncols - 1)
+            sel = []
+            for rr in range(r0, r1 + 1):
+                a = np.searchsorted(cs, rr * lab_grid.ncols + c0, "left")
+                bb = np.searchsorted(cs, rr * lab_grid.ncols + c1, "right")
+                sel.append(order[a:bb])
+            idx = np.concatenate(sel) if sel else np.zeros(0, dtype=np.int64)
+            rec = building_roof(poly, P["x"][idx], P["y"][idx], ph[idx], shrink, min_h, cfg, rng)
+            win = _poly_window_values(grid, poly, [dtm, change, ndsm])
+            rec["ground_elev_lidar_m"] = float(win[0])
+            rec["ground_change_m"] = float(win[1]) if np.isfinite(win[1]) else 0.0
+            rec["ndsm_p90_m"] = float(win[2])
+            rec["ground_elev_m"] = rec["ground_elev_lidar_m"] + rec["ground_change_m"]  # = 3DEP 2024 DEM
+            rec["row"] = row_idx
+            recs.append(rec)
+    tmp = out_b.with_suffix(".part")
+    pd.DataFrame(recs).to_parquet(tmp, index=False)
+    tmp.replace(out_b)
+    return {"tile": (job.ckm, job.rkm), "cached": False, "buildings": len(recs), "seconds": time.time() - t0}
 
 
 def _poly_window_values(grid: Grid, poly: Any, arrays: list[np.ndarray]) -> list[float]:
@@ -1107,14 +1281,91 @@ def build_jobs(fp: Any, roads: list[Any], shift: tuple[float, float], force: boo
     return jobs
 
 
-def main(argv: list[str] | None = None) -> int:
+def _pool(workers: int) -> ProcessPoolExecutor:
+    """Process pool with the 'spawn' start method: forking after GDAL / BLAS threads have run
+    in the parent (registration) deadlocks the workers."""
+    import multiprocessing as mp
+    import os
+
+    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(v, "1")  # one BLAS thread per worker (inherited by spawned workers)
+    return ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn"))
+
+
+def run_parallel(fn: Any, jobs: list[TileJob], workers: int, what: str) -> list[dict[str, Any]]:
+    stats = []
+    if workers <= 1:
+        results: Any = map(fn, jobs)
+        for i, r in enumerate(results, 1):
+            stats.append(r)
+            _log_tile(i, len(jobs), what, r)
+        return stats
+    with _pool(workers) as ex:
+        for i, r in enumerate(ex.map(fn, jobs), 1):
+            stats.append(r)
+            _log_tile(i, len(jobs), what, r)
+    return stats
+
+
+def _log_tile(i: int, n: int, what: str, r: dict[str, Any]) -> None:
+    if r.get("cached"):
+        return
+    extra = ", ".join(f"{k} {v:,}" if isinstance(v, int) else f"{k} {v:.0f}" for k, v in r.items()
+                      if k not in ("tile", "cached") and isinstance(v, int | float))
+    log(f"  {what} {i}/{n} {r['tile']}: {extra}")
+
+
+def write_missing(jobs: list[TileJob]) -> Any:
     import geopandas as gpd
     import pandas as pd
     from shapely import wkt as swkt
 
+    miss = pd.concat([pd.read_parquet(work_dir() / f"missing_{j.ckm}_{j.rkm}.parquet") for j in jobs], ignore_index=True)
+    if len(miss):
+        geoms = [swkt.loads(w) for w in miss["wkt"]]
+        mg = gpd.GeoDataFrame(miss.drop(columns=["wkt"]), geometry=geoms, crs=PROJECTION)
+        mg = mg[mg["roof_type"] != "unknown"].reset_index(drop=True)
+        c = mg.geometry.centroid
+        mg["centroid_x"], mg["centroid_z"] = utm_to_scene_arrays(c.x.to_numpy(), c.y.to_numpy())
+        lon, lat = utm_to_lonlat_arrays(c.x.to_numpy(), c.y.to_numpy())
+        mg["centroid_lat"], mg["centroid_lon"] = lat, lon
+        mg.insert(0, "lidar_id", [f"lidar_{i:05d}" for i in range(len(mg))])
+        mg["height_m"] = mg["ridge_height_m"].round(2)
+        mg["quality"] = np.where(mg["n_roof_points"] >= 40, "good", np.where(mg["n_roof_points"] >= 12, "fair", "poor"))
+        mg = mg.to_crs("EPSG:4326")
+    else:
+        mg = gpd.GeoDataFrame({"lidar_id": []}, geometry=[], crs="EPSG:4326")
+    p = lidar_dir() / "missing_buildings.geojson"
+    tmp = p.with_suffix(".part")
+    tmp.unlink(missing_ok=True)
+    mg.to_file(tmp, driver="GeoJSON")
+    tmp.replace(p)
+    return mg
+
+
+def write_trees(jobs: list[TileJob]) -> Any:
+    import pandas as pd
+
+    trees = pd.concat([pd.read_parquet(work_dir() / f"trees_{j.ckm}_{j.rkm}.parquet") for j in jobs], ignore_index=True)
+    trees = assemble_trees(trees)
+    _write_parquet_atomic(trees, lidar_dir() / "trees.parquet")
+    return trees
+
+
+def _write_parquet_atomic(df: Any, path: Path) -> None:
+    tmp = path.with_suffix(".part")
+    df.to_parquet(tmp, index=False)
+    tmp.replace(path)
+
+
+def main(argv: list[str] | None = None) -> int:
+    import pandas as pd
+
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--force", action="store_true", help="recompute every tile")
+    ap.add_argument("--force", action="store_true", help="recompute every tile and every roof")
+    ap.add_argument("--force-roofs", action="store_true", help="recompute roofs only (tiles stay cached)")
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--tiles-only", action="store_true", help="stop after rasters, trees and lidar-only buildings")
     ap.add_argument("--no-shift", action="store_true", help="do not apply the measured registration shift")
     args = ap.parse_args(argv)
     t0 = time.time()
@@ -1147,54 +1398,39 @@ def main(argv: list[str] | None = None) -> int:
     roads = load_road_lines()
     timings["load_roads_s"] = time.time() - t
     jobs = build_jobs(fp, roads, shift, args.force)
-    t = time.time()
-    stats = []
-    with ProcessPoolExecutor(args.workers) as ex:
-        for i, r in enumerate(ex.map(process_tile, jobs), 1):
-            stats.append(r)
-            if not r.get("cached"):
-                log(f"  tile {i}/{len(jobs)} {r['tile']}: {r['points']:,} pts, {r['buildings']} roofs, "
-                    f"{r['missing']} lidar-only, {r['trees']} trees ({r['seconds']:.0f}s)")
-    timings["tiles_s"] = time.time() - t
 
-    # rasters
+    # 1. per-tile rasters, trees, lidar-only buildings
+    t = time.time()
+    stats = run_parallel(process_tile, jobs, args.workers, "tile")
+    timings["tiles_s"] = time.time() - t
+    trees = write_trees(jobs)
+    mg = write_missing(jobs)
+    log(f"lidar_features: {len(trees):,} trees, {len(mg):,} lidar-only buildings written")
+
+    # 2. rasters
     t = time.time()
     npzs = [work_dir() / f"tile_{j.ckm}_{j.rkm}.npz" for j in jobs]
-    mosaic(npzs, raster_extent(), res, {"dsm": "dsm_0p5m.tif", "dtm": "dtm_0p5m.tif", "ndsm": "ndsm_0p5m.tif",
-                                         "chm": "chm_0p5m.tif", "change": "ground_change_0p5m.tif",
-                                         "cls": "surface_class_0p5m.tif"})
+    rasters = {"dsm": "dsm_0p5m.tif", "dtm": "dtm_0p5m.tif", "ndsm": "ndsm_0p5m.tif", "chm": "chm_0p5m.tif",
+               "change": "ground_change_0p5m.tif", "cls": "surface_class_0p5m.tif"}
+    if args.force or any(s.get("cached") is False for s in stats) or not all((lidar_dir() / v).exists() for v in rasters.values()):
+        mosaic(npzs, raster_extent(), res, rasters)
     timings["mosaic_s"] = time.time() - t
+    if args.tiles_only:
+        log(f"lidar_features: tiles done in {time.time() - t0:.0f}s (--tiles-only)")
+        return 0
 
-    # buildings
+    # 3. roofs (need the mosaicked DTM)
+    t = time.time()
+    rjobs = [TileJob(j.ckm, j.rkm, j.core, j.footprints, [], [], j.shift, args.force or args.force_roofs) for j in jobs]
+    rstats = run_parallel(process_roofs, rjobs, args.workers, "roofs")
+    timings["roofs_s"] = time.time() - t
     roofs = pd.concat([pd.read_parquet(work_dir() / f"roofs_{j.ckm}_{j.rkm}.parquet") for j in jobs], ignore_index=True)
     out = assemble_buildings(fp, roofs)
-    out.to_parquet(lidar_dir() / "buildings_roofs.parquet", index=False)
-
-    # lidar-only buildings
-    miss = pd.concat([pd.read_parquet(work_dir() / f"missing_{j.ckm}_{j.rkm}.parquet") for j in jobs], ignore_index=True)
-    if len(miss):
-        geoms = [swkt.loads(w) for w in miss["wkt"]]
-        mg = gpd.GeoDataFrame(miss.drop(columns=["wkt"]), geometry=geoms, crs=PROJECTION)
-        c = mg.geometry.centroid
-        mg["centroid_x"], mg["centroid_z"] = utm_to_scene_arrays(c.x.to_numpy(), c.y.to_numpy())
-        lon, lat = utm_to_lonlat_arrays(c.x.to_numpy(), c.y.to_numpy())
-        mg["centroid_lat"], mg["centroid_lon"] = lat, lon
-        mg.insert(0, "lidar_id", [f"lidar_{i:05d}" for i in range(len(mg))])
-        mg["quality"] = np.where(mg["n_roof_points"] >= 40, "good", np.where(mg["n_roof_points"] >= 12, "fair", "poor"))
-        mg = mg.to_crs("EPSG:4326")
-    else:
-        mg = gpd.GeoDataFrame({"lidar_id": []}, geometry=[], crs="EPSG:4326")
-    p = lidar_dir() / "missing_buildings.geojson"
-    p.unlink(missing_ok=True)
-    mg.to_file(p, driver="GeoJSON")
-
-    # trees
-    trees = pd.concat([pd.read_parquet(work_dir() / f"trees_{j.ckm}_{j.rkm}.parquet") for j in jobs], ignore_index=True)
-    trees = assemble_trees(trees)
-    trees.to_parquet(lidar_dir() / "trees.parquet", index=False)
+    _write_parquet_atomic(out, lidar_dir() / "buildings_roofs.parquet")
+    log(f"lidar_features: {len(out):,} roof records written")
 
     timings["total_s"] = time.time() - t0
-    val = validation(out, mg, trees, reg, shift, timings, stats)
+    val = validation(out, mg, trees, reg, shift, timings, stats + rstats)
     write_json(lidar_dir() / "lidar_validation.json", val)
     log(json.dumps(val["summary"], indent=1))
     log(f"lidar_features: done in {timings['total_s']:.0f}s")

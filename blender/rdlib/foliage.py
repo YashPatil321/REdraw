@@ -647,8 +647,8 @@ QUEEN_CELLS = {"frond": Cell("frond", 0, 0, 2), "frond2": Cell("frond2", 0, 1, 2
 def queen_palm(tex: Path) -> tuple[Part, np.ndarray, Path]:
     """Syagrus romanzoffiana: ~11 m, smooth gray ringed trunk, arching feathery fronds 3-4 m long."""
     path = build_atlas(tex, [
-        (QUEEN_CELLS["frond"], lambda w, h: draw_pinnate(w, h, 31, "#5F8030")),
-        (QUEEN_CELLS["frond2"], lambda w, h: draw_pinnate(w, h, 32, "#6E8C36")),
+        (QUEEN_CELLS["frond"], lambda w, h: draw_pinnate(w, h, 31, "#6B8E36")),
+        (QUEEN_CELLS["frond2"], lambda w, h: draw_pinnate(w, h, 32, "#7C9C40")),
     ], lambda w, h: draw_bark(w, h, 33, "#9A968C", "#6E6A62", "#B5B0A6", "ringed"))
     rng = np.random.default_rng(303)
     pl = Plant(QUEEN_CELLS)
@@ -659,21 +659,21 @@ def queen_palm(tex: Path) -> tuple[Part, np.ndarray, Path]:
     top = np.array(pts[-1])
     pl.tube([top, top + np.array([0, 0, 0.9])], [0.24, 0.14], n=6, v_scale=0.05)  # green crownshaft
     cen = top + np.array([0, 0, 0.8])
-    n_f = 24
+    n_f = 30
     for k in range(n_f):
         az = k * 2.39996 + rng.normal(0, 0.1)
-        elev = math.radians(rng.uniform(15, 70))
-        L = rng.uniform(3.2, 4.2)
+        elev = math.radians(float(np.interp(k / n_f, [0, 0.3, 1], [80, 50, 5])) + rng.normal(0, 7))
+        L = rng.uniform(3.9, 4.8) * (0.8 if k < 4 else 1.0)  # youngest spear fronds shorter
         d0 = np.array([math.cos(az), math.sin(az), 0.0])
         frond = []
         base = top + np.array([0, 0, 0.8])
-        droop = math.radians(rng.uniform(80, 115))
+        droop = math.radians(rng.uniform(70, 105))
         for i in range(8):
             t = i / 7
             ang = elev - t * droop  # arches over and droops
             frond.append(base + d0 * L * 0.85 * t * math.cos(ang * 0.5) + np.array([0, 0, L * 0.5 * math.sin(elev) * t - L * 0.55 * t * t]))
         side = np.array([-math.sin(az), math.cos(az), 0.0])
-        pl.strip(frond, side, rng.uniform(1.8, 2.2), "frond" if k % 2 else "frond2", canopy_center=cen, bend=0.5, fold=0.35)
+        pl.strip(frond, side, rng.uniform(2.1, 2.6), "frond" if k % 2 else "frond2", canopy_center=cen, bend=0.5, fold=0.3)
     p, N = pl.build()
     return p, N, path, pl.ao()
 
@@ -930,12 +930,12 @@ PINE_CELLS = {"a": Cell("a", 0, 0), "b": Cell("b", 1, 0), "c": Cell("c", 0, 1), 
 def canary_pine(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
     """Pinus canariensis: ~20 m, straight trunk, short tiered branches with long drooping needle tufts,
     columnar-irregular crown ~6 m wide, epicormic tufts on the trunk."""
-    cols = ["#4F6E3E", "#5E7F4A", "#6B8A55", "#466238"]
+    cols = ["#4A6A3E", "#587A4A", "#64845A", "#405E36"]
     path = build_atlas(tex, [
-        (PINE_CELLS["a"], lambda w, h: draw_pine_tuft(w, h, 91, cols, 5)),
-        (PINE_CELLS["b"], lambda w, h: draw_pine_tuft(w, h, 92, cols, 4)),
-        (PINE_CELLS["c"], lambda w, h: draw_pine_tuft(w, h, 93, cols[1:], 6)),
-        (PINE_CELLS["d"], lambda w, h: draw_pine_tuft(w, h, 94, cols[:3], 3)),
+        (PINE_CELLS["a"], lambda w, h: draw_pine_tuft(w, h, 91, cols, 7)),
+        (PINE_CELLS["b"], lambda w, h: draw_pine_tuft(w, h, 92, cols, 6)),
+        (PINE_CELLS["c"], lambda w, h: draw_pine_tuft(w, h, 93, cols[1:], 8)),
+        (PINE_CELLS["d"], lambda w, h: draw_pine_tuft(w, h, 94, cols[:3], 5)),
     ], lambda w, h: draw_bark_plated(w, h, 95))
     rng = np.random.default_rng(909)
     pl = Plant(PINE_CELLS)
@@ -947,7 +947,7 @@ def canary_pine(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
     k = 0
     while z < H - 0.6:
         t = (z - 4.5) / (H - 4.5)
-        nb = int(rng.integers(3, 5))
+        nb = int(rng.integers(4, 6))
         L = 2.9 * (1 - t) ** 0.6 + 0.7
         az0 = rng.uniform(0, 2 * math.pi)
         tz = np.interp(z, [p[2] for p in trunk], [p[0] for p in trunk]), np.interp(z, [p[2] for p in trunk], [p[1] for p in trunk])
@@ -958,11 +958,11 @@ def canary_pine(tex: Path) -> tuple[Part, np.ndarray, Path, np.ndarray]:
             Lb = L * rng.uniform(0.7, 1.15)
             end = base + d0 * Lb + np.array([0, 0, rng.uniform(0.2, 0.9)])
             pts = _limb(pl, base, end, 0.09 * (1 - t) + 0.04, 0.025, n=4, segs=2, bend=0.25, v_scale=0.05)
-            for s_ in np.linspace(0.35, 1.0, max(2, int(Lb / 0.45))):
+            for s_ in np.linspace(0.3, 1.0, max(2, int(Lb / 0.42))):
                 q = base + (end - base) * s_
                 tip_cards.append((q, d0))
             k += 1
-        z += rng.uniform(1.0, 1.5)
+        z += rng.uniform(0.8, 1.2)
     cen = (0.2, 0.1, H * 0.62)
     for q, d0 in tip_cards:
         for _ in range(3):

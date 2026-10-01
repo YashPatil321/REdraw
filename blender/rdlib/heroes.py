@@ -9,7 +9,9 @@ Output: Blender objects in LOCAL meters, origin = hero center, Blender +X east,
 +Y north, +Z up (glTF: +x east, +y up, +z south). All faces use palette keys, so
 the export carries per-face vertex colors (COLOR_0) on 3-4 class materials
 (hero_matte / hero_glass / hero_metal / hero_glow), which the pipeline's hero
-loader keeps when it bakes the model into the building tiles.
+loader keeps when it bakes the model into the building tiles. Each vertex also
+carries the material-atlas ids `_MAT` / `_VARIANT` and atlas UVs (rdlib/atlas.py),
+so the client shades heroes with the same stucco / roof / ground atlases as houses.
 
 Architecture vocabulary (SoCal Mediterranean-modern): stucco walls over a stone /
 concrete base band, punched or banded windows with dark glass and trim, flat
@@ -466,7 +468,9 @@ def site_object(o: dict[str, Any], acc: Acc) -> None:
     acc += p.rotated_z(ang).moved(o["x"], o["y"], 0.12)
 
 
-def build_campus(site: dict[str, Any]) -> tuple[list, dict[str, Any]]:
+def build_campus(site: dict[str, Any], atlas_man: dict[str, Any] | None = None) -> tuple[list, dict[str, Any]]:
+    """Campus objects; with atlas_man (materials_manifest.json) every vertex also carries `_MAT`,
+    `_VARIANT` and atlas TEXCOORD_0 (rdlib/atlas.py KEY_MAT), COLOR_0 stays the tint / fallback."""
     from . import bl
 
     rng = np.random.default_rng(sum(map(ord, site["id"])))
@@ -486,14 +490,19 @@ def build_campus(site: dict[str, Any]) -> tuple[list, dict[str, Any]]:
     bpart = bacc.merge()
     objs = []
     if len(gpart.F):
-        objs.append(bl.part_to_object(gpart, f"{site['id']}_ground", color_jitter=0.0, seed=1))
+        objs.append(bl.part_to_object(gpart, f"{site['id']}_ground", color_jitter=0.0, seed=1, atlas_man=atlas_man))
     if len(bpart.F):
-        objs.append(bl.part_to_object(bpart, f"{site['id']}_buildings", color_jitter=0.03, seed=2, ao_ground=0.25))
+        objs.append(bl.part_to_object(bpart, f"{site['id']}_buildings", color_jitter=0.03, seed=2, ao_ground=0.25,
+                                        atlas_man=atlas_man))
     stats["tris"] = bl.tri_count(objs)
     stats["_trees"] = {
         "hero": site["id"], "frame": "local meters, x east, y north (glTF z = -y), origin = hero center",
         "lat": site["lat"], "lon": site["lon"], "rotation_deg": 0.0,
         "trees": site["layout"]["trees"], "lamps": site["layout"]["lamps"], "parked_cars": site["layout"]["parked"],
+        # where real (lidar) trees must not stand: modeled buildings, sports surfaces and pavement
+        "keepout": [{"cls": "building", "exterior": b["exterior"], "holes": b.get("holes", [])} for b in site["buildings"]]
+        + [{"cls": sf["cls"], "exterior": sf["exterior"], "holes": sf.get("holes", [])} for sf in site["layout"]["surfaces"]
+           if sf.get("cls") in ("turf_field", "track_red", "court_blue", "dirt_infield", "asphalt", "asphalt_light", "rubber_play")],
     }
     return objs, stats
 
@@ -503,10 +512,62 @@ def build_campus(site: dict[str, Any]) -> tuple[list, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
+ATLAS_OF_MAT = {0: "facade_walls", 1: "roofs", 2: "roofs", 3: "facade_walls", 4: "facade_walls", 6: "ground"}
+
+
+def atlas_preview_materials(obj: Any, man: dict[str, Any], mat_dir: Path) -> int:
+    """Re-material an exported hero object for Cycles previews from its `_MAT` / `_VARIANT`
+    attributes (the same lookup the client does). Faces with _MAT 7 keep the vertex-color class
+    material. Returns the number of atlas materials used."""
+    from . import atlas, bl
+
+    me = obj.data
+    if "_MAT" not in me.attributes:
+        return 0
+    n = len(me.vertices)
+    mat = np.zeros(n, dtype=np.float32)
+    var = np.zeros(n, dtype=np.float32)
+    me.attributes["_MAT"].data.foreach_get("value", mat)
+    me.attributes["_VARIANT"].data.foreach_get("value", var)
+    slot_of = {m.name: i for i, m in enumerate(me.materials)}
+    idx = np.zeros(len(me.polygons), dtype=np.int32)
+    me.polygons.foreach_get("material_index", idx)
+    first = np.array([p.vertices[0] for p in me.polygons], dtype=np.int64)
+    used = 0
+    for (m, v), faces in _group_faces(mat[first].astype(int), var[first].astype(int)).items():
+        if m not in ATLAS_OF_MAT:
+            continue
+        an = ATLAS_OF_MAT[m]
+        cname = man["atlases"]["ground"]["cells"][v]["name"] if m == atlas.MAT_GROUND else man["materials"][str(m)]["variants"][v]
+        cell = atlas.cell(man, an, cname)
+        name = f"heroatlas_{m}_{v}"
+        bm = bl.atlas_material(name, man, an, cname, mat_dir, tint_attr="Col" if cell.get("tintable") else None,
+                               ao_mix=0.5 if m == atlas.MAT_GROUND else 0.6)
+        if name not in slot_of:
+            slot_of[name] = len(me.materials)
+            me.materials.append(bm)
+        idx[faces] = slot_of[name]
+        used += 1
+    me.polygons.foreach_set("material_index", idx)
+    return used
+
+
+def _group_faces(m: np.ndarray, v: np.ndarray) -> dict[tuple[int, int], np.ndarray]:
+    key = m * 256 + v
+    return {(int(k) // 256, int(k) % 256): np.nonzero(key == k)[0] for k in np.unique(key)}
+
+
 def render_preview(site: dict[str, Any], objs: list, path: Path, samples: int = 32) -> None:
     import bpy
 
-    from . import bl, foliage, materials, props, vehicles
+    from . import atlas, bl, foliage, materials, props, vehicles
+
+    try:
+        man = atlas.load_manifest(atlas.MAT_DIR)
+        for o in objs:
+            atlas_preview_materials(o, man, atlas.MAT_DIR)
+    except FileNotFoundError:
+        pass
 
     tex_dir = Path(bl.BUILD_DIR) / "textures"
     R = float(site["footprint_radius_m"])

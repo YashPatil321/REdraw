@@ -389,7 +389,10 @@ def envelope_faces(pieces: list[Piece], eps: float = 2e-3, min_area: float = 0.0
                     occ.append(Polygon(C))
             fp = Polygon(F)
             if occ:
-                fp = fp.difference(shapely.union_all(occ))
+                try:
+                    fp = fp.difference(shapely.union_all(occ, grid_size=1e-5), grid_size=1e-5)
+                except shapely.errors.GEOSException:
+                    fp = fp.buffer(0).difference(shapely.union_all([o.buffer(0) for o in occ]).buffer(0))
                 fp = _clean_poly(fp, min_area)
                 if fp is None:
                     continue
@@ -507,20 +510,21 @@ def envelope_profile(pieces: list[Piece], a: np.ndarray, b: np.ndarray, inward: 
             T.append(t)
             Z.append(zl if not np.isnan(zl) else zr)
     T_, Z_ = np.array(T), np.array(Z)
-    # drop collinear interior points
-    if len(T_) > 2:
-        keepm = [0]
+    # drop interior points the neighbours interpolate within 5 mm (keeps jumps = repeated t)
+    tol = 5e-3
+    changed = True
+    while changed and len(T_) > 2:
+        changed = False
         for k in range(1, len(T_) - 1):
-            t0, z0 = T_[keepm[-1]], Z_[keepm[-1]]
-            t1, z1 = T_[k], Z_[k]
-            t2, z2 = T_[k + 1], Z_[k + 1]
-            if t1 == t0 or t2 == t1:
-                keepm.append(k)
+            t0, t1, t2 = T_[k - 1], T_[k], T_[k + 1]
+            if t1 - t0 <= 1e-12 or t2 - t1 <= 1e-12:
                 continue
-            if abs((z1 - z0) / (t1 - t0) - (z2 - z1) / (t2 - t1)) * L > 1e-4 * L * L:
-                keepm.append(k)
-        keepm.append(len(T_) - 1)
-        T_, Z_ = T_[keepm], Z_[keepm]
+            zi = Z_[k - 1] + (Z_[k + 1] - Z_[k - 1]) * (t1 - t0) / (t2 - t0)
+            if abs(zi - Z_[k]) < tol:
+                T_ = np.delete(T_, k)
+                Z_ = np.delete(Z_, k)
+                changed = True
+                break
     return T_, Z_
 
 

@@ -43,7 +43,7 @@ BUILD = HERE / "build"
 SITES_JSON = BUILD / "hero_sites.json"
 
 STAGES = ("materials", "vehicles", "trees", "street", "heroes", "manifest", "previews")
-PREVIEWS = ("sheets", "street_scene", "vehicles", "vegetation")
+PREVIEWS = ("sheets", "street_scene", "vehicles", "vegetation", "heroes")
 MAT_DIR = REPO / "client" / "public" / "assets" / "materials"
 
 
@@ -224,15 +224,16 @@ def build_heroes(previews: bool, samples: int) -> None:
             raise SystemExit(f"{SITES_JSON} missing and no main venv to run blender/extract_hero_sites.py")
         log("extracting hero footprints with the main venv ...")
         subprocess.run([str(main_py), str(HERE / "extract_hero_sites.py")], check=True)
-    from rdlib import heroes
+    from rdlib import atlas, heroes
 
     sites = json.loads(SITES_JSON.read_text())["heroes"]
+    man = atlas.load_manifest(MAT_DIR)
     overrides = []
     for site in sites:
         bl.reset_scene()
-        objs, stats = heroes.build_campus(site)
+        objs, stats = heroes.build_campus(site, atlas_man=man)
         out = HERO_DIR / site["glb"]
-        bl.export_glb(objs, out)
+        bl.export_glb(objs, out, attributes=True)
         tris = bl.tri_count(objs)
         trees = stats.pop("_trees")
         log(f"{site['id']}: {tris} tris, {stats} -> {out}")
@@ -420,7 +421,7 @@ def main() -> None:
     if entries or "manifest" in stages:
         write_manifest(entries)
     if "heroes" in stages:
-        build_heroes("previews" in stages, a.samples)
+        build_heroes("previews" in stages and "heroes" in a.previews, a.samples)
     if "previews" in stages:
         render_previews(set(a.previews), a.samples)
     log(f"done in {time.time() - t0:.0f} s ({datetime.now(UTC).isoformat(timespec='seconds')})")

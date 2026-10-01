@@ -797,8 +797,10 @@ def build_network(
     exits = snap_exits(nodes, edges, exits_xy, labels, config_xz, dropped)
     if not exits:
         raise RuntimeError("no region.yaml exit could be snapped to the drive network; check region.yaml exits")
+    exits += route_unreachable_exits(exits, dropped, config_xz)
     for ex in exits:
-        nodes.loc[nodes["node_id"] == ex["node_id"], "boundary_exit"] = ex["id"]
+        if not ex.get("via"):
+            nodes.loc[nodes["node_id"] == ex["node_id"], "boundary_exit"] = ex["id"]
     return RoadNetwork(G=G, nodes=nodes, edges=edges, exits=exits, signal_source=signal_source, G_visual=G_visual, boundary_nodes=n_boundary, exits_dropped=dropped)
 
 
@@ -862,7 +864,15 @@ def snap_exits(
         cand = set(edges.loc[mask, "u"]).union(edges.loc[mask, "v"]) - used
         if not cand:
             log(f"WARNING exit {ex['id']}: no edge of road '{prefix}' {refs} is in the strongly connected network; exit DROPPED (see exits.json 'dropped')")
-            dropped.append({"id": ex["id"], "label": ex.get("label", ex["id"]), "reason": f"road '{prefix}' is not connected to the drive network inside the region bbox"})
+            dropped.append(
+                {
+                    "id": ex["id"],
+                    "label": ex.get("label", ex["id"]),
+                    "bearing_deg": float(ex.get("bearing_deg", 0)),
+                    "verified": bool(ex.get("verified", False)),
+                    "reason": f"road '{prefix}' is not connected to the drive network inside the region bbox",
+                }
+            )
             continue
         cp = pos.loc[sorted(cand)]
         d = np.hypot(cp["x"].to_numpy() - x, cp["z"].to_numpy() - z)
@@ -884,6 +894,47 @@ def snap_exits(
                 "verified": bool(ex.get("verified", False)),
             }
         )
+    return out
+
+
+def route_unreachable_exits(
+    exits: list[dict[str, Any]],
+    dropped: list[dict[str, Any]],
+    config_xz: dict[str, tuple[float, float]],
+) -> list[dict[str, Any]]:
+    """Keep exits whose own road only clips a bbox corner (no junction with the network inside
+    the bbox, e.g. Del Dios Highway at the NW corner) as `via` exits: trips leave the network at
+    the nearest snapped exit (by region.yaml point) and continue outside the bbox. They keep
+    their own id, label and bearing (so external jobs in that direction still exist) and share
+    the via exit's node. Moves them out of `dropped` (in place); returns the new exit records."""
+    out: list[dict[str, Any]] = []
+    if not exits:
+        return out
+    keep: list[dict[str, Any]] = []
+    for dr in dropped:
+        xz = config_xz.get(str(dr["id"]))
+        if xz is None:
+            keep.append(dr)
+            continue
+        dist = [math.hypot(e["x"] - xz[0], e["z"] - xz[1]) for e in exits]
+        k = int(np.argmin(dist))
+        via = exits[k]
+        log(f"exit {dr['id']}: its road is not connected inside the bbox; routed via exit {via['id']} ({dist[k]:.0f} m away)")
+        out.append(
+            {
+                **{f: via[f] for f in ("node_id", "x", "z")},
+                "id": dr["id"],
+                "label": dr["label"],
+                "bearing_deg": float(dr.get("bearing_deg", 0.0)),
+                "snap_distance_m": float(dist[k]),
+                "target_distance_m": float(dist[k]),
+                "verified": bool(dr.get("verified", False)),
+                "via": via["id"],
+                "snap_method": "via_exit",
+                "note": f"{dr['reason']}; trips use exit {via['id']} and continue outside the bbox",
+            }
+        )
+    dropped[:] = keep
     return out
 
 

@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { ATLAS_GLSL, cellRect, type MaterialLibrary } from './materials';
 
 /** Ground cells used by the terrain, in uniform order. */
-export const TERRAIN_LAYERS = ['grass_lawn', 'grass_patchy', 'chaparral', 'coastal_sage', 'bare_dirt', 'decomposed_granite', 'concrete_sidewalk', 'mulch', 'pool_water'] as const;
+export const TERRAIN_LAYERS = ['grass_lawn', 'grass_patchy', 'chaparral', 'coastal_sage', 'bare_dirt', 'decomposed_granite', 'asphalt_parking', 'mulch', 'pool_water'] as const;
 
 export interface TerrainShared {
   uMinH: { value: number };

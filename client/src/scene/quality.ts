@@ -44,6 +44,8 @@ export interface QualitySettings {
   buildingDrawDistance: number;
   propDrawDistance: number;
   anisotropy: number;
+  /** multiplier of the terrain / building LOD switch distances */
+  lodScale: number;
 }
 
 export const QUALITY: Record<Quality, QualitySettings> = {
@@ -70,6 +72,7 @@ export const QUALITY: Record<Quality, QualitySettings> = {
     buildingDrawDistance: 14000,
     propDrawDistance: 3000,
     anisotropy: 16,
+    lodScale: 1.6,
   },
   high: {
     pixelRatioCap: 1.5,
@@ -94,6 +97,7 @@ export const QUALITY: Record<Quality, QualitySettings> = {
     buildingDrawDistance: 12000,
     propDrawDistance: 2200,
     anisotropy: 8,
+    lodScale: 1.25,
   },
   medium: {
     pixelRatioCap: 1,
@@ -118,6 +122,7 @@ export const QUALITY: Record<Quality, QualitySettings> = {
     buildingDrawDistance: 9000,
     propDrawDistance: 1500,
     anisotropy: 4,
+    lodScale: 1,
   },
   low: {
     pixelRatioCap: 1,
@@ -142,6 +147,7 @@ export const QUALITY: Record<Quality, QualitySettings> = {
     buildingDrawDistance: 6000,
     propDrawDistance: 800,
     anisotropy: 2,
+    lodScale: 0.6,
   },
 };
 
