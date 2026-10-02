@@ -182,5 +182,7 @@ never merged into the code branches) and push. The Vercel project `redraw` build
 enabled and restrict it by HTTP referrer to your domains. Then either set `GOOGLE_MAPS_API_KEY` in
 the Vercel project and redeploy, set `VITE_GOOGLE_MAPS_API_KEY` in `client/.env.local` for local dev,
 or open the app once with `?gkey=YOUR_KEY` (kept in that browser only). With a key, Google's
-photogrammetry is the world surface and the simulation draws on top; without one, the app shows
-the open-data world (USGS lidar terrain and roofs, Overture/OSM buildings and roads).
+photogrammetry is the aerial view (above ~150 m); below ~100 m and in walk mode the app fades to the
+open-data world (USGS lidar terrain and roofs, Blender-built buildings, real trees), because the
+photogrammetry looks melted at street level. Without a key, or when the Google quota is used up, the
+open-data world is shown at every height. Thresholds live in `client/src/scene/baseLayer.ts`.
