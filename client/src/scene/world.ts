@@ -43,6 +43,8 @@ interface LayerSlot {
   root: THREE.Object3D | null;
   loading: boolean;
   failed: boolean;
+  /** pipeline building tile loaded only for its hero campus meshes (HD tiles cover the rest) */
+  heroOnly?: boolean;
 }
 
 interface Tile {
@@ -240,6 +242,8 @@ export class World {
     } catch {
       /* not built yet: pipeline building tiles */
     }
+    // HD tiles leave the hero campuses out (they are Blender models baked into the pipeline tiles)
+    const heroTiles = new Set((manifest.heroes ?? []).map((h) => h.tile));
     const perTileStreets = manifest.tiles.some((t) => t.roads || t.ground);
     this.hasStreets = perTileStreets;
     for (const t of manifest.tiles) {
@@ -257,7 +261,10 @@ export class World {
         splat: null,
         splatLoading: false,
         streets: [t.roads, t.ground].filter((p): p is string => !!p).map((path) => ({ path, root: null, loading: false, failed: false })),
-        buildings: t.buildings && !hdTile ? { path: t.buildings, root: null, loading: false, failed: false } : null,
+        buildings:
+          t.buildings && (!hdTile || heroTiles.has(t.id))
+            ? { path: t.buildings, root: null, loading: false, failed: false, heroOnly: Boolean(hdTile) }
+            : null,
         hd: hdTile ? hdTile.lods.map((p) => (p ? { path: p, root: null, loading: false, failed: false } : null)) : [],
         dist: Infinity,
       };
@@ -435,6 +442,15 @@ export class World {
       const root = await this.parse(await this.fetchAsset!(s.path));
       root.name = `buildings:${s.path}`;
       const base = kind === 'pipeline' || level === this.farHdLevel(t);
+      if (s.heroOnly) {
+        for (const m of this.meshes(root)) {
+          if (!/^hero/i.test(m.name) && !/^hero/i.test(m.parent?.name ?? '')) {
+            m.removeFromParent();
+            m.geometry.dispose();
+            for (const mat of Array.isArray(m.material) ? m.material : [m.material]) mat.dispose();
+          }
+        }
+      }
       for (const m of this.meshes(root)) {
         m.matrixAutoUpdate = false;
         m.updateMatrix();

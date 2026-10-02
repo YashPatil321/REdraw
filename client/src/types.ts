@@ -411,6 +411,8 @@ export interface Manifest {
   terrain_lod?: { suggested_switch_distance_m?: Record<string, number> };
   splat?: { channels?: Record<string, string[]>; suggested_ground_cells?: Record<string, string> };
   materials?: string | null;
+  /** Blender hero campuses baked into pipeline building tiles (meshes named `hero_<id>_<n>`) */
+  heroes?: Array<{ id: string; name?: string; building_id?: number; tile: string; school_id?: string | null }>;
   /** path (under assets/) of the Blender HD buildings manifest, when built */
   buildings_hd?: string;
 }
