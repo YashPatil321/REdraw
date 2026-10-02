@@ -1,11 +1,27 @@
 /**
  * Google Maps Platform API key for Photorealistic 3D Tiles. Never committed:
- * it comes from `VITE_GOOGLE_MAPS_API_KEY` at build time, or from `?gkey=<key>`
+ * it comes from `VITE_GOOGLE_MAPS_API_KEY` at build time, `runtime-config.json` at deploy time, or `?gkey=<key>`
  * at runtime (remembered in localStorage so the link can be shared without it).
  * `?gkey=` with an empty value (or `?gkey=clear`) forgets a stored key.
  */
 
 export const GKEY_STORAGE = 'redraw-google-maps-key';
+
+/** Key from an optional `runtime-config.json` next to index.html (written at deploy time, e.g.
+ * from a Vercel environment variable), so a static build needs no rebuild to get a key. */
+let runtimeKey: string | undefined;
+
+export async function loadRuntimeConfig(): Promise<void> {
+  if (typeof fetch === 'undefined' || typeof document === 'undefined') return;
+  try {
+    const r = await fetch(new URL('runtime-config.json', document.baseURI), { cache: 'no-store' });
+    if (!r.ok) return;
+    const j = (await r.json()) as { googleMapsKey?: unknown };
+    if (typeof j.googleMapsKey === 'string' && j.googleMapsKey.trim()) runtimeKey = j.googleMapsKey.trim();
+  } catch {
+    /* no runtime config (dev server answers with index.html): ignore */
+  }
+}
 
 export interface KeySources {
   search: string;
@@ -66,7 +82,7 @@ export function browserGoogleKey(): ResolvedKey {
   }
   const r = resolveGoogleKey({
     search: typeof location !== 'undefined' ? location.search : '',
-    envKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined,
+    envKey: (import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined) || runtimeKey,
     storage,
   });
   stripKeyFromUrl();

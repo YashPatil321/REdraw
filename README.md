@@ -162,3 +162,25 @@ There is no answer key. Goals in the mission brief are hints.
 Code: Apache 2.0 ([LICENSE](LICENSE)). Assets and simulation results: CC BY 4.0.
 OpenStreetMap derived data: ODbL. Data sources are listed in
 [ATTRIBUTION.md](ATTRIBUTION.md).
+
+## Deploying the viewer (Vercel)
+
+The hosted viewer is a static build: the 3D world, the baseline traffic playback and the example
+plans with their report cards. Running new plans needs the Python API on a normal server.
+
+```bash
+.venv/bin/uvicorn api.main:app --port 8000      # with the plans you want to show already run
+cd client && npm run build:viewer               # writes client/dist-viewer/ (~225 MB)
+```
+
+Copy `client/dist-viewer/` into `site/` on the deploy-only `vercel-viewer` branch (built output only,
+never merged into the code branches) and push. The Vercel project `redraw` builds that branch with
+`node write-runtime-config.mjs`, which writes `site/runtime-config.json` from the project's
+`GOOGLE_MAPS_API_KEY` environment variable.
+
+**Google Photorealistic 3D Tiles:** create a Google Maps Platform key with the Map Tiles API
+enabled and restrict it by HTTP referrer to your domains. Then either set `GOOGLE_MAPS_API_KEY` in
+the Vercel project and redeploy, set `VITE_GOOGLE_MAPS_API_KEY` in `client/.env.local` for local dev,
+or open the app once with `?gkey=YOUR_KEY` (kept in that browser only). With a key, Google's
+photogrammetry is the world surface and the simulation draws on top; without one, the app shows
+the open-data world (USGS lidar terrain and roofs, Overture/OSM buildings and roads).

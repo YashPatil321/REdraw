@@ -3,6 +3,7 @@
 import { initActions, loadBaselinePlayback, openPlan } from './actions';
 import { api, initApi, with503Retry } from './api';
 import { latLonToScene, originFromLatLon } from './geo';
+import { loadRuntimeConfig } from './photoreal/key';
 import { parseHash } from './router';
 import { SceneController } from './scene/controller';
 import { store, toast } from './state';
@@ -11,6 +12,7 @@ import { appCtx } from './ui/base';
 import './ui/app';
 
 async function boot(): Promise<void> {
+  await loadRuntimeConfig();
   const container = document.getElementById('scene')!;
   const scene = new SceneController(container);
   appCtx.scene = scene;
