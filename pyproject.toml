@@ -34,6 +34,7 @@ pipeline = [
   "planetary-computer>=1.0",
   "pillow>=10",
   "mapbox-earcut>=1.0",
+  "matplotlib>=3.8",
 ]
 dev = [
   "pytest>=8",
