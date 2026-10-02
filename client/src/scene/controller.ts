@@ -13,10 +13,10 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { TrafficLayer, setVehicleEnvMap, vehicleLightUniforms, vehicleMaterial, type VehicleGeometries } from '../traffic/layer';
 import type { RoadNetwork } from '../traffic/network';
 import type { Playback } from '../traffic/playback';
-import { adjTexture, buildRoadOverlayGeometry } from '../traffic/roadOverlay';
+import { buildRoadOverlayGeometry } from '../traffic/roadOverlay';
 import { browserGoogleKey } from '../photoreal/key';
 import type { PhotorealManager } from '../photoreal/manager';
-import type { TileSource } from '../photoreal/tiles';
+import type { Attribution, TileSource } from '../photoreal/tiles';
 import type { Manifest, School, WorldMeta } from '../types';
 import { applyMapClick, setParam, type MapType } from '../ui/formgen';
 import { ArterialLabels, BASELINE_COLOR, EdgeHighlight, LocationPin, PLAN_COLOR, PlanOverlay, SchoolMarkers } from './markers';
@@ -26,6 +26,7 @@ import { RoadDetails } from './roadDetails';
 import { loadGrassTuft, loadStaticProps, loadVehicleProps, windUniforms, type StaticProps } from './props';
 import { GrassField } from './grass';
 import { Viewer } from './viewer';
+import { BASE_LAYER, BaseLayerSwitch, type BaseLayer } from './baseLayer';
 import { World } from './world';
 import { buildingUniforms } from './buildingMaterial';
 import { MaterialLibrary } from './materials';
@@ -66,6 +67,15 @@ export class SceneController {
   private roadDetails: RoadDetails | null = null;
   private staticProps: StaticProps | null = null;
   private grass: GrassField | null = null;
+  /** base map: Google tiles from the air, our world near the ground (baseLayer.ts) */
+  readonly layer = new BaseLayerSwitch();
+  private layerShown: BaseLayer | null = null;
+  /** walk requested: the walk-in camera move is running (street layer wanted now) */
+  private walkIntro = false;
+  private googleAttr: Attribution | null = null;
+  private lastPrewarm = 0;
+  private prewarmVersion = -1;
+  private worldVersion = 0;
 
   private manifest: Manifest | null = null;
   /** PBR atlases (assets/materials), loaded with the world */
@@ -130,7 +140,7 @@ export class SceneController {
     const qs = QUALITY[q];
     if (!this.sky) return;
     this.sky.maxShadowFar = qs.shadowFar;
-    this.sky.configureShadows(qs.shadows && !this.photoreal, qs.shadowMapSize, qs.cascades, qs.shadowFar);
+    this.sky.configureShadows(qs.shadows, qs.shadowMapSize, qs.cascades, qs.shadowFar);
     this.sky.ibl = qs.ibl;
     this.sky.setSkySize(qs.skySize);
     this.vehicleEnv(qs.ibl);
@@ -143,7 +153,8 @@ export class SceneController {
     this.world.applyQuality({ ...qs, interiors: qs.interiors });
     this.staticProps?.setDrawDistance(qs.propDrawDistance);
     this.staticProps?.setShadows(qs.shadows);
-    this.grass?.setDensity(this.photoreal ? 0 : qs.grass);
+    this.grass?.setDensity(qs.grass);
+    this.layerShown = null; // re-apply layer visibility (grass, props)
     this.baseline?.setCastShadows(qs.carShadows && qs.shadows);
     this.plan?.setCastShadows(qs.carShadows && qs.shadows);
     this.lastQualityChange = performance.now();
@@ -231,14 +242,27 @@ export class SceneController {
     if (mode === 'photoreal') this.applyRenderMode(store.get());
   }
 
-  private get photoreal(): boolean {
-    return store.get().renderMode === 'photoreal' && !!this.photo?.isActive;
+  /** Google tiles are (at least partly) the drawn base map. */
+  private get googleShown(): boolean {
+    return !!this.photo?.isActive && this.layer.aerialVisible;
+  }
+
+  /** Clicks land on Google tiles (aerial layer), our meshes are invisible picking proxies. */
+  private get aerialPick(): boolean {
+    return !!this.photo?.isActive && this.layer.mix < 0.5;
+  }
+
+  /** Required Google credits while (and only while) Google tiles are drawn. */
+  private pushAttribution(): void {
+    const a = this.googleShown && this.googleAttr?.google ? this.googleAttr : null;
+    const cur = store.get().attribution;
+    if (a === cur || (a && cur && a.google === cur.google && a.text === cur.text)) return;
+    store.set({ attribution: a });
   }
 
   private ensurePhotoreal(): Promise<void> {
     if (this.photo || !this.tileSource || !this.meta || !this.origin) return Promise.resolve();
     if (this.photoLoading) return this.photoLoading;
-    store.set((s) => ({ photoreal: { ...s.photoreal, status: 'Streaming 3D world…' } }));
     this.photoLoading = import('../photoreal/manager')
       .then(({ PhotorealManager }) => {
         const ext = this.meta!.region.extent_scene;
@@ -249,15 +273,16 @@ export class SceneController {
           origin: this.origin!,
           extent: ext,
           source: this.tileSource!,
-          onStatus: (msg) => store.set((s) => ({ photoreal: { ...s.photoreal, status: msg } })),
-          onAttribution: (a) => store.set({ attribution: a }),
-          onError: (msg) => {
-            // silently fall back to the open-data world (bad key, quota, network)
-            console.warn(`[photoreal] ${msg} Falling back to the open-data world.`);
-            store.set((s) => ({ photoreal: { ...s.photoreal, error: msg, status: '' }, renderMode: 'open' }));
+          // our world is always there underneath: no loading or error messages for Google
+          onStatus: () => undefined,
+          onAttribution: (a) => {
+            this.googleAttr = a;
+            this.pushAttribution();
           },
-          onDrape: () => {
-            if (this.net) adjTexture(this.net).needsUpdate = true;
+          onError: (msg) => {
+            // silently keep our world as the base map at every height (bad key, quota, network)
+            console.info(`[photoreal] ${msg} Using the open-data world.`);
+            store.set((s) => ({ photoreal: { ...s.photoreal, error: msg, status: '' }, renderMode: 'open' }));
           },
         });
         this.photo.setNetwork(this.net);
@@ -270,7 +295,10 @@ export class SceneController {
     return this.photoLoading;
   }
 
-  /** Switch between our open-data meshes and photoreal tiles (overlays restyle to match). */
+  /**
+   * Google tiles available or not (key, failures). The per-frame base-layer
+   * switch decides what is drawn; overlays look and sit the same on both.
+   */
   private applyRenderMode(s: AppState): void {
     const want = s.renderMode === 'photoreal';
     if (want && !this.photo) {
@@ -278,40 +306,98 @@ export class SceneController {
       return;
     }
     this.photo?.setActive(want);
-    const pr = want && !!this.photo;
-    const qs0 = QUALITY[s.quality];
-    // our meshes stay loaded (and raycastable for building picking) but are not drawn
-    this.world.group.visible = !pr;
-    if (this.roadDetails) this.roadDetails.group.visible = !pr;
-    if (this.staticProps) this.staticProps.group.visible = !pr;
-    this.grass?.setDensity(pr ? 0 : qs0.grass);
-    this.viewer.directRender = pr;
-    const qs = QUALITY[s.quality];
-    this.viewer.renderer.shadowMap.enabled = qs.shadows && !pr;
-    this.sky?.configureShadows(qs.shadows && !pr, qs.shadowMapSize, qs.cascades, qs.shadowFar);
-    if (this.sky) this.sky.photoreal = pr;
-    for (const l of [this.baseline, this.plan]) l?.setStyle(pr ? 'photoreal' : 'open');
+    this.viewer.directRender = false;
+    if (this.sky) this.sky.photoreal = false;
     if (this.planOverlay) this.planOverlay.update(s.draft.tools, s.tools, s.selectedTool);
-    if (!pr && store.get().attribution) store.set({ attribution: null });
-    this.reseatOverlays();
+    this.layerShown = null;
+    this.pushAttribution();
   }
 
-  /** Queue bars, pins: back onto the ground after a base-map change. */
-  private reseatOverlays(): void {
-    const fn = (x: number, z: number, fb: number): number => (this.photoreal ? (this.photo!.heightAt(x, z) ?? fb) : fb);
-    for (const l of [this.baseline, this.plan]) l?.setGroundHeights(fn);
+  /**
+   * Make one base-map layer set the drawn one: Google tiles (aerial) or our
+   * world (street). Our meshes stay loaded and raycastable (building picking)
+   * while hidden. Called once per state change, and per pass while crossfading.
+   */
+  private showLayer(l: BaseLayer): void {
+    const aerial = l === 'aerial' && !!this.photo?.isActive;
+    this.photo?.setVisible(aerial);
+    this.world.group.visible = !aerial;
+    if (this.roadDetails) this.roadDetails.group.visible = !aerial;
+    if (this.staticProps) this.staticProps.group.visible = !aerial;
+    if (this.grass) this.grass.mesh.visible = !aerial && QUALITY[store.get().quality].grass > 0;
+    const fog = this.sky?.fog;
+    this.viewer.setPhotoPass({
+      on: aerial,
+      fogColor: fog?.color ?? new THREE.Color(0.8, 0.8, 0.8),
+      // the photo already has atmosphere: lighter haze than our world gets
+      fogDensity: (fog?.density ?? 0) * 0.55,
+      ao: !aerial,
+    });
   }
 
-  /** Ground for the walk camera: photo tiles, else our terrain grid, else the nearest road. */
-  private walkGround(x: number, z: number, fromY?: number): number | null {
-    const dem = this.world.fastHeightAt(x, z) ?? this.net?.nearestEdge(x, z, 300)?.y ?? null;
-    if (this.photoreal) {
-      // first step: start just above our DEM (tiles are calibrated to it), never on a canopy
-      const from = fromY ?? (dem !== null ? dem + 4 : 1000);
-      const h = this.photo!.heightAt(x, z, from);
-      if (h !== null) return h;
+  /** Per frame: pick / fade the base map, stream Google only when it may be shown. */
+  private updateBaseLayer(dt: number, now: number): void {
+    const v = this.viewer;
+    const cam = v.camera.position;
+    const ground = this.world.fastHeightAt(cam.x, cam.z) ?? v.groundY;
+    const altitude = cam.y - ground;
+    const walking = v.walking || this.walkIntro;
+    const photo = this.photo;
+    const googleOk = !!photo && photo.isActive && photo.tiles.loaded && !photo.tiles.lastError;
+    const mix = this.layer.update(
+      { altitude, walking, googleOk, aerialReady: !!photo?.viewReady && photo.isCalibrated, streetReady: this.world.pendingWithin(700) === 0 },
+      dt,
+    );
+    if (this.layer.fading) {
+      v.layerFade = { mix, setLayer: (l) => this.showLayer(l) };
+      this.layerShown = null;
+    } else {
+      v.layerFade = null;
+      const l: BaseLayer = this.layer.mix >= 1 ? 'street' : 'aerial';
+      if (l !== this.layerShown) {
+        this.layerShown = l;
+        this.showLayer(l);
+      }
     }
-    return dem;
+    if (photo) {
+      const target = v.walking ? cam : v.controls.target;
+      // keep Google loading while it is (or may soon be) the base map
+      const stream = this.layer.aerialVisible || (!walking && altitude > BASE_LAYER.googlePrefetchM);
+      photo.frame(now, target, v.walking ? 25 : v.distance, stream);
+      if (this.sky) photo.tiles.setDim(this.sky.dim);
+    }
+    // stream our street-level assets around what the camera looks at while Google is shown
+    if (!walking && this.layer.target === 'aerial' && altitude < BASE_LAYER.exitStreetM * 2.5) this.world.focus = v.controls.target;
+    else if (!this.walkIntro) this.world.focus = null;
+    if (this.layer.target === 'aerial' && altitude < BASE_LAYER.exitStreetM * 2.5) this.prewarmStreet(now);
+    this.pushAttribution();
+  }
+
+  /**
+   * Compile our world's shaders while Google is shown, before the switch
+   * (otherwise the first street frame stalls on shader compilation).
+   */
+  private prewarmStreet(now: number): void {
+    if (now - this.lastPrewarm < 1500 || this.prewarmVersion === this.worldVersion) return;
+    this.lastPrewarm = now;
+    this.prewarmVersion = this.worldVersion;
+    const groups: THREE.Object3D[] = [];
+    for (const g of [this.world.group, this.staticProps?.group, this.roadDetails?.group, this.grass?.mesh]) if (g) groups.push(g);
+    const was = groups.map((g) => g.visible);
+    for (const g of groups) g.visible = true;
+    try {
+      const r = this.viewer.renderer as THREE.WebGLRenderer & { compileAsync?: (o: THREE.Object3D, c: THREE.Camera, s?: THREE.Scene) => Promise<unknown> };
+      for (const g of groups) void r.compileAsync?.(g, this.viewer.camera, this.viewer.scene)?.catch(() => undefined);
+    } catch (e) {
+      console.warn('shader prewarm failed', e);
+    } finally {
+      groups.forEach((g, i) => (g.visible = was[i]!));
+    }
+  }
+
+  /** Ground for the walk camera: our terrain, else the nearest road (Google tiles are never walked on). */
+  private walkGround(x: number, z: number): number | null {
+    return this.world.surfaceHeightAt(x, z) ?? this.net?.nearestEdge(x, z, 300)?.y ?? null;
   }
 
   async loadWorld(): Promise<void> {
@@ -327,6 +413,7 @@ export class SceneController {
       this.world.materials = this.materials;
       this.world.terrainDetail = qs.terrainDetail;
       this.world.streetReady = this.netReady;
+      this.world.onChange = () => this.worldVersion++;
       this.world.streetDir = (x, z) => {
         const hit = this.net?.nearestEdge(x, z, 90, (e) => !/^(motorway|trunk|service)/.test(this.net!.edges[e]?.highway ?? ''));
         if (!hit) return null;
@@ -462,7 +549,7 @@ export class SceneController {
         const qs = QUALITY[store.get().quality];
         sp.setDrawDistance(qs.propDrawDistance);
         sp.setShadows(qs.shadows);
-        sp.group.visible = !this.photoreal;
+        sp.group.visible = this.layerShown !== 'aerial';
         this.viewer.scene.add(sp.group);
       }
     } catch (e) {
@@ -481,8 +568,11 @@ export class SceneController {
           },
         });
         this.grass.setDensity(QUALITY[store.get().quality].grass);
-        this.grass.mesh.visible = !this.photoreal && QUALITY[store.get().quality].grass > 0;
-        this.world.onChange = () => this.grass?.invalidate();
+        this.grass.mesh.visible = this.layerShown !== 'aerial' && QUALITY[store.get().quality].grass > 0;
+        this.world.onChange = () => {
+          this.worldVersion++;
+          this.grass?.invalidate();
+        };
         this.viewer.scene.add(this.grass.mesh);
       }
     } catch (e) {
@@ -497,18 +587,15 @@ export class SceneController {
     if (this.world.hasStreets) return;
     try {
       this.roadDetails = new RoadDetails(this.net, (x, z) => this.world.fastHeightAt(x, z));
-      this.roadDetails.group.visible = !this.photoreal;
+      this.roadDetails.group.visible = this.layerShown !== 'aerial';
       this.viewer.scene.add(this.roadDetails.group);
     } catch (e) {
       console.warn('road details unavailable', e);
     }
   }
 
+  /** Ground height in our frame (Google tiles are calibrated into it, so this holds on both base maps). */
   private groundHeight(x: number, z: number): number {
-    if (this.photoreal) {
-      const h = this.photo!.heightAt(x, z);
-      if (h !== null) return h;
-    }
     const nearest = this.net?.nearestEdge(x, z, 400);
     return this.world.heightAt(x, z, nearest?.y ?? 0);
   }
@@ -529,8 +616,8 @@ export class SceneController {
         castShadows: qs.shadows && qs.carShadows,
       });
       layer.setGhost(store.get().ghost);
-      layer.setStyle(this.photoreal ? 'photoreal' : 'open');
-      if (this.photoreal) layer.setGroundHeights((x, z, fb) => this.photo!.heightAt(x, z) ?? fb);
+      // one overlay style over both base maps (they must look identical across the switch)
+      layer.setStyle('open');
       this.viewer.scene.add(layer.group);
     }
     if (which === 'baseline') this.baseline = layer;
@@ -606,6 +693,7 @@ export class SceneController {
         store.set({ simTime: this.clockT });
       }
     }
+    this.updateBaseLayer(dt, now);
     this.world.updateCulling(this.viewer.camera);
     windUniforms.uWindTime.value = now / 1000;
     const dist = this.viewer.distance;
@@ -616,24 +704,18 @@ export class SceneController {
       this.sky.update(this.clockT, this.viewer.renderer, this.viewer.camera);
       const dark = Math.max(this.sky.darkness, this.sky.dim);
       buildingUniforms.uNight.value = this.sky.darkness;
-      // interiors: a fraction of the outdoor horizon radiance
-      buildingUniforms.uInterior.value.copy(this.sky.horizon).multiplyScalar(0.55).lerp(new THREE.Color(0.02, 0.018, 0.015), this.sky.darkness * 0.7);
+      // interiors: a small fraction of the outdoor horizon radiance (rooms read darker than sunlit walls)
+      buildingUniforms.uInterior.value.copy(this.sky.horizon).multiplyScalar(0.24).lerp(new THREE.Color(0.02, 0.018, 0.015), this.sky.darkness * 0.7);
       vehicleLightUniforms.uHead.value = 1.2 + 4.5 * dark;
       vehicleLightUniforms.uTail.value = 0.9 + 3.2 * dark;
     }
-    if (this.photo) {
-      const walking = this.viewer.walking;
-      const target = walking ? this.viewer.camera.position : this.viewer.controls.target;
-      this.photo.frame(now, target, walking ? 25 : dist);
-      if (this.sky) this.photo.tiles.setDim(this.sky.dim);
-    }
     this.autoQuality(now);
-    if (this.roadDetails?.group.visible) this.roadDetails.update(this.viewer.camera.position);
-    if (this.grass) {
+    if (this.roadDetails && this.layer.streetVisible) this.roadDetails.update(this.viewer.camera.position);
+    if (this.grass && this.layer.streetVisible) {
       const cp = this.viewer.camera.position;
       this.grass.update(cp, this.world.fastHeightAt(cp.x, cp.z) ?? cp.y - 100);
     }
-    if (this.staticProps?.group.visible) this.staticProps.update(this.viewer.camera.position, this.world.fastHeightAt(this.viewer.camera.position.x, this.viewer.camera.position.z) ?? 0);
+    if (this.staticProps && this.layer.streetVisible) this.staticProps.update(this.viewer.camera.position, this.world.fastHeightAt(this.viewer.camera.position.x, this.viewer.camera.position.z) ?? 0);
     const scale = this.viewer.walking ? 1 : THREE.MathUtils.clamp(dist / 650, 1, 9);
     const colorMode = this.viewer.walking || dist < 320 ? 'paint' : 'speed';
     this.baseline?.setColorMode(colorMode);
@@ -667,7 +749,7 @@ export class SceneController {
       return;
     }
     if (s.view !== 'explore' && s.view !== 'traffic' && s.view !== 'plan') return;
-    const hit = this.photoreal ? this.pickBuildingPhotoreal() : this.world.firstHitIsBuilding(this.raycaster) ? this.world.pickBuilding(this.raycaster) : null;
+    const hit = this.aerialPick ? this.pickBuildingPhotoreal() : this.world.firstHitIsBuilding(this.raycaster) ? this.world.pickBuilding(this.raycaster) : null;
     if (!hit) return;
     this.pin.show(hit.point.x, hit.point.y, hit.point.z);
     store.set({ buildingLoading: true, school: null });
@@ -696,7 +778,7 @@ export class SceneController {
   private placeMapInput(): void {
     const s = store.get();
     const pick = s.mapPick!;
-    const ground = this.photoreal ? (this.photo!.pick(this.raycaster) ?? this.world.pickGround(this.raycaster)) : this.world.pickGround(this.raycaster);
+    const ground = this.aerialPick ? (this.photo!.pick(this.raycaster) ?? this.world.pickGround(this.raycaster)) : this.world.pickGround(this.raycaster);
     if (!ground || !this.origin) {
       toast('Click on the terrain to place.', 'info', 2500);
       return;
@@ -774,8 +856,44 @@ export class SceneController {
       pz = hit.z + nz * side;
       heading = faceTarget && nl > 1 ? Math.atan2(x - px, -(z - pz)) : Math.atan2(e.dx, -e.dz);
     }
+    this.startWalk({ x: px, z: pz, heading, pitch: faceTarget ? 0.08 : 0 });
+  }
+
+  /**
+   * Enter walk mode. From the Google aerial view this is a short camera move
+   * down to eye level while the base map crossfades to our world (the switch
+   * starts right away); otherwise the walker is placed directly.
+   */
+  private startWalk(pose: { x: number; z: number; heading: number; pitch: number }): void {
     store.set({ walking: true });
-    this.viewer.enterWalk({ x: px, z: pz, heading, pitch: faceTarget ? 0.08 : 0 });
+    const v = this.viewer;
+    if (v.walking || !this.googleShown) {
+      this.walkIntro = false;
+      v.enterWalk(pose);
+      return;
+    }
+    this.walkIntro = true;
+    const g = this.walkGround(pose.x, pose.z) ?? v.groundY;
+    this.world.focus = new THREE.Vector3(pose.x, g, pose.z);
+    const eye = v.walk.eye;
+    // look a little ahead and down (orbit controls cap the polar angle at 84 deg)
+    const look = 14;
+    const fx = Math.sin(pose.heading);
+    const fz = -Math.cos(pose.heading);
+    const tx = pose.x + fx * look;
+    const tz = pose.z + fz * look;
+    const tg = this.walkGround(tx, tz) ?? g;
+    const target = new THREE.Vector3(tx, tg, tz);
+    const position = new THREE.Vector3(pose.x, g + eye, pose.z);
+    const pitch = -Math.atan2(g + eye - tg, look);
+    void v.flyTo(target, { position, duration: BASE_LAYER.fadeS * 1.4 }).then(() => {
+      if (!store.get().walking) {
+        this.walkIntro = false;
+        return;
+      }
+      v.enterWalk({ ...pose, pitch });
+      this.walkIntro = false;
+    });
   }
 
   /** Walk where the orbit camera is looking. */
@@ -784,16 +902,19 @@ export class SceneController {
     const cam = this.viewer.camera.position;
     const heading = Math.atan2(t.x - cam.x, -(t.z - cam.z));
     const hit = this.net?.nearestEdge(t.x, t.z, 300);
-    store.set({ walking: true });
     if (hit) {
       const e = this.net!.pointAt(hit.edge, hit.frac, { x: 0, y: 0, z: 0, dx: 1, dz: 0 });
       const lanes = Math.max(1, this.net!.edges[hit.edge]?.lanes ?? 1);
       const side = lanes * 3.4 + 2.5;
-      this.viewer.enterWalk({ x: hit.x - e.dz * side, z: hit.z + e.dx * side, heading: Math.atan2(e.dx, -e.dz) });
-    } else this.viewer.enterWalk({ x: t.x, z: t.z, heading });
+      this.startWalk({ x: hit.x - e.dz * side, z: hit.z + e.dx * side, heading: Math.atan2(e.dx, -e.dz), pitch: 0 });
+    } else this.startWalk({ x: t.x, z: t.z, heading, pitch: 0 });
   }
 
   exitWalk(): void {
+    if (this.walkIntro) {
+      this.walkIntro = false;
+      this.viewer.cancelFlight();
+    }
     this.viewer.exitWalk();
     store.set({ walking: false });
   }
@@ -855,7 +976,7 @@ export class SceneController {
       const blob = await this.viewer.capturePng();
       if (!blob) throw new Error('canvas capture failed');
       const s = store.get();
-      const credits = s.renderMode === 'photoreal' ? `Google${s.attribution?.text ? ' · ' + s.attribution.text : ''}` : s.openCredits;
+      const credits = s.attribution?.google ? `Google${s.attribution.text ? ' · ' + s.attribution.text : ''}` : s.openCredits;
       const out = await stampCredits(blob, credits);
       const a = document.createElement('a');
       const t = new Date();

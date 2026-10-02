@@ -9,6 +9,13 @@
  *         -> bloom (HDR, threshold follows exposure)
  *         -> tone mapping (AgX with a punchy look, or ACES), warm morning grade,
  *            vignette, dither -> screen
+ *
+ * Photo pixels: Google photoreal tiles write alpha 0 into the scene target
+ * (tiles.ts). The final pass takes those pixels straight from the scene
+ * target (their own photo colors plus the light haze of the direct path),
+ * skipping AO, atmosphere, bloom, tone mapping and grading, so the photo
+ * looks exactly as when drawn directly while overlays drawn over it go
+ * through the same pipeline as over our world (they look identical on both).
  */
 
 import { N8AOPass } from 'n8ao';
@@ -104,6 +111,12 @@ const finalFrag = /* glsl */ `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D tColor;
+uniform sampler2D tRaw;
+uniform sampler2D tDepth;
+uniform mat4 uProjInv;
+uniform float uPhotoOn;
+uniform vec3 uPhotoFogColor;
+uniform float uPhotoFogDensity;
 uniform float uExposure;
 uniform float uToneMode;
 uniform float uGrade;
@@ -162,6 +175,21 @@ void main() {
     vec3 shadowTint = vec3(0.965, 0.995, 1.04);
     vec3 highTint = vec3(1.045, 1.0, 0.935);
     c *= mix(vec3(1.0), mix(shadowTint, highTint, smoothstep(0.1, 0.8, l)), uWarm);
+  }
+  if (uPhotoOn > 0.5) {
+    // photo pixels (alpha 0 in the scene target): their own colors + light haze
+    vec4 raw = texture2D(tRaw, vUv);
+    float w = clamp(1.0 - raw.a, 0.0, 1.0);
+    if (w > 0.002) {
+      float dz = texture2D(tDepth, vUv).x;
+      vec4 vp = uProjInv * vec4(vUv * 2.0 - 1.0, dz * 2.0 - 1.0, 1.0);
+      float depth = -vp.z / vp.w;
+      float f = 1.0 - exp(-uPhotoFogDensity * uPhotoFogDensity * depth * depth);
+      vec3 photo = mix(max(raw.rgb, vec3(0.0)), uPhotoFogColor, f);
+      c = mix(c, toSRGB(clamp(photo, 0.0, 1.0)), w);
+    }
+  }
+  if (uGrade > 0.5) {
     vec2 d = vUv - 0.5;
     c *= 1.0 - uVignette * smoothstep(0.2, 0.9, dot(d, d) * 2.4);
   }
@@ -196,6 +224,10 @@ export class PostFX {
   hazeScale = 1;
   /** fog/AO/bloom tuned to the camera distance each frame (set by the viewer) */
   viewDistance = 500;
+  /** ambient occlusion pass on (off while only photo tiles + overlays are drawn) */
+  aoEnabled = true;
+  /** photo tiles may be in the frame: pass their pixels through (see header) */
+  photo = { on: false, fogColor: new THREE.Color(0.8, 0.8, 0.8), fogDensity: 0 };
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -295,6 +327,12 @@ export class PostFX {
       toneMapped: false,
       uniforms: {
         tColor: { value: null },
+        tRaw: { value: this.sceneRT.texture },
+        tDepth: { value: this.sceneRT.depthTexture },
+        uProjInv: { value: new THREE.Matrix4() },
+        uPhotoOn: { value: 0 },
+        uPhotoFogColor: { value: new THREE.Color(0.8, 0.8, 0.8) },
+        uPhotoFogDensity: { value: 0 },
         uExposure: { value: 1 },
         uToneMode: { value: 1 },
         uGrade: { value: q.grade ? 1 : 0 },
@@ -349,7 +387,7 @@ export class PostFX {
 
     // 2. ambient occlusion -> rtA (or straight from the scene target)
     let src: THREE.Texture = this.sceneRT.texture;
-    if (this.ao) {
+    if (this.ao && this.aoEnabled) {
       const c = this.ao.configuration;
       // world-space radius that reads at every scale: ~1.5 m at street level, ~25 m from 3 km up
       const d = this.viewDistance;
@@ -419,6 +457,13 @@ export class PostFX {
     this.finMat.uniforms['tColor']!.value = this.rtB.texture;
     this.finMat.uniforms['uExposure']!.value = exposure;
     this.finMat.uniforms['uTime']!.value = performance.now() / 1000;
+    const fu = this.finMat.uniforms;
+    fu['uPhotoOn']!.value = this.photo.on ? 1 : 0;
+    if (this.photo.on) {
+      (fu['uProjInv']!.value as THREE.Matrix4).copy(cam.projectionMatrixInverse);
+      (fu['uPhotoFogColor']!.value as THREE.Color).copy(this.photo.fogColor);
+      fu['uPhotoFogDensity']!.value = this.photo.fogDensity;
+    }
     r.setRenderTarget(null);
     this.fin.render(r);
     r.toneMapping = prevTone;

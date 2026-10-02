@@ -4,8 +4,10 @@
  *   tiles.group.matrix = T(0, offset, 0) * (ECEF -> local ENU at the origin)
  *   tile vertex shader adds the small frame warp (UTM grid + curvature)
  * Materials are swapped for unlit MeshBasicMaterial with toneMapped=false, so
- * the photo textures show their true colors while our overlays keep the ACES
- * tone mapping. Tiles are never cached persistently (in-memory LRU only).
+ * the photo textures show their true colors while our overlays keep the tone
+ * mapping; through the HDR pipeline they write alpha 0, which postfx.ts reads as
+ * "photo pixel" and passes through untouched. Tiles are never cached
+ * persistently (in-memory LRU only).
  *
  * The same class also loads any ECEF 3D Tiles tileset by URL (dev fixtures and
  * the headless test), via `source.kind = 'url'`.
@@ -77,7 +79,11 @@ export function makeTileMaterial(old: THREE.Material, uniforms: TileUniforms): T
       );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nuniform vec3 rdTint;')
-      .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb *= rdTint;');
+      .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb *= rdTint;')
+      // photo marker for the HDR pipeline (postfx.ts): alpha 0 = "photo pixel, keep its
+      // own colors" (no tone mapping / grading). Our opaque materials write alpha 1.
+      // The default framebuffer has no alpha channel, so direct rendering is unaffected.
+      .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n#ifdef OPAQUE\n  gl_FragColor.a = 0.0;\n#endif');
   };
   mat.userData.redrawTile = true;
   return mat;
@@ -141,6 +147,7 @@ export class PhotorealTiles {
   private frameMatrix = new THREE.Matrix4();
   private raycaster = new THREE.Raycaster();
   private errors: string[] = [];
+  private errorTimes: number[] = [];
   private hasGoogle: boolean;
   /** set when the server rejects the key or the tileset fails to load */
   lastError: string | null = null;
@@ -201,11 +208,19 @@ export class PhotorealTiles {
     const msg = err?.message ?? String(e.error ?? 'tile load failed');
     this.errors.push(msg);
     if (this.errors.length > 50) this.errors.shift();
-    // only the root failing is fatal (bad key, quota, network)
-    if (!this.tiles.root || /403|401|forbidden|API key|PERMISSION/i.test(msg)) {
-      this.lastError = /403|forbidden|PERMISSION/i.test(msg)
-        ? 'Google rejected the API key (403). Check that the Map Tiles API is enabled for this key and that the key allows this site.'
-        : `Photoreal tiles failed to load: ${msg}`;
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    this.errorTimes.push(now);
+    while (this.errorTimes.length && now - this.errorTimes[0]! > 10000) this.errorTimes.shift();
+    // fatal: the root failing, the key rejected, the daily quota exhausted, or tiles
+    // failing in bulk (network); the app then silently keeps our world as the base map
+    const quota = /429|quota|RESOURCE_EXHAUSTED|rate limit/i.test(msg);
+    if (!this.tiles.root || quota || /403|401|forbidden|API key|PERMISSION/i.test(msg) || this.errorTimes.length > 25) {
+      if (this.lastError) return;
+      this.lastError = quota
+        ? `Google tiles quota exhausted: ${msg}`
+        : /403|forbidden|PERMISSION/i.test(msg)
+          ? 'Google rejected the API key (403). Check that the Map Tiles API is enabled for this key and that the key allows this site.'
+          : `Photoreal tiles failed to load: ${msg}`;
       this.onError?.(this.lastError);
     }
   }
@@ -244,6 +259,12 @@ export class PhotorealTiles {
   update(): void {
     this.tiles.group.updateMatrixWorld(true);
     this.tiles.update();
+    // first content on screen (the 'tiles-load-end' event only fires once the whole
+    // queue drains, which can take long while the camera keeps moving)
+    if (!this.loadedOnce && this.tiles.visibleTiles.size > 0) {
+      this.loadedOnce = true;
+      this.onFirstLoad?.();
+    }
   }
 
   get loaded(): boolean {

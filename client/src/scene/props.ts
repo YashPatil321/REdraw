@@ -17,6 +17,7 @@ import { DRACOLoader, DRACO_GLTF_CONFIG } from 'three/examples/jsm/loaders/DRACO
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { VehicleGeometries } from '../traffic/layer';
+import { LOD_FADE, addLodFade, fadeBands, makeFadeUniforms, type FadeUniforms } from './lodFade';
 
 export type AssetFetcher = (rel: string) => Promise<ArrayBuffer>;
 
@@ -368,6 +369,8 @@ interface Kind {
   paint: Array<[number, number, number]> | null;
   /** full-model distance (m) at draw-distance 1.0 */
   near: number;
+  /** distance bands of the dithered LOD crossfade (lodFade.ts) */
+  fade: FadeUniforms;
 }
 
 /** Instanced static props with two LODs and distance budgets on a coarse grid. */
@@ -423,7 +426,10 @@ export class StaticProps {
     };
     const layers = [mk(full.geometry, full.material, false, cls === 'vehicle' ? 600 : 4000)];
     if (lod && FAR[cls] > 0) layers.push(mk(lod.geometry, lod.material, true, 20000));
-    this.kinds.push({ id, cls, cells, layers, paint, near: nearOverride ? Math.max(nearOverride * 1.15, 90) : NEAR[cls] });
+    // dissolve between the full model and the impostor (and out at the far end) instead of popping
+    const fade = makeFadeUniforms();
+    for (const L of layers) addLodFade(L.mesh.material as THREE.Material, fade, L.far ? 'lod' : 'full');
+    this.kinds.push({ id, cls, cells, layers, paint, near: nearOverride ? Math.max(nearOverride * 1.15, 90) : NEAR[cls], fade });
     this.lastPos.set(Infinity, 0, 0);
   }
 
@@ -440,14 +446,18 @@ export class StaticProps {
 
   /** Refill visible instances when the camera moved enough. */
   update(cam: THREE.Vector3, groundY = 0): void {
-    if (cam.distanceTo(this.lastPos) < 20) return;
+    if (cam.distanceTo(this.lastPos) < LOD_FADE.refillM) return;
     this.lastPos.copy(cam);
     const alt = Math.max(0, cam.y - groundY);
     let tris = 0;
+    const margin = LOD_FADE.margin;
     for (const k of this.kinds) {
       const near = k.near * this.scaleDist;
-      const far = FAR[k.cls] * this.scaleDist;
-      const maxD = Math.max(near, far);
+      const hasLod = k.layers.length > 1;
+      const far = hasLod ? FAR[k.cls] * this.scaleDist : 0;
+      const b = fadeBands(near, far);
+      k.fade.uRdFade.value.set(b.n0, b.n1, b.f0, b.f1);
+      const maxD = Math.max(b.n1 + margin, b.f1);
       const counts = k.layers.map(() => 0);
       if (alt < maxD) {
         const r = Math.ceil(maxD / CELL);
@@ -460,24 +470,29 @@ export class StaticProps {
             for (let pi = 0; pi < arr.length; pi++) {
               const p = arr[pi]!;
               const d = Math.hypot(p.x - cam.x, p.y - cam.y, p.z - cam.z);
-              const li = d < near ? 0 : d < far && k.layers[1] ? 1 : -1;
-              if (li < 0) continue;
-              const L = k.layers[li]!;
-              const n = counts[li]!;
-              if (n >= L.cap) continue;
+              // in the crossfade band an instance is in both layers (the shader dithers between them)
+              const inFull = d < b.n1 + margin;
+              const inLod = hasLod && d > b.n0 - margin && d < b.f1;
+              if (!inFull && !inLod) continue;
               this.q.setFromAxisAngle(this.up, p.rot);
               this.sv.setScalar(p.scale);
               this.pv.set(p.x, p.y, p.z);
               this.mat4.compose(this.pv, this.q, this.sv);
-              L.mesh.setMatrixAt(n, this.mat4);
-              if (k.paint && L.mesh.instanceColor) {
-                // stable per record: seeded by the record index (palette is already weighted by share)
-                const h = Math.abs(Math.sin(p.i * 12.9898 + 4.1) * 43758.5453) % 1;
-                const c = k.paint[Math.floor(h * k.paint.length) % k.paint.length]!;
-                this.color.setRGB(c[0], c[1], c[2]);
-                L.mesh.setColorAt(n, this.color);
+              for (let li = 0; li < k.layers.length; li++) {
+                if (li === 0 ? !inFull : !inLod) continue;
+                const L = k.layers[li]!;
+                const n = counts[li]!;
+                if (n >= L.cap) continue;
+                L.mesh.setMatrixAt(n, this.mat4);
+                if (k.paint && L.mesh.instanceColor) {
+                  // stable per record: seeded by the record index (palette is already weighted by share)
+                  const h = Math.abs(Math.sin(p.i * 12.9898 + 4.1) * 43758.5453) % 1;
+                  const c = k.paint[Math.floor(h * k.paint.length) % k.paint.length]!;
+                  this.color.setRGB(c[0], c[1], c[2]);
+                  L.mesh.setColorAt(n, this.color);
+                }
+                counts[li] = n + 1;
               }
-              counts[li] = n + 1;
             }
           }
         }

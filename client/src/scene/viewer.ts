@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
+import { FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { GpuTimer } from './gpuTimer';
 import { PostFX } from './postfx';
@@ -44,6 +45,33 @@ export interface FrameStats {
 
 type FrameFn = (dt: number, now: number) => void;
 
+/** Base-map crossfade (see baseLayer.ts): the controller shows one layer set per pass. */
+export interface LayerFade {
+  /** eased crossfade position: 0 = aerial only .. 1 = street only */
+  mix: number;
+  /** make the given layer set the visible one (called before each pass) */
+  setLayer(layer: 'aerial' | 'street'): void;
+}
+
+/** Photo pass-through settings for the HDR pipeline (postfx.ts). */
+export interface PhotoPass {
+  on: boolean;
+  fogColor: THREE.Color;
+  fogDensity: number;
+  /** ambient occlusion on (off when only photo tiles + overlays are drawn) */
+  ao: boolean;
+}
+
+const fadeVert = /* glsl */ `
+varying vec2 vUv;
+void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+const fadeFrag = /* glsl */ `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tFrame;
+uniform float uOpacity;
+void main() { gl_FragColor = vec4(texture2D(tFrame, vUv).rgb, uOpacity); }`;
+
 const WALK_FAR = 15000;
 
 function easeInOutCubic(t: number): number {
@@ -76,6 +104,11 @@ export class Viewer {
    * materials opt out of tone mapping while our overlays keep ACES.
    */
   directRender = false;
+  /** set while the base map crossfades between Google tiles and our world */
+  layerFade: LayerFade | null = null;
+  private fadeTex: THREE.FramebufferTexture | null = null;
+  private fadeQuad: FullScreenQuad | null = null;
+  private fadeMat: THREE.ShaderMaterial | null = null;
   private orbitFar = 150000;
 
   private frameFns = new Set<FrameFn>();
@@ -206,6 +239,15 @@ export class Viewer {
     this.post?.setGhost(on);
   }
 
+  /** Photo pass-through for the frame (set per pass while crossfading). */
+  setPhotoPass(p: PhotoPass): void {
+    if (!this.post) return;
+    this.post.photo.on = p.on;
+    this.post.photo.fogColor.copy(p.fogColor);
+    this.post.photo.fogDensity = p.fogDensity;
+    this.post.aoEnabled = p.ao;
+  }
+
   onFrame(fn: FrameFn): () => void {
     this.frameFns.add(fn);
     return () => this.frameFns.delete(fn);
@@ -306,6 +348,76 @@ export class Viewer {
 
   private render(dt: number): void {
     this.renderer.info.reset();
+    const fade = this.layerFade;
+    if (fade && fade.mix > 0 && fade.mix < 1 && !this.split.enabled) this.renderCrossfade(dt, fade);
+    else this.renderScene(dt);
+    this.labelRenderer.render(this.scene, this.camera);
+
+    const r = this.renderer;
+    this.stats.calls = r.info.render.calls;
+    this.stats.triangles = r.info.render.triangles;
+    this.stats.geometries = r.info.memory.geometries;
+    this.stats.textures = r.info.memory.textures;
+    this.fpsAcc.frames++;
+    this.fpsAcc.time += dt;
+    if (this.fpsAcc.time >= 0.5) {
+      this.stats.fps = this.fpsAcc.frames / this.fpsAcc.time;
+      this.fpsHistory.push(this.stats.fps);
+      if (this.fpsHistory.length > 20) this.fpsHistory.shift();
+      this.fpsAcc.frames = 0;
+      this.fpsAcc.time = 0;
+    }
+  }
+
+  /**
+   * Crossfade between the two base maps, live (both keep moving with the
+   * camera): draw the aerial set, copy the frame, draw the street set, then
+   * lay the copy over it with the remaining opacity. Twice the work, but
+   * only for the second or so the fade lasts.
+   */
+  private renderCrossfade(dt: number, fade: LayerFade): void {
+    const r = this.renderer;
+    const size = r.getDrawingBufferSize(new THREE.Vector2());
+    if (!this.fadeTex || this.fadeTex.image.width !== size.x || this.fadeTex.image.height !== size.y) {
+      this.fadeTex?.dispose();
+      this.fadeTex = new THREE.FramebufferTexture(size.x, size.y);
+      // the drawing buffer has no alpha channel: an RGB copy target is always copy-compatible
+      this.fadeTex.format = THREE.RGBFormat;
+      this.fadeTex.internalFormat = 'RGB8';
+    }
+    if (!this.fadeQuad) {
+      this.fadeMat = new THREE.ShaderMaterial({
+        vertexShader: fadeVert,
+        fragmentShader: fadeFrag,
+        uniforms: { tFrame: { value: null }, uOpacity: { value: 1 } },
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      this.fadeQuad = new FullScreenQuad(this.fadeMat);
+    }
+    const autoShadow = r.shadowMap.autoUpdate;
+    fade.setLayer('aerial');
+    // the aerial set has (almost) no shadow casters: keep the street set's shadow maps
+    r.shadowMap.autoUpdate = false;
+    this.renderScene(dt);
+    r.shadowMap.autoUpdate = autoShadow;
+    r.setRenderTarget(null);
+    r.copyFramebufferToTexture(this.fadeTex);
+    fade.setLayer('street');
+    this.renderScene(dt);
+    const m = this.fadeMat!;
+    m.uniforms['tFrame']!.value = this.fadeTex;
+    m.uniforms['uOpacity']!.value = 1 - fade.mix;
+    const autoClear = r.autoClear;
+    r.autoClear = false;
+    r.setRenderTarget(null);
+    this.fadeQuad.render(r);
+    r.autoClear = autoClear;
+  }
+
+  private renderScene(dt: number): void {
     const r = this.renderer;
     if (this.split.enabled && this.split.hooks) {
       const w = r.domElement.clientWidth;
@@ -326,21 +438,6 @@ export class Viewer {
       this.post.render(dt);
     } else {
       r.render(this.scene, this.camera);
-    }
-    this.labelRenderer.render(this.scene, this.camera);
-
-    this.stats.calls = r.info.render.calls;
-    this.stats.triangles = r.info.render.triangles;
-    this.stats.geometries = r.info.memory.geometries;
-    this.stats.textures = r.info.memory.textures;
-    this.fpsAcc.frames++;
-    this.fpsAcc.time += dt;
-    if (this.fpsAcc.time >= 0.5) {
-      this.stats.fps = this.fpsAcc.frames / this.fpsAcc.time;
-      this.fpsHistory.push(this.stats.fps);
-      if (this.fpsHistory.length > 20) this.fpsHistory.shift();
-      this.fpsAcc.frames = 0;
-      this.fpsAcc.time = 0;
     }
   }
 
@@ -514,6 +611,9 @@ export class Viewer {
   dispose(): void {
     cancelAnimationFrame(this.raf);
     this.post?.dispose();
+    this.fadeTex?.dispose();
+    this.fadeMat?.dispose();
+    this.fadeQuad?.dispose();
     this.resizeObserver.disconnect();
     this.controls.dispose();
     this.walk.dispose();

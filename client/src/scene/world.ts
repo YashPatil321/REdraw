@@ -61,6 +61,8 @@ interface Tile {
   buildings: LayerSlot | null;
   /** HD building tiles by LOD level */
   hd: Array<LayerSlot | null>;
+  /** HD level currently drawn (-1 none) */
+  hdShown: number;
   dist: number;
 }
 
@@ -83,6 +85,8 @@ function dracoLoader(): DRACOLoader {
 const TERRAIN_LOD0_M = 900;
 const TERRAIN_LOD1_M = 2600;
 const HD_LOD0_M = 450;
+/** LOD hysteresis: a finer level, once shown, is kept out to this factor of its switch distance (no flicker at the boundary) */
+const LOD_HYSTERESIS = 1.15;
 const DEBUG = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug');
 
 export class World {
@@ -110,8 +114,17 @@ export class World {
   private queue: Array<{ key: string; pri: number; run: () => Promise<void> }> = [];
   private queued = new Set<string>();
   private active = 0;
+  /** priorities (distances) of the jobs running now */
+  private activePri = new Map<string, number>();
+  /**
+   * Extra point that streams like the camera (LODs by distance to the nearer
+   * of the two): preloads street-level assets around the orbit target or a
+   * walk destination before the base map switches to our world.
+   */
+  focus: THREE.Vector3 | null = null;
   private lastStream = 0;
   private camPos = new THREE.Vector3();
+  private focusPos = new THREE.Vector3(Infinity, 0, 0);
   /** called when the set of drawn meshes changed (shadows / AO may want a refresh) */
   onChange: (() => void) | null = null;
 
@@ -266,6 +279,7 @@ export class World {
             ? { path: t.buildings, root: null, loading: false, failed: false, heroOnly: Boolean(hdTile) }
             : null,
         hd: hdTile ? hdTile.lods.map((p) => (p ? { path: p, root: null, loading: false, failed: false } : null)) : [],
+        hdShown: -1,
         dist: Infinity,
       };
       this.tiles.push(tile);
@@ -556,14 +570,18 @@ export class World {
   private wantTerrainLod(t: Tile): number {
     const d = t.dist;
     const finest = t.lods[0]?.lod ?? 0;
-    const want = d < this.terrainLod0 * this.lodScale ? 0 : d < this.terrainLod1 * this.lodScale ? 1 : 2;
+    const cur = t.shownLod;
+    const lim0 = this.terrainLod0 * this.lodScale * (cur === 0 ? LOD_HYSTERESIS : 1);
+    const lim1 = this.terrainLod1 * this.lodScale * (cur >= 0 && cur <= 1 ? LOD_HYSTERESIS : 1);
+    const want = d < lim0 ? 0 : d < lim1 ? 1 : 2;
     return Math.max(want, finest);
   }
 
   private wantHdLevel(t: Tile): number {
     const far = this.farHdLevel(t);
     if (far < 0) return -1;
-    if (t.dist < this.hdLod0 * this.lodScale) for (let i = 0; i <= far; i++) if (t.hd[i]) return i;
+    const lim = this.hdLod0 * this.lodScale * (t.hdShown >= 0 && t.hdShown < far ? LOD_HYSTERESIS : 1);
+    if (t.dist < lim) for (let i = 0; i <= far; i++) if (t.hd[i]) return i;
     return far;
   }
 
@@ -575,6 +593,7 @@ export class World {
     for (let i = want; i < t.hd.length && !best; i++) if (t.hd[i]?.root) best = t.hd[i]!;
     if (!best) for (let i = want - 1; i >= 0 && !best; i--) if (t.hd[i]?.root) best = t.hd[i]!;
     for (const s of t.hd) if (s?.root) s.root.visible = s === best;
+    t.hdShown = best ? t.hd.indexOf(best) : -1;
   }
 
   private enqueue(key: string, pri: number, run: () => Promise<void>): void {
@@ -593,11 +612,13 @@ export class World {
     while (this.active < MAX && this.queue.length) {
       const job = this.queue.shift()!;
       this.active++;
+      this.activePri.set(job.key, job.pri);
       job
         .run()
         .catch((e: unknown) => console.warn('world streaming:', (e as Error).message))
         .finally(() => {
           this.active--;
+          this.activePri.delete(job.key);
           this.queued.delete(job.key);
           this.lastStream = 0;
           this.pump();
@@ -608,6 +629,14 @@ export class World {
   /** Pending streaming jobs (tests / screenshot scripts wait for 0). */
   get pending(): number {
     return this.queue.length + this.active;
+  }
+
+  /** Pending jobs for tiles closer than `dist` (m) to the camera / focus. */
+  pendingWithin(dist: number): number {
+    let n = 0;
+    for (const q of this.queue) if (q.pri < dist) n++;
+    for (const p of this.activePri.values()) if (p < dist) n++;
+    return n;
   }
 
   /** Decide LODs from the camera position: load what is needed, evict what is far. */
@@ -625,6 +654,7 @@ export class World {
   private streamTile(t: Tile, cam: THREE.Vector3): void {
     {
       t.dist = t.box.distanceToPoint(cam);
+      if (this.focus) t.dist = Math.min(t.dist, t.box.distanceToPoint(this.focus));
       const want = this.wantTerrainLod(t);
       const wantL = t.lods.find((l) => l.lod === want) ?? null;
       if (wantL && !wantL.root && !wantL.failed) this.enqueue(`t:${t.id}:${want}`, t.dist, () => this.loadTerrainLod(t, wantL));
@@ -667,7 +697,8 @@ export class World {
   /** Per-tile LOD streaming + frustum culling (plus hiding far building tiles). */
   updateCulling(camera: THREE.PerspectiveCamera): void {
     const now = performance.now();
-    if (now - this.lastStream > 250 || camera.position.distanceTo(this.camPos) > 150) {
+    if (now - this.lastStream > 250 || camera.position.distanceTo(this.camPos) > 150 || (this.focus && this.focus.distanceTo(this.focusPos) > 150)) {
+      if (this.focus) this.focusPos.copy(this.focus);
       this.lastStream = now;
       this.camPos.copy(camera.position);
       this.stream(camera.position);
@@ -838,6 +869,44 @@ export class World {
       return null;
     }
     return null;
+  }
+
+  private streetRay = new THREE.Ray(new THREE.Vector3(), new THREE.Vector3(0, -1, 0));
+
+  /**
+   * Walkable surface height: the terrain, or the street surface on top of it
+   * (asphalt, sidewalks, driveways) where the street meshes are loaded. The
+   * street meshes follow the full-resolution DEM, while the drawn terrain is
+   * an RTIN with up to ~0.3 m error (more where a road crosses a dip between
+   * ribbon vertices): standing on the terrain alone can put the eye inside a
+   * road or below a curb.
+   */
+  surfaceHeightAt(x: number, z: number): number | null {
+    const ground = this.fastHeightAt(x, z);
+    if (ground === null) return null;
+    const t = this.tileAt(x, z);
+    if (!t) return ground;
+    let best = ground;
+    this.streetRay.origin.set(x, ground + 2.5, z);
+    for (const s of t.streets) {
+      if (!s.root) continue;
+      s.root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh || m.renderOrder >= 2) return; // markings: decals on the asphalt
+        const g = m.geometry as THREE.BufferGeometry & { rdBvh?: MeshBVH };
+        if (!g.boundingBox) g.computeBoundingBox();
+        const bb = g.boundingBox!;
+        if (x < bb.min.x || x > bb.max.x || z < bb.min.z || z > bb.max.z) return;
+        try {
+          g.rdBvh ??= new MeshBVH(g);
+        } catch {
+          return;
+        }
+        const hit = g.rdBvh.raycastFirst(this.streetRay, THREE.DoubleSide);
+        if (hit && hit.point.y > best && hit.point.y < ground + 2.5) best = hit.point.y;
+      });
+    }
+    return best;
   }
 
   /** Terrain height: finest loaded mesh, else the coarse height grid; null outside the terrain. */

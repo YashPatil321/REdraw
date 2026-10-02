@@ -113,16 +113,6 @@ export class RdApp extends LitElement {
         transform: translateX(-50%);
         pointer-events: auto;
       }
-      .photo-status {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
-        bottom: 120px;
-        background: rgba(0, 0, 0, 0.55);
-        padding: 4px 10px;
-        border-radius: 999px;
-        font-size: 12px;
-      }
       .bottom.report {
         left: 10px;
         right: 520px;
@@ -227,7 +217,6 @@ export class RdApp extends LitElement {
       <main>
         ${content}
         ${s.worldStatus ? html`<div class="status">${s.worldStatus}</div>` : nothing}
-        ${s.renderMode === 'photoreal' && s.photoreal.status && !s.worldStatus ? html`<div class="photo-status" role="status">${s.photoreal.status}</div>` : nothing}
         ${s.walking ? html`<div class="walkhud"><rd-camera-tools></rd-camera-tools></div>` : nothing}
         <div class="attr"><rd-attribution></rd-attribution></div>
         <div class="toasts"><rd-toasts></rd-toasts></div>

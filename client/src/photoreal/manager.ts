@@ -1,16 +1,17 @@
 /**
- * Photoreal mode runtime: owns the tiles, keeps them loading for the camera,
- * calibrates the vertical offset near the view (median of node residuals),
- * drapes the traffic overlay onto the photo surface, and reports status and
- * attribution. Loaded lazily (dynamic import) so open-data users never
- * download 3d-tiles-renderer.
+ * Photoreal runtime (the aerial base map): owns the tiles, keeps them loading
+ * for the camera while they may be shown, calibrates their vertical offset
+ * near the view (median of road-node residuals) so the TILES move into our
+ * NAVD88 frame, and reports attribution. Overlays (cars, ribbons, queue bars)
+ * always stay at our own heights, identical over Google and over our world
+ * (the photo drape in drape.ts is kept but not used). Loaded lazily (dynamic
+ * import) so visitors without a key never download 3d-tiles-renderer.
  */
 
 import * as THREE from 'three';
 import type { Origin } from '../geo';
 import type { RoadNetwork } from '../traffic/network';
 import { calibrateOffset, pickSpread } from './calibrate';
-import { Drape } from './drape';
 import type { ExtentXZ } from './frame';
 import { PhotorealTiles, type Attribution, type TileSource } from './tiles';
 
@@ -24,15 +25,12 @@ export interface ManagerOptions {
   onStatus: (msg: string) => void;
   onAttribution: (a: Attribution) => void;
   onError: (msg: string) => void;
-  /** drape changed: re-upload the adjustment texture */
-  onDrape: () => void;
 }
 
 export class PhotorealManager {
   readonly tiles: PhotorealTiles;
   private active = false;
   private net: RoadNetwork | null = null;
-  private drape: Drape | null = null;
   private lastCal = { x: Infinity, z: Infinity, dist: Infinity, t: 0 };
   private calibrated = false;
   private lastAttr = '';
@@ -52,7 +50,6 @@ export class PhotorealManager {
 
   setNetwork(net: RoadNetwork | null): void {
     this.net = net;
-    this.drape = net ? new Drape(net, (x, z) => this.tiles.heightAt(x, z, 900)) : null;
   }
 
   setActive(on: boolean): void {
@@ -63,9 +60,23 @@ export class PhotorealManager {
       if (!this.tiles.loaded) this.o.onStatus('Loading 3D world…');
     } else {
       this.tiles.group.removeFromParent();
-      this.drape?.reset();
-      this.o.onDrape();
     }
+  }
+
+  /** Show or hide the tiles (they stay in the scene; hidden while our world is the base map). */
+  setVisible(on: boolean): void {
+    this.tiles.group.visible = on;
+  }
+
+  /** Tiles for the current view finished loading (safe to fade them in). */
+  get viewReady(): boolean {
+    const t = this.tiles.tiles as unknown as { loadProgress?: number };
+    return this.tiles.loaded && this.tiles.visibleCount > 0 && (t.loadProgress ?? 1) >= 0.95;
+  }
+
+  /** Vertical offset calibrated at least once (tiles sit in our frame). */
+  get isCalibrated(): boolean {
+    return this.calibrated;
   }
 
   get isActive(): boolean {
@@ -84,9 +95,13 @@ export class PhotorealManager {
     return this.tiles.pick(raycaster);
   }
 
-  /** Per frame while active. `target` is the orbit target or the walker position. */
-  frame(now: number, target: THREE.Vector3, camDist: number): void {
-    if (!this.active) return;
+  /**
+   * Per frame while active. `target` is the orbit target or the walker
+   * position. `stream` = false pauses tile loading (our world is the base map
+   * and Google will not be needed soon).
+   */
+  frame(now: number, target: THREE.Vector3, camDist: number, stream = true): void {
+    if (!this.active || !stream) return;
     const r = this.o.renderer;
     r.getSize(this.size);
     this.tiles.setResolution(this.o.camera, this.size.x * r.getPixelRatio(), this.size.y * r.getPixelRatio());
@@ -100,16 +115,7 @@ export class PhotorealManager {
     }
     // ease the offset to its target (no visible jumps)
     const off = this.tiles.offset;
-    if (Math.abs(this.offsetTarget - off) > 0.01) {
-      const next = off + (this.offsetTarget - off) * 0.15;
-      this.tiles.offset = next;
-      this.drape?.shiftAll(next - off);
-      this.o.onDrape();
-    }
-    // drape the overlay near the camera (only once calibrated; tiles near the view loaded)
-    if (this.drape && this.calibrated && camDist < 4000) {
-      if (this.drape.step(target.x, target.z, Math.max(camDist, 30), 3)) this.o.onDrape();
-    }
+    if (Math.abs(this.offsetTarget - off) > 0.01) this.tiles.offset = off + (this.offsetTarget - off) * 0.15;
     if (now - this.lastAttrT > 1000) {
       this.lastAttrT = now;
       const a = this.tiles.attribution();
@@ -135,18 +141,12 @@ export class PhotorealManager {
       return { ours: nd.y, tile: h === null ? null : h - cur };
     });
     const cal = calibrateOffset(samples);
-    const prevDist = this.lastCal.dist;
     this.lastCal = { x: target.x, z: target.z, dist: camDist, t: now };
     if (!cal) return;
     this.offsetTarget = cal.offset;
-    if (!this.calibrated) {
-      // first calibration: jump straight there
-      this.tiles.offset = cal.offset;
-      this.drape?.reset();
-      this.o.onDrape();
-    }
+    // first calibration: jump straight there
+    if (!this.calibrated) this.tiles.offset = cal.offset;
     this.calibrated = true;
-    if (camDist < prevDist * 0.5) this.drape?.invalidateCoarse(camDist);
     console.info(`[photoreal] vertical offset ${cal.offset.toFixed(2)} m from ${cal.n} nodes (MAD ${cal.mad.toFixed(2)} m)`);
   }
 
