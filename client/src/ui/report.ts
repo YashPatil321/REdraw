@@ -179,6 +179,30 @@ export class RdReport extends LitElement {
         border-radius: 8px;
         padding: 6px 8px;
       }
+      .goals {
+        background: var(--bg-2);
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin: 4px 0 10px;
+      }
+      .goal {
+        display: grid;
+        grid-template-columns: 18px 1fr;
+        gap: 6px;
+        padding: 4px 0;
+      }
+      .goal .gi {
+        font-weight: 700;
+      }
+      .goal.met .gi {
+        color: var(--good);
+      }
+      .goal.missed .gi {
+        color: var(--bad);
+      }
+      .goal.unknown .gi {
+        color: var(--muted);
+      }
       .progress {
         height: 8px;
         border-radius: 4px;
@@ -316,8 +340,24 @@ export class RdReport extends LitElement {
     </div>`;
   }
 
+  private renderGoals(): TemplateResult | typeof nothing {
+    const goals = this.st.s.plan?.goals;
+    if (!goals?.length) return nothing;
+    const met = goals.filter((g) => g.status === 'met').length;
+    const icon = { met: '✓', missed: '✕', unknown: '…' } as const;
+    return html`<div class="goals">
+      <div class="row"><b>Mission goals</b><span class="muted small">${met} of ${goals.length} met · hints, not pass or fail</span></div>
+      ${goals.map(
+        (g) => html`<div class="goal ${g.status}">
+          <span class="gi" aria-label=${g.status}>${icon[g.status]}</span>
+          <div><div>${g.text}</div><div class="small muted">${g.detail}</div></div>
+        </div>`,
+      )}
+    </div>`;
+  }
+
   private renderReport(r: Report): TemplateResult {
-    return html`${this.renderMetrics(r)}
+    return html`${this.renderGoals()}${this.renderMetrics(r)}
       <h3>Winners and losers</h3>
       <div class="wl">
         <div><span class="muted small">Better off by 3+ min</span><div class="big good">${fmtNum(r.winners.median)}</div><span class="small muted">${fmtNum(r.winners.p10)}–${fmtNum(r.winners.p90)}</span></div>

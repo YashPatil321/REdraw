@@ -70,6 +70,11 @@ class FakeSimService:
     def mission(self, mission_id: str = "morning_crunch") -> dict:
         return load_yaml(f"missions/{mission_id}.yaml")
 
+    def evaluate_goals(self, mission_id: str, report: dict | None) -> list[dict]:
+        from sim.goals import evaluate_goals
+
+        return evaluate_goals(self.mission(mission_id), report)
+
     def schools(self) -> list[dict]:
         return self.schools_data
 

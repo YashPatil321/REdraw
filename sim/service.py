@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from pipeline.config import assumptions, region
+from sim.goals import evaluate_goals
 from sim.plan import PlanCheck, apply_plan, check_plan, mission_def, tool_defs
 from sim.playback import DEFAULT_KINDS, playback_from_seed
 from sim.report import METRIC_DEFS, baseline_summary, get_baseline, run_report
@@ -116,6 +117,10 @@ class SimService:
 
     def mission(self, mission_id: str = "morning_crunch") -> dict[str, Any]:
         return json.loads(json.dumps(mission_def(mission_id)))
+
+    def evaluate_goals(self, mission_id: str, report: dict[str, Any] | None) -> list[dict[str, Any]]:
+        """Score a finished report against the mission's suggested goals (hints, not pass/fail)."""
+        return evaluate_goals(mission_def(mission_id), report)
 
     def schools(self) -> list[dict[str, Any]]:
         net = self.world.net

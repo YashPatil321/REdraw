@@ -11,6 +11,7 @@ svc = SimService.load()                 # loads WorldState from REDRAW_DATA_DIR 
 svc.world_summary() -> dict             # counts, synthetic flag, calibration status (see below)
 svc.tools() -> list[dict]               # tools.yaml entries enabled for the mission (data driven UI)
 svc.mission(mission_id="morning_crunch") -> dict   # mission yaml as dict
+svc.evaluate_goals(mission_id, report) -> list[dict]  # [{text, status: met|missed|unknown, detail}] (sim/goals.py)
 svc.schools() -> list[dict]             # schools_resolved.json entries
 svc.network_json() -> dict              # see GET /world/network in docs/api.md
 svc.unverified_inputs() -> list[str]    # human readable list of verified:false inputs used

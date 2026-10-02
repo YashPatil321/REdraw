@@ -12,6 +12,7 @@ from api.deps import StateDep
 from api.metrics import metric_defs
 from api.state import AppState, ServiceUnavailable, as_dict
 from pipeline.config import assumption, load_yaml, region
+from sim.goals import goal_texts
 
 router = APIRouter()
 
@@ -35,7 +36,10 @@ def time_block() -> dict[str, int]:
 def _mission_view(m: dict[str, Any]) -> dict[str, Any]:
     keys = ("id", "title", "brief", "budget_usd_upfront", "budget_usd_per_year", "constraints",
             "goals_suggested", "tools")
-    return {k: m.get(k) for k in keys if k in m} | {k: v for k, v in m.items() if k not in keys}
+    out = {k: m.get(k) for k in keys if k in m} | {k: v for k, v in m.items() if k not in keys}
+    if "goals_suggested" in out:
+        out["goals_suggested"] = goal_texts(m)
+    return out
 
 
 @router.get("/world/meta")

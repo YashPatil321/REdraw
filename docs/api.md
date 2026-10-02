@@ -77,7 +77,8 @@ shape (tools must be a list of `{tool: str, params: object}`) -> 422.
 Body: same as POST /plans. Returns PlanCheck without saving (live budget bar).
 
 ### GET /plans/{id}
-Plan with `report` when done.
+Plan with `report` when done. A plan with a report also has `goals`: the mission's suggested goals scored
+against it, `[{"text", "status": "met|missed|unknown", "detail"}]` (hints, not pass or fail; `sim/goals.py`).
 
 ### POST /plans/{id}/run
 -> `{"job_id": "..."}`. 400 if `check.ok` is false.

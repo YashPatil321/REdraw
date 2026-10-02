@@ -352,6 +352,14 @@ export interface Plan {
   job_id?: string | null;
   is_mine?: boolean;
   my_vote?: number;
+  /** mission goals scored by the server once a report exists (hints, not pass or fail) */
+  goals?: GoalResult[];
+}
+
+export interface GoalResult {
+  text: string;
+  status: 'met' | 'missed' | 'unknown';
+  detail: string;
 }
 
 export interface Job {

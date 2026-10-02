@@ -7,10 +7,13 @@ budget_usd_upfront: 2000000
 budget_usd_per_year: 400000
 constraints:
   - no_new_through_lanes
-goals_suggested:            # shown as hints, not pass or fail
-  - reduce average drop off delay at Del Norte by 30 percent
-  - no school gets worse
-  - resident approval above 55 percent
+goals_suggested:            # shown as hints, not pass or fail; `check` scores a finished plan (sim/goals.py)
+  - text: reduce average drop off delay at Del Norte by 30 percent
+    check: {kind: school_change_pct, school: del_norte_hs, field: dropoff_delay_min, target_pct: -30}
+  - text: no school gets worse
+    check: {kind: no_school_worse, field: dropoff_delay_min, tolerance: 0.1}   # minutes; ignores sim noise below this
+  - text: resident approval above 55 percent
+    check: {kind: metric_min, metric: resident_approval_pct, min: 55}
 tools: [bell_time, school_shuttle, carpool_program, dropoff_redesign,
         new_dropoff_entrance, signal_timing, turn_lane, bike_route,
         safe_walk_route, teen_drive_policy, custom]

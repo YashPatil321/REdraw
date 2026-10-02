@@ -84,7 +84,17 @@ def _metric_direction(state: AppState, metric_id: str) -> str | None:
 @router.get("/plans/{plan_id}")
 def get_plan(plan_id: str, state: StateDep, me: PlayerDep) -> dict[str, Any]:
     plan = require_plan(state, plan_id)
-    return _view(plan, me, state.store.my_vote(plan_id, me))
+    out = _view(plan, me, state.store.my_vote(plan_id, me))
+    if plan.get("report"):
+        out["goals"] = _goals(state, plan)
+    return out
+
+
+def _goals(state: AppState, plan: dict[str, Any]) -> list[dict[str, Any]]:
+    try:
+        return clean_json(state.sim().evaluate_goals(plan.get("mission") or state.settings.default_mission, plan["report"]))
+    except Exception:  # noqa: BLE001 - a scorecard problem must never hide the report
+        return []
 
 
 @router.put("/plans/{plan_id}")
