@@ -259,6 +259,12 @@ export class PhotorealTiles {
   update(): void {
     this.tiles.group.updateMatrixWorld(true);
     this.tiles.update();
+    // first content on screen (the 'tiles-load-end' event only fires once the whole
+    // queue drains, which can take long while the camera keeps moving)
+    if (!this.loadedOnce && this.tiles.visibleTiles.size > 0) {
+      this.loadedOnce = true;
+      this.onFirstLoad?.();
+    }
   }
 
   get loaded(): boolean {
