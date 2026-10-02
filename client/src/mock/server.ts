@@ -10,6 +10,7 @@ import toolsYaml from '../../../data/config/tools.yaml?raw';
 import type { FetchLike } from '../api';
 import { parseHHMM } from '../time';
 import type {
+  ChatMessage,
   ReportMetric,
   Job,
   MetricDef,
@@ -97,6 +98,7 @@ export async function createMockFetch(): Promise<FetchLike> {
   const r = rng(42);
   const plans = new Map<string, Plan>();
   const jobs = new Map<string, MockJob>();
+  const chats = new Map<number, ChatMessage[]>();
   const assetCache = new Map<string, Promise<ArrayBuffer>>();
   const playbackCache = new Map<string, ArrayBuffer>();
 
@@ -451,11 +453,36 @@ export async function createMockFetch(): Promise<FetchLike> {
         if (p.status !== 'done') return json({ detail: 'not run yet' }, 404);
         return json(residents(p));
       }
+      if (method === 'POST' && sub === '/townhall') {
+        if (p.status !== 'done') return json({ detail: 'resident reactions are available after the plan run is done' }, 404);
+        const rs = [...residents(p).reactions].sort((a, b) => a.approval - b.approval);
+        const pick = (x: Reaction, side: 'for' | 'against') => ({ ...x, side, comment: x.text ? `${x.text} (mock statement)` : null });
+        const speakers = [...rs.slice(0, 4).map((x) => pick(x, 'against')), ...rs.slice(-4).reverse().map((x) => pick(x, 'for'))];
+        const b = (body ?? {}) as { persona_id?: number; message?: string };
+        const who = speakers.find((x) => x.persona_id === b.persona_id);
+        if (b.message && !who) return json({ detail: 'that resident is not a town hall speaker' }, 400);
+        const followup = b.message && who ? { persona_id: who.persona_id, message: b.message, text: `Thanks for answering. I still care most about my ${who.values[0]} (mock reply).` } : null;
+        return json({ plan_id: p.id, speakers, followup, llm_available: true });
+      }
       if (method === 'POST' && sub === '/vote') {
         const v = Number((body as { value?: number })?.value ?? 0);
         p.votes += v;
         save();
         return json({ votes: p.votes });
+      }
+    }
+    if ((m = /^\/residents\/(\d+)\/chat$/.exec(path))) {
+      const pid = Number(m[1]);
+      const log = (chats.get(pid) ?? []).slice();
+      if (method === 'GET') return json({ persona_id: pid, messages: log });
+      if (method === 'POST') {
+        const msg = String((body as { message?: string })?.message ?? '').trim();
+        if (!msg) return json({ detail: 'message is required' }, 422);
+        const now = new Date().toISOString();
+        const reply = `That's a fair question. I can only speak to what the simulation told me about my own trips (mock reply).`;
+        log.push({ role: 'user', content: msg, at: now }, { role: 'assistant', content: reply, at: now });
+        chats.set(pid, log.slice(-10));
+        return json({ persona_id: pid, reply, messages: chats.get(pid), llm_available: true, error: null });
       }
     }
     if (method === 'GET' && (m = /^\/jobs\/([^/]+)$/.exec(path))) {

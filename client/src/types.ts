@@ -362,6 +362,39 @@ export interface ResidentsResponse {
   llm_available?: boolean;
 }
 
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  plan_id?: string | null;
+  at?: string;
+}
+
+export interface ChatResponse {
+  persona_id: number;
+  reply?: string | null;
+  messages: ChatMessage[];
+  llm_available?: boolean;
+  error?: string | null;
+}
+
+export interface TownhallSpeaker extends Reaction {
+  side: 'for' | 'against';
+  comment: string | null;
+}
+
+export interface TownhallFollowup {
+  persona_id: number;
+  message: string;
+  text: string | null;
+}
+
+export interface TownhallResponse {
+  plan_id: string;
+  speakers: TownhallSpeaker[];
+  followup: TownhallFollowup | null;
+  llm_available?: boolean;
+}
+
 export interface PlanListItem {
   id: string;
   title: string;

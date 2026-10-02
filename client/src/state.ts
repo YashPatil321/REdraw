@@ -8,10 +8,14 @@ import type {
   Job,
   Plan,
   PlanCheck,
+  ChatMessage,
+  Reaction,
   ResidentsResponse,
   School,
   ToolDef,
   ToolInstance,
+  TownhallFollowup,
+  TownhallResponse,
   WorldMeta,
 } from './types';
 
@@ -50,6 +54,24 @@ export interface AttributionState {
   text: string;
 }
 
+/** An open conversation with one resident (spec 8.3). */
+export interface ChatState {
+  resident: Reaction;
+  messages: ChatMessage[];
+  sending: boolean;
+  loading: boolean;
+  error: string | null;
+}
+
+export interface TownhallState {
+  data: TownhallResponse | null;
+  loading: boolean;
+  error: string | null;
+  /** player responses and the speakers' follow-ups, oldest first */
+  exchanges: TownhallFollowup[];
+  responding: boolean;
+}
+
 export interface AppState {
   view: View;
   booting: boolean;
@@ -84,7 +106,9 @@ export interface AppState {
   plan: Plan | null;
   job: Job | null;
   residents: ResidentsResponse | null;
-  reportTab: 'report' | 'residents';
+  reportTab: 'report' | 'residents' | 'townhall';
+  chat: ChatState | null;
+  townhall: TownhallState | null;
 
   // explore
   building: BuildingInfo | null;
@@ -180,6 +204,8 @@ export function initialState(): AppState {
     job: null,
     residents: null,
     reportTab: 'report',
+    chat: null,
+    townhall: null,
     building: null,
     buildingLoading: false,
     school: null,

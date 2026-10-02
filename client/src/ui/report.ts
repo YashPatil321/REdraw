@@ -5,8 +5,9 @@ import { navigate } from '../actions';
 import { store } from '../state';
 import { formatHHMM } from '../time';
 import { vcColor, rgbToCss } from '../traffic/congestion';
-import type { BaselinePlan, MaybeRange3, MetricDef, Reaction, Report } from '../types';
+import type { BaselinePlan, MaybeRange3, MetricDef, Report } from '../types';
 import { StoreController, appCtx, fmtNum, fmtSigned, fmtUsd, humanize, theme } from './base';
+import { approvalColor, meetResident, residentDeltas } from './residents';
 
 const W = 210;
 const H = 34;
@@ -352,18 +353,13 @@ export class RdReport extends LitElement {
               <button class=${s.reportTab === 'report' ? 'active' : ''} @click=${() => store.set({ reportTab: 'report' })}>Report</button>
               <button class=${s.reportTab === 'residents' ? 'active' : ''} @click=${() => store.set({ reportTab: 'residents' })}>
                 Residents${s.residents ? ` (${s.residents.approval_pct.toFixed(0)}% approve)` : ''}</button>
+              <button class=${s.reportTab === 'townhall' ? 'active' : ''} @click=${() => store.set({ reportTab: 'townhall' })}>Town hall</button>
             </div>
-            ${s.reportTab === 'residents' ? html`<rd-residents></rd-residents>` : this.renderReport(r)}`}
+            ${s.reportTab === 'residents' ? html`<rd-residents></rd-residents>` : s.reportTab === 'townhall' ? html`<rd-townhall></rd-townhall>` : this.renderReport(r)}`}
     </div>`;
   }
 }
 customElements.define('rd-report', RdReport);
-
-function approvalColor(a: number): string {
-  // 0 -> red, 0.5 -> amber, 1 -> green
-  const c = a < 0.5 ? [255, Math.round(107 + (196 - 107) * (a / 0.5)), 90] : [Math.round(255 - (255 - 76) * ((a - 0.5) / 0.5)), Math.round(196 + (211 - 196) * ((a - 0.5) / 0.5)), Math.round(77 + (138 - 77) * ((a - 0.5) / 0.5))];
-  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
-}
 
 export class RdResidents extends LitElement {
   static override styles = [
@@ -398,31 +394,23 @@ export class RdResidents extends LitElement {
       }
     `,
   ];
-  private st = new StoreController(this, ['residents', 'plan']);
-
-  private deltas(r: Reaction): string {
-    const parts: string[] = [];
-    const d = r.deltas;
-    if (typeof d.commute_min === 'number') parts.push(`commute ${fmtSigned(d.commute_min)} min`);
-    if (typeof d.dropoff_min === 'number') parts.push(`drop-off ${fmtSigned(d.dropoff_min)} min`);
-    if (typeof d.cost_usd_year === 'number' && d.cost_usd_year !== 0) parts.push(`cost ${fmtSigned(d.cost_usd_year)} $/yr`);
-    if (d.street_change) parts.push('street changes');
-    return parts.join(' · ');
-  }
+  private st = new StoreController(this, ['residents', 'plan', 'chat']);
 
   override render() {
     const res = this.st.s.residents;
+    if (this.st.s.chat) return html`<rd-chat></rd-chat>`;
     if (!res) return html`<p class="muted">No resident reactions available for this plan yet.</p>`;
     return html`<p>Resident approval: <b class="ap" style="color:${approvalColor(res.approval_pct / 100)}">${res.approval_pct.toFixed(1)}%</b>
         <span class="muted small">(${res.reactions.length} residents; approval is computed from their personal changes, quotes are AI written)</span></p>
+      <p class="small muted">Click a resident to fly to their block and talk with them.</p>
       ${res.reactions.map(
-        (r) => html`<div class="r" @click=${() => appCtx.scene?.showResident(r.x, r.z)} title="Fly to their block" data-persona=${r.persona_id}>
+        (r) => html`<div class="r" @click=${() => meetResident(r)} title="Fly to their block and talk" data-persona=${r.persona_id}>
           <div class="stripe" style="background:${approvalColor(r.approval)}"></div>
           <div>
             <div class="row"><b>${r.first_name}</b><span class="muted small">${r.age} · ${r.block}</span><span class="spacer"></span>
               <span class="ap small" style="color:${approvalColor(r.approval)}">${r.approves ? 'Approves' : 'Opposes'} ${(r.approval * 100).toFixed(0)}%</span></div>
             ${r.text ? html`<div class="q">“${r.text}”</div>` : html`<div class="q none">no quote — AI offline</div>`}
-            <div class="small muted">${this.deltas(r)}${r.values?.length ? html` · values: ${r.values.join(', ')}` : nothing}</div>
+            <div class="small muted">${residentDeltas(r)}${r.values?.length ? html` · values: ${r.values.join(', ')}` : nothing}</div>
           </div>
         </div>`,
       )}`;

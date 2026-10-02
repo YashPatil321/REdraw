@@ -8,7 +8,7 @@ import { STATIC_NOTICE } from './staticPaths';
 import { hashFor } from './router';
 import { store, toast, type View } from './state';
 import { parsePlayback } from './traffic/playback';
-import type { ParamValue, PlanInput, ToolDef } from './types';
+import type { ParamValue, PlanInput, Reaction, ToolDef } from './types';
 import { newToolInstance, setParam } from './ui/formgen';
 
 let checkTimer: ReturnType<typeof setTimeout> | null = null;
@@ -87,7 +87,7 @@ export function setDraftText(field: 'title' | 'pitch', value: string): void {
 
 export function newDraft(): void {
   savedDraftKey = null;
-  store.set({ draft: { title: '', pitch: '', tools: [] }, plan: null, check: null, selectedTool: null, job: null, residents: null, planPlayback: null });
+  store.set({ draft: { title: '', pitch: '', tools: [] }, plan: null, check: null, selectedTool: null, job: null, residents: null, planPlayback: null, chat: null, townhall: null });
   location.hash = hashFor({ view: 'plan' });
 }
 
@@ -174,7 +174,7 @@ function pollJob(jobId: string, planId: string): void {
 /** Fetch plan (with report), its playback and residents; optionally switch to the report. */
 async function loadPlanResults(planId: string, goToReport: boolean): Promise<void> {
   const plan = await api.getPlan(planId);
-  store.set({ plan });
+  store.set({ plan, townhall: null, chat: null });
   if (plan.status !== 'done') return;
   if (goToReport) store.set({ view: 'report', reportTab: 'report' });
   const [pb, res] = await Promise.allSettled([api.getPlanPlayback(planId), api.getResidents(planId)]);
@@ -222,6 +222,8 @@ export async function openPlan(id: string): Promise<void> {
       selectedTool: null,
       planPlayback: null,
       residents: null,
+      chat: null,
+      townhall: null,
       view: plan.status === 'done' ? 'report' : 'plan',
     });
     savedDraftKey = draftKey();
@@ -254,6 +256,86 @@ function waitForPlan(id: string): void {
     pollTimer = setTimeout(() => void tick(), 2000);
   };
   pollTimer = setTimeout(() => void tick(), 2000);
+}
+
+// ---- residents: chat (spec 8.3) and town hall (spec 8.4)
+
+/** Open a conversation with a resident (loads the stored history for this player). */
+export async function openChat(resident: Reaction): Promise<void> {
+  store.set({ chat: { resident, messages: [], sending: false, loading: true, error: null }, reportTab: 'residents' });
+  if (OFFLINE_VIEWER) {
+    store.set((s) => ({ chat: s.chat && { ...s.chat, loading: false, error: `Talking to residents needs the live Python API. ${STATIC_NOTICE}` } }));
+    return;
+  }
+  try {
+    const r = await api.getChat(resident.persona_id);
+    store.set((s) => (s.chat?.resident.persona_id === resident.persona_id ? { chat: { ...s.chat, messages: r.messages, loading: false } } : {}));
+  } catch (e) {
+    store.set((s) => (s.chat?.resident.persona_id === resident.persona_id ? { chat: { ...s.chat, loading: false, error: errText(e) } } : {}));
+  }
+}
+
+export function closeChat(): void {
+  store.set({ chat: null });
+}
+
+export async function sendChat(message: string): Promise<void> {
+  const s = store.get();
+  const chat = s.chat;
+  const text = message.trim();
+  if (!chat || !text || chat.sending || offline('Talking to residents')) return;
+  const id = chat.resident.persona_id;
+  // show the player's line right away; the server returns the canonical history
+  const pending = [...chat.messages, { role: 'user' as const, content: text, plan_id: s.plan?.id ?? null }];
+  store.set({ chat: { ...chat, messages: pending, sending: true, error: null } });
+  try {
+    const r = await api.sendChat(id, text, s.plan?.id ?? null);
+    store.set((st) =>
+      st.chat?.resident.persona_id === id
+        ? { chat: { ...st.chat, messages: r.reply ? r.messages : pending, sending: false, error: r.reply ? null : (r.error ?? 'No reply.') } }
+        : {},
+    );
+  } catch (e) {
+    store.set((st) => (st.chat?.resident.persona_id === id ? { chat: { ...st.chat, sending: false, error: errText(e) } } : {}));
+  }
+}
+
+/** Convene (or re-open) the town hall for the current plan. */
+export async function loadTownhall(regenerate = false): Promise<void> {
+  const plan = store.get().plan;
+  if (!plan || plan.status !== 'done') return;
+  const prev = store.get().townhall;
+  store.set({ townhall: { data: regenerate ? null : (prev?.data ?? null), loading: true, error: null, exchanges: regenerate ? [] : (prev?.exchanges ?? []), responding: false } });
+  if (OFFLINE_VIEWER) {
+    store.set((s) => ({ townhall: s.townhall && { ...s.townhall, loading: false, error: `The town hall needs the live Python API. ${STATIC_NOTICE}` } }));
+    return;
+  }
+  try {
+    const data = await api.townhall(plan.id, { regenerate });
+    store.set((s) => (s.plan?.id === plan.id && s.townhall ? { townhall: { ...s.townhall, data, loading: false } } : {}));
+  } catch (e) {
+    store.set((s) => (s.plan?.id === plan.id && s.townhall ? { townhall: { ...s.townhall, loading: false, error: errText(e) } } : {}));
+  }
+}
+
+/** The player answers one speaker; the speaker replies in character. */
+export async function respondTownhall(personaId: number, message: string): Promise<void> {
+  const s = store.get();
+  const th = s.townhall;
+  const text = message.trim();
+  if (!s.plan || !th || !text || th.responding || offline('Responding at the town hall')) return;
+  const planId = s.plan.id;
+  store.set({ townhall: { ...th, responding: true, error: null } });
+  try {
+    const r = await api.townhall(planId, { persona_id: personaId, message: text });
+    store.set((st) =>
+      st.plan?.id === planId && st.townhall
+        ? { townhall: { ...st.townhall, data: { ...r, followup: null }, responding: false, exchanges: r.followup ? [...st.townhall.exchanges, r.followup] : st.townhall.exchanges } }
+        : {},
+    );
+  } catch (e) {
+    store.set((st) => (st.plan?.id === planId && st.townhall ? { townhall: { ...st.townhall, responding: false, error: errText(e) } } : {}));
+  }
 }
 
 export async function vote(id: string, value: 1 | -1): Promise<number | null> {

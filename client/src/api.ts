@@ -10,6 +10,7 @@
 import { BUILDINGS_FILE, STATIC_DIR, STATIC_NOTICE, WORLD_ASSETS_DIR, staticTargetFor, type CompactBuildings } from './staticPaths';
 import type {
   BaselineResponse,
+  ChatResponse,
   BuildingInfo,
   Job,
   Manifest,
@@ -21,6 +22,7 @@ import type {
   ResidentsResponse,
   School,
   ToolsResponse,
+  TownhallResponse,
   WorldMeta,
 } from './types';
 
@@ -166,6 +168,16 @@ export class RedrawApi {
   }
   getResidents(id: string): Promise<ResidentsResponse> {
     return this.json('GET', `/plans/${encodeURIComponent(id)}/residents`);
+  }
+  /** Town hall: first call generates the 8 speakers; `message` + `persona_id` asks one of them a follow-up. */
+  townhall(id: string, body: { persona_id?: number; message?: string; regenerate?: boolean } = {}): Promise<TownhallResponse> {
+    return this.json('POST', `/plans/${encodeURIComponent(id)}/townhall`, { body });
+  }
+  getChat(personaId: number): Promise<ChatResponse> {
+    return this.json('GET', `/residents/${encodeURIComponent(String(personaId))}/chat`);
+  }
+  sendChat(personaId: number, message: string, planId: string | null): Promise<ChatResponse> {
+    return this.json('POST', `/residents/${encodeURIComponent(String(personaId))}/chat`, { body: { message, plan_id: planId } });
   }
   listPlans(opts: { mission?: string; sort?: string; limit?: number; offset?: number } = {}): Promise<{ plans: PlanListItem[]; total?: number }> {
     return this.json('GET', '/plans', { query: { mission: opts.mission, sort: opts.sort, limit: opts.limit, offset: opts.offset } });
