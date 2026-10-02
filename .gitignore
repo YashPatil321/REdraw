@@ -28,3 +28,6 @@ coverage/
 # misc
 .DS_Store
 *.log
+
+# deploy bundles (deploy/hf-space/build.py)
+/build/

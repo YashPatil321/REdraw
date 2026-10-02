@@ -9,6 +9,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from functools import partial
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,7 @@ from api.jobs import JobRunner
 from api.settings import Settings, get_settings
 from api.state import AppState, ServiceUnavailable, SimFactory, default_sim_factory
 from api.store import Store
+from api.store_mongo import MongoStore, is_mongo_url
 from residents.llm import ChatLLM, LLMClient, NullLLM
 
 log = logging.getLogger("api")
@@ -50,19 +52,27 @@ def make_llm(settings: Settings) -> ChatLLM:
 def create_app(settings: Settings | None = None, sim_factory: SimFactory | None = None,
                llm: ChatLLM | None = None) -> FastAPI:
     settings = settings or get_settings()
-    engine = make_engine(settings.sqlalchemy_url)
-    store = Store(engine)
+    store: Store | MongoStore
+    if is_mongo_url(settings.database_url):
+        # MongoDB Atlas (or any MongoDB): same interface, documents instead of tables
+        store = MongoStore.from_url(settings.database_url)
+        init_schema: Callable[[], None] = store.create_schema
+    else:
+        engine = make_engine(settings.sqlalchemy_url)
+        store = Store(engine)
+        init_schema = partial(create_schema, engine)
     state = AppState(settings, store, sim_factory or default_sim_factory, llm or make_llm(settings))
     runner = JobRunner(state, settings.redraw_job_concurrency)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
-            create_schema(engine)
+            init_schema()
         except Exception as e:
             raise RuntimeError(
-                f"Cannot open the database ({settings.database_url.split('@')[-1]}): {e}. Start Postgres "
-                "with `docker compose up -d` or set DATABASE_URL=sqlite:///data/processed/redraw.db in .env."
+                f"Cannot open the database ({settings.database_url.split('@')[-1].split('?')[0]}): {e}. Start Postgres "
+                "with `docker compose up -d`, check the MongoDB Atlas connection string and network access list, "
+                "or set DATABASE_URL=sqlite:///data/processed/redraw.db in .env."
             ) from e
         n = store.fail_stale_jobs()
         if n:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -10,9 +11,10 @@ from api.db import clean_json
 from api.deps import JobsDep, PlayerDep, StateDep, require_plan
 from api.metrics import headline, metric_defs, metric_value
 from api.schemas import PlanIn, VoteIn
-from api.state import AppState, as_dict
+from api.state import AppState, as_dict, atomic_write
 
 router = APIRouter()
+_REBUILD_LOCK = threading.Lock()
 
 PUBLIC_PLAN_KEYS = ("id", "mission", "title", "pitch", "author_id", "tools", "created_at", "report",
                     "status", "check", "votes", "job_id")
@@ -139,8 +141,18 @@ def plan_playback(plan_id: str, state: StateDep,
                   jobs: JobsDep) -> Response:
     plan = require_plan(state, plan_id)
     path = jobs.playback_path(plan_id)
-    if plan["status"] != "done" or not path.exists():
+    if plan["status"] != "done":
         raise HTTPException(status_code=404, detail="playback not available until the plan run is done")
+    if not path.exists():
+        # Hosts with an ephemeral disk keep reports in the database only; the playback is
+        # deterministic (fixed seeds), so rebuild it once and cache it on disk again.
+        with _REBUILD_LOCK:
+            if not path.exists():
+                try:
+                    data = state.sim().plan_playback(plan)
+                except Exception as e:  # noqa: BLE001
+                    raise HTTPException(status_code=404, detail=f"playback could not be rebuilt: {e}") from e
+                atomic_write(path, data)
     return Response(content=path.read_bytes(), media_type="application/octet-stream")
 
 

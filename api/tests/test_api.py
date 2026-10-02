@@ -125,6 +125,11 @@ def test_run_job_lifecycle_report_playback_residents(client):
     assert rep["metrics"][0]["plan"]["p90"] is None  # NaN from the sim -> null
     hdr = _rdpb_ok(client.get(f"/plans/{plan['id']}/playback").content)
     assert hdr["plan_id"] == plan["id"]
+    # an ephemeral disk lost the file: the playback is rebuilt from the plan (fixed seeds)
+    pb = client.app.state.jobs.playback_path(plan["id"])
+    pb.unlink()
+    assert _rdpb_ok(client.get(f"/plans/{plan['id']}/playback").content)["plan_id"] == plan["id"]
+    assert pb.exists()
 
     res = client.get(f"/plans/{plan['id']}/residents").json()
     assert res["approval_pct"] == appr["plan"]["median"]

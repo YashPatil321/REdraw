@@ -225,6 +225,11 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+/** Snapshot routes whose data changes while the hosted API runs (plans, votes, residents). */
+export function isLiveFirst(apiPath: string): boolean {
+  return /^\/plans(\/|\?|$)/.test(apiPath);
+}
+
 /**
  * Transport for the static viewer: GETs that the snapshot holds are served from
  * `static-api/` (and `assets/`), everything else goes to `liveBase` when one is
@@ -241,6 +246,16 @@ export function createStaticFetch(root: string, liveBase: string | null, fetchIm
     const apiPath = url.startsWith(API_BASE) ? url.slice(API_BASE.length) || '/' : url;
     const t = staticTargetFor(init?.method ?? 'GET', apiPath);
     if (!t) return live(apiPath, init);
+    // Plans change (new plans, votes, runs): with a hosted API, ask it first and use the
+    // snapshot only when it is unreachable (e.g. the free host is waking up).
+    if (liveBase && isLiveFirst(apiPath)) {
+      try {
+        const res = await live(apiPath, init);
+        if (res.ok || (res.status >= 400 && res.status < 500 && res.status !== 404)) return res;
+      } catch {
+        /* hosted API unreachable: fall back to the snapshot */
+      }
+    }
     if (t.kind === 'asset') return fetchImpl(`${base}${WORLD_ASSETS_DIR}/${t.path}`);
     if (t.kind === 'building') {
       buildings ??= fetchImpl(`${base}${STATIC_DIR}/${BUILDINGS_FILE}`)

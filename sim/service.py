@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from pipeline.config import assumptions, region
+from sim.engine import run_seed
 from sim.goals import evaluate_goals
 from sim.plan import PlanCheck, apply_plan, check_plan, mission_def, tool_defs
 from sim.playback import DEFAULT_KINDS, playback_from_seed
@@ -193,6 +194,22 @@ class SimService:
                          progress: Callable[[float, str], None] | None = None) -> dict[str, Any]:
         base = get_baseline(self.world, list(range(seeds)), workers, progress)
         return baseline_summary(self.world, base, self.calibration())
+
+    def plan_playback(self, plan: dict[str, Any]) -> bytes:
+        """Re-create a plan's playback (seed 0) exactly as its run wrote it (fixed seeds: same bytes).
+
+        Lets a host with an ephemeral disk keep only reports in the database and rebuild a playback
+        file on demand.
+        """
+        check = self.check_plan(plan)
+        if not check.ok:
+            raise PlanInvalidError("plan has errors: " + "; ".join(check.errors))
+        w = self.world
+        plan_world = apply_plan(w, check)
+        with self._lock:
+            res = run_seed(plan_world, 0, base_world=w, keep_playback=True)
+        return playback_from_seed(res.playback, plan_id=str(plan.get("id") or "plan"), seed=0,
+                                  synthetic=w.synthetic, time=w.time.as_dict(), kinds=DEFAULT_KINDS)
 
     def run(self, plan: dict[str, Any] | None, seeds: int = 20, workers: int = 4,
             progress: Callable[[float, str], None] | None = None) -> RunResult:

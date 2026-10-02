@@ -25,7 +25,7 @@ def data_dir(tmp_path_factory) -> Path:
 
 
 def make_settings(tmp: Path, data_dir: Path, **kw) -> Settings:
-    if PG_URL:
+    if PG_URL and not str(kw.get("database_url", "")).startswith("mongodb"):
         eng = make_engine(PG_URL)
         with eng.begin() as conn:
             metadata.drop_all(conn)
@@ -46,11 +46,25 @@ def make_settings(tmp: Path, data_dir: Path, **kw) -> Settings:
     return Settings(_env_file=None, **base)
 
 
+@pytest.fixture(params=["sql", "mongo"])
+def backend(request, monkeypatch) -> str:
+    """Every API test runs on the SQL store and on the MongoDB store (in-memory mongomock)."""
+    if request.param == "mongo":
+        import mongomock
+
+        import api.store_mongo
+
+        monkeypatch.setattr(api.store_mongo, "MongoClient", mongomock.MongoClient)
+    return request.param
+
+
 @pytest.fixture
-def make_client(tmp_path, data_dir):
+def make_client(tmp_path, data_dir, backend):
     clients: list[TestClient] = []
 
     def factory(sim: FakeSimService | None = None, llm=None, **kw) -> tuple[TestClient, FakeSimService]:
+        if backend == "mongo":
+            kw.setdefault("database_url", "mongodb://localhost:27017/redraw_test")
         s = make_settings(tmp_path, data_dir, **kw)
         fake = sim or FakeSimService(data_dir)
         app = create_app(s, sim_factory=lambda: fake, llm=llm)

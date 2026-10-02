@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError, RedrawApi, assetUrl, buildUrl, createStaticFetch, isMockMode, with503Retry } from './api';
+import { ApiError, RedrawApi, assetUrl, buildUrl, createStaticFetch, isLiveFirst, isMockMode, with503Retry } from './api';
 import { staticTargetFor } from './staticPaths';
 import type { WorldMeta } from './types';
 
@@ -172,6 +172,39 @@ describe('static viewer transport', () => {
     await a.checkPlan({ mission: 'm', title: 't', pitch: '', tools: [] });
     await a.getPlan('fresh');
     expect(r.calls.map((c) => `${c.method} ${c.url}`)).toEqual(['POST https://api.example/plans/check', 'GET https://api.example/plans/fresh']);
+  });
+});
+
+describe('static viewer with a hosted API', () => {
+  const snap = async (url: string): Promise<Response> =>
+    url === '/v/static-api/plans/index-votes.json' || url === '/v/static-api/world/meta.json'
+      ? new Response(JSON.stringify({ from: 'snapshot' }), { status: 200 })
+      : new Response('nope', { status: 404 });
+
+  it('asks the hosted API first for plans, keeps world data static', async () => {
+    const r = recorder({ from: 'live' });
+    const both = (url: string, init?: RequestInit) => (url.startsWith('https://api.example') ? r.f(url, init) : snap(url));
+    const a = new RedrawApi(createStaticFetch('/v/', 'https://api.example', both));
+    expect(await a.listPlans({ sort: 'votes' })).toEqual({ from: 'live' });
+    expect(await a.getMeta()).toEqual({ from: 'snapshot' });
+    expect(r.calls.map((c) => c.url)).toEqual(['https://api.example/plans?sort=votes']);
+  });
+
+  it('falls back to the snapshot when the hosted API is down', async () => {
+    const down = async (url: string): Promise<Response> => {
+      if (url.startsWith('https://api.example')) throw new TypeError('network down');
+      return snap(url);
+    };
+    const asleep = async (url: string): Promise<Response> => (url.startsWith('https://api.example') ? new Response('waking', { status: 503 }) : snap(url));
+    expect(await new RedrawApi(createStaticFetch('/v/', 'https://api.example', down)).listPlans({ sort: 'votes' })).toEqual({ from: 'snapshot' });
+    expect(await new RedrawApi(createStaticFetch('/v/', 'https://api.example', asleep)).listPlans({ sort: 'votes' })).toEqual({ from: 'snapshot' });
+  });
+
+  it('only plan routes are live-first', () => {
+    expect(isLiveFirst('/plans?sort=new')).toBe(true);
+    expect(isLiveFirst('/plans/abc/residents')).toBe(true);
+    expect(isLiveFirst('/plansx')).toBe(false);
+    expect(isLiveFirst('/world/meta')).toBe(false);
   });
 });
 

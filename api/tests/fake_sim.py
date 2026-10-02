@@ -112,6 +112,9 @@ class FakeSimService:
                 "per_entrance": {"del_norte_hs/main_dropoff": {"max_queue_cars": 12.0, "max_spillback_m": 40.0,
                                                                "avg_wait_min": 3.0}}}
 
+    def plan_playback(self, plan: dict) -> bytes:
+        return encode_rdpb(plan["id"])
+
     def run(self, plan: dict | None, seeds: int = 20, workers: int = 4,
             progress: Callable[[float, str], None] | None = None) -> RunResult:
         self.runs.append(plan)

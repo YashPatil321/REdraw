@@ -13,6 +13,7 @@ from typing import Any
 from api.db import clean_json
 from api.settings import Settings
 from api.store import Store
+from api.store_mongo import MongoStore
 from residents.blocks import BlockLabeler
 from residents.llm import ChatLLM
 from residents.service import ResidentsService
@@ -57,7 +58,7 @@ def atomic_write(path: Path, data: bytes) -> None:
 
 
 class AppState:
-    def __init__(self, settings: Settings, store: Store, sim_factory: SimFactory, llm: ChatLLM) -> None:
+    def __init__(self, settings: Settings, store: Store | MongoStore, sim_factory: SimFactory, llm: ChatLLM) -> None:
         self.settings = settings
         self.store = store
         self.sim_factory = sim_factory
