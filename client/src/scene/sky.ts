@@ -21,6 +21,9 @@ import { localSecondsToDate, solarPosition, sunDirection } from './solar';
 export const SUN_E0 = 5.0;
 /** Haze multiplier on the Mie coefficient (clear October morning, light marine haze). */
 const MIE_HAZE = 2.2;
+/** Look (rendering) parameters: share of the sky IBL kept, and the neutral fill replacing the rest (x sky irradiance). */
+const ENV_INTENSITY = 0.6;
+const FILL_OF_SKY = 0.9;
 
 const cubeVert = /* glsl */ `
 varying vec3 vDir;
@@ -62,7 +65,10 @@ uniform vec3 uSunRadiance;
 uniform float uDim;
 void main() {
   vec3 d = normalize(vDir);
-  vec3 c = textureCube(uSky, d).rgb;
+  // below the horizon (seen past the edge of the world from high up): hazy horizon,
+  // a little darker with depth, instead of the cube's dark ground
+  vec3 dh = normalize(vec3(d.x, max(d.y, 0.0) + 0.004, d.z));
+  vec3 c = textureCube(uSky, dh).rgb * mix(1.0, 0.72, smoothstep(0.0, -0.35, d.y));
   // sun disc (0.53 deg) with limb darkening, clamped HDR so bloom stays a glow
   float cosA = dot(d, uSunDir);
   float r = clamp(acos(clamp(cosA, -1.0, 1.0)) / 0.00465, 0.0, 2.0);
@@ -110,6 +116,8 @@ export class SkySystem {
   exposure = 1;
   /** bumped whenever the sky cube / environment is re-rendered */
   version = 0;
+  /** irradiance on a horizontal surface from the sky dome alone (renderer units) */
+  skyIrradiance = 1;
 
   private cubeRT: THREE.WebGLCubeRenderTarget;
   private cubeCam: THREE.CubeCamera;
@@ -280,6 +288,7 @@ export class SkySystem {
     const sEl = Math.sin(THREE.MathUtils.degToRad(Math.max(el, 0)));
     const sunE = SUN_E0 * tl * sEl;
     const eh = Math.max(1e-4, skyE + sunE);
+    this.skyIrradiance = skyE;
     // partial adaptation: dawn reads as dawn, but stays legible
     const ref = SUN_E0 * 0.75;
     this.exposure = THREE.MathUtils.clamp(0.68 * Math.pow(ref / eh, 0.8), 0.3, 12) * (1 - 0.45 * this.dim) * (this.photoreal ? 1.4 : 1);
@@ -310,10 +319,15 @@ export class SkySystem {
       // the sky-only environment misses light bounced off sunlit ground and
       // walls: shade would read cold blue. Add that bounce as a warm, weak
       // hemisphere term proportional to the direct sun (albedo ~0.2).
-      const bounce = SUN_E0 * tl * Math.max(sEl, 0.28) * 0.11 * (1 - 0.8 * this.dim);
-      this.hemi.intensity = bounce;
-      this.hemi.color.setRGB(0.6, 0.54, 0.47);
-      this.hemi.groundColor.setRGB(1.0, 0.86, 0.7);
+      const bounce = SUN_E0 * tl * Math.max(sEl, 0.28) * 0.11;
+      // The sky-only IBL also lacks the light that sunlit walls, trees and the
+      // street throw into the shade, and no camera white-balances shade to
+      // deep blue: replace part of the (blue) sky ambient with a neutral, warm
+      // fill of similar strength (shaded asphalt reads grey, not navy).
+      const fill = FILL_OF_SKY * skyE * (0.4 + 0.6 * day);
+      this.hemi.intensity = (bounce + fill) * (1 - 0.8 * this.dim);
+      this.hemi.color.setRGB(1.0, 0.95, 0.88);
+      this.hemi.groundColor.setRGB(0.95, 0.82, 0.66);
     } else {
       this.hemi.intensity = (0.25 + 1.1 * day) * (1 - 0.6 * this.dim);
       this.hemi.color.setRGB(0.62 + 0.1 * warm, 0.74, 0.95);
@@ -341,7 +355,7 @@ export class SkySystem {
       this.envRT?.dispose();
       this.envRT = rt;
       this.scene.environment = rt.texture;
-      this.scene.environmentIntensity = 1 - 0.75 * this.dim;
+      this.scene.environmentIntensity = ENV_INTENSITY * (1 - 0.75 * this.dim);
     } catch (e) {
       console.warn('sky environment map unavailable', e);
       this.scene.environment = null;

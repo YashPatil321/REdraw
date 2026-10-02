@@ -397,7 +397,7 @@ export class SceneController {
 
   /** Ground for the walk camera: our terrain, else the nearest road (Google tiles are never walked on). */
   private walkGround(x: number, z: number): number | null {
-    return this.world.fastHeightAt(x, z) ?? this.net?.nearestEdge(x, z, 300)?.y ?? null;
+    return this.world.surfaceHeightAt(x, z) ?? this.net?.nearestEdge(x, z, 300)?.y ?? null;
   }
 
   async loadWorld(): Promise<void> {
@@ -704,8 +704,8 @@ export class SceneController {
       this.sky.update(this.clockT, this.viewer.renderer, this.viewer.camera);
       const dark = Math.max(this.sky.darkness, this.sky.dim);
       buildingUniforms.uNight.value = this.sky.darkness;
-      // interiors: a fraction of the outdoor horizon radiance
-      buildingUniforms.uInterior.value.copy(this.sky.horizon).multiplyScalar(0.55).lerp(new THREE.Color(0.02, 0.018, 0.015), this.sky.darkness * 0.7);
+      // interiors: a small fraction of the outdoor horizon radiance (rooms read darker than sunlit walls)
+      buildingUniforms.uInterior.value.copy(this.sky.horizon).multiplyScalar(0.24).lerp(new THREE.Color(0.02, 0.018, 0.015), this.sky.darkness * 0.7);
       vehicleLightUniforms.uHead.value = 1.2 + 4.5 * dark;
       vehicleLightUniforms.uTail.value = 0.9 + 3.2 * dark;
     }
