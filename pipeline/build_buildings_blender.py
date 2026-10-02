@@ -149,6 +149,65 @@ def check_processed_ids(bdf: gpd.GeoDataFrame) -> str:
     return msg
 
 
+def align_to_processed(bdf: gpd.GeoDataFrame, tol_m: float = 1.5) -> tuple[gpd.GeoDataFrame, dict[int, dict[str, Any]]]:
+    """Make data/processed/buildings.geojson the single source of building ids.
+
+    The local footprint prep can differ slightly from the pipeline run that wrote buildings.geojson
+    (lidar-only buildings, hero replacement order), so building ids could drift. Rows are matched to
+    processed buildings by centroid (within ``tol_m``) and take the processed id; processed buildings
+    with no match (e.g. lidar-only houses) are appended from the processed geometry, and their lidar
+    roof fields are returned so they get real roofs. No-op when processed data is missing or stale.
+    """
+    proc = processed_dir()
+    meta_p, geo_p = proc / "region_meta.json", proc / "buildings.geojson"
+    if not (meta_p.exists() and geo_p.exists()):
+        return bdf, {}
+    meta = json.loads(meta_p.read_text())
+    bbox = region()["bbox"]
+    if any(abs(float(meta["bbox"][k]) - float(bbox[k])) > 1e-9 for k in ("south", "north", "west", "east")):
+        return bdf, {}
+    from scipy.spatial import cKDTree
+
+    pg = gpd.read_file(geo_p).to_crs("EPSG:32611")
+    pg = pg[pg.get("height_source", pd.Series(index=pg.index, dtype=object)).astype(str) != "hero"]
+    tree = cKDTree(np.c_[pg["centroid_x"].to_numpy(), pg["centroid_z"].to_numpy()])
+    d, j = tree.query(np.c_[bdf["centroid_x"].to_numpy(), bdf["centroid_z"].to_numpy()], distance_upper_bound=tol_m)
+    hero = (bdf["height_rule"].astype(str) == "hero").to_numpy() if "height_rule" in bdf.columns else np.zeros(len(bdf), bool)
+    ok = np.isfinite(d) & ~hero
+    pid = pg["id"].to_numpy()
+    out = bdf.copy()
+    ids = out["id"].to_numpy().copy()
+    ids[ok] = pid[j[ok]]
+    out["id"] = ids
+    # one row per processed id (keep the closest), heroes keep their own ids
+    out["_d"] = np.where(ok, d, 0.0)
+    keep = hero | ok
+    dropped = int((~keep).sum())
+    out = out[keep].sort_values("_d").drop_duplicates("id").drop(columns="_d")
+    have = set(int(i) for i in out["id"])
+    add = pg[~pg["id"].isin(have)].copy()
+    extra: dict[int, dict[str, Any]] = {}
+    if len(add):
+        rows = gpd.GeoDataFrame({c: [None] * len(add) for c in out.columns if c != "geometry"}, geometry=add.geometry.to_numpy(), crs="EPSG:32611")
+        for c in ("id", "type", "height_m", "base_elev_m", "levels", "address", "name", "area_m2", "centroid_x", "centroid_z",
+                  "school_id", "tile", "source", "source_id"):
+            if c in add.columns and c in rows.columns:
+                rows[c] = add[c].to_numpy()
+        rows["height_rule"] = "processed"
+        rows["levels_est"] = add["levels"].fillna(1).to_numpy() if "levels" in add.columns else 1
+        out = gpd.GeoDataFrame(pd.concat([out, rows], ignore_index=True), geometry="geometry", crs="EPSG:32611")
+        for _, r in add.iterrows():
+            props = {"eave_height_m": r.get("eave_height_m"), "ridge_height_m": r.get("ridge_height_m"),
+                     "roof_type": r.get("roof_type"), "roof_pitch_deg": r.get("roof_pitch_deg"),
+                     "ridge_azimuth_deg": r.get("ridge_azimuth_deg"), "quality": r.get("lidar_quality"),
+                     "lidar_status": r.get("lidar_status")}
+            if lidar_model(props):
+                extra[int(r["id"])] = props
+    log(f"buildings_hd: aligned to processed ids: {int(ok.sum())} matched, {dropped} local-only dropped, "
+        f"{len(add)} processed-only added ({len(extra)} with lidar roofs)")
+    return out, extra
+
+
 # ---------------------------------------------------------------------------
 # lidar
 # ---------------------------------------------------------------------------
@@ -473,11 +532,14 @@ def build_specs(out_dir: Path = SPEC_DIR) -> dict[str, Any]:
     t0 = time.time()
     dem = DemSampler(raw_dir() / "dem_3dep_10m.tif")
     bdf, heroes = pipeline_buildings(dem)
+    bdf, extra_lidar = align_to_processed(bdf)
     log(f"buildings_hd: {len(bdf):,} pipeline buildings ({time.time() - t0:.0f}s)")
     id_note = check_processed_ids(bdf)
     hero_ids = set(int(i) for i in bdf.loc[bdf["height_rule"] == "hero", "id"]) if "height_rule" in bdf.columns else set()
     lidar, missing, lidar_note = load_lidar(bdf)
     log(f"buildings_hd: {lidar_note}")
+    for bid, props in extra_lidar.items():
+        lidar.setdefault(bid, props)
     grid = tile_grid()
     rows = bdf[~bdf["id"].isin(hero_ids)].copy()
     rows["source_kind"] = "osm"

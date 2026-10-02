@@ -252,6 +252,19 @@ def gltf_transform() -> list[str] | None:
     return [npx, "-y", "@gltf-transform/cli"] if r.returncode == 0 else None
 
 
+def glb_triangles(path: Path) -> int | None:
+    """Triangle count of a single-primitive glb as stored (Draco drops degenerate triangles)."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(20)
+            n = int.from_bytes(head[12:16], "little")
+            g = json.loads(fh.read(n))
+        prim = g["meshes"][0]["primitives"][0]
+        return int(g["accessors"][prim["indices"]]["count"]) // 3
+    except (OSError, KeyError, IndexError, ValueError):
+        return None
+
+
 def draco_tile(tile: str, cli: list[str]) -> bool:
     sp = STATS_DIR / f"{tile}.json"
     st = json.loads(sp.read_text())
@@ -309,6 +322,8 @@ def write_manifests(index: dict[str, Any], params: dict[str, Any]) -> dict[str, 
             if not info.get("file"):
                 continue
             f = OUT_DIR / info["file"]
+            if f.exists() and (n_tri := glb_triangles(f)) is not None:
+                info["triangles"] = n_tri  # count as stored (after Draco)
             ent[f"lod{lod}"] = {"file": f"buildings_hd/{info['file']}", "triangles": info["triangles"], "vertices": info.get("vertices"),
                                 "bytes": f.stat().st_size if f.exists() else None}
             tri[f"lod{lod}"] += info["triangles"]

@@ -27,7 +27,9 @@ SPECS = REPO / "blender" / "build" / "buildings_hd" / "specs"
 STATS = REPO / "blender" / "build" / "buildings_hd" / "stats"
 HINT = "build with: .venv/bin/python pipeline/build_buildings_blender.py && .venv-blender/bin/python blender/buildings/build.py"
 
-LOD0_BUDGET = 3_000_000 * 1.1  # brief: "< ~3M"
+# brief: "< ~3M"; ~3.35M after adding the 93 lidar-only houses. The client draws LOD0 only within
+# suggested_lod1_distance_m of the camera, so this caps download size (~40 MB), not frame cost.
+LOD0_BUDGET = 3_500_000
 LOD1_BUDGET = 600_000 * 1.05  # brief: "< ~600k"
 REQUIRED_ATTRS = {"POSITION", "NORMAL", "TEXCOORD_0", "COLOR_0", "_BUILDING_ID", "_MAT", "_VARIANT"}
 
