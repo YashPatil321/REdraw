@@ -57,3 +57,13 @@ export function pickSpread<T extends { x: number; z: number }>(items: T[], cx: n
 
 /** Geoid separation guess for San Diego (EGM2008 is about -35 m): tiles start 35 m low. */
 export const DEFAULT_TILE_OFFSET_M = 35;
+
+/** How far a calibrated offset may stray from the geoid guess (m): DEM bias is decimeters, coarse tiles are tens of meters off. */
+export const MAX_OFFSET_DEVIATION_M = 8;
+/** A spread beyond this (m) means the samples hit canopy / coarse geometry, not the road surface. */
+export const MAX_CALIBRATION_MAD_M = 3;
+
+/** Reject calibrations against coarse tiles or clutter (keeps the previous offset). */
+export function plausibleOffset(c: Calibration, guess = DEFAULT_TILE_OFFSET_M): boolean {
+  return Math.abs(c.offset - guess) <= MAX_OFFSET_DEVIATION_M && c.mad <= MAX_CALIBRATION_MAD_M;
+}

@@ -103,4 +103,12 @@ describe('base layer switch', () => {
     expect(easeMix(0.1)).toBeLessThan(0.1);
     expect(easeMix(0.5)).toBeCloseTo(0.5, 9);
   });
+
+  it('the readiness timeout runs on wall time (slow frames do not stall a switch)', () => {
+    const sw = new BaseLayerSwitch();
+    sw.snap('aerial');
+    // 3 frames of 2 s each: the fade step is clamped (0.1 s) but the wait is real time
+    for (let k = 0; k < 3; k++) sw.update(air(50, { streetReady: false }), 0.1, 2);
+    expect(sw.target).toBe('street');
+  });
 });

@@ -74,12 +74,16 @@ export class BaseLayerSwitch {
     return this.target;
   }
 
-  /** Advance by dt seconds; returns the eased mix (0 aerial .. 1 street). */
-  update(i: BaseLayerInput, dt: number): number {
+  /**
+   * Advance by dt seconds (the fade); `elapsed` is the unclamped wall time of
+   * the frame for the readiness timeout (defaults to dt). Returns the eased
+   * mix (0 aerial .. 1 street).
+   */
+  update(i: BaseLayerInput, dt: number, elapsed = dt): number {
     const want = this.wanted(i);
     if (want !== this.target) {
       const ready = want === 'street' ? i.streetReady || i.walking || !i.googleOk : i.aerialReady;
-      this.waited += dt;
+      this.waited += elapsed;
       if (ready || this.waited >= this.cfg.readyTimeoutS) {
         this.target = want;
         this.waited = 0;

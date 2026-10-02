@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import type { Origin } from '../geo';
 import type { RoadNetwork } from '../traffic/network';
-import { calibrateOffset, pickSpread } from './calibrate';
+import { calibrateOffset, pickSpread, plausibleOffset } from './calibrate';
 import type { ExtentXZ } from './frame';
 import { PhotorealTiles, type Attribution, type TileSource } from './tiles';
 
@@ -33,6 +33,8 @@ export class PhotorealManager {
   private net: RoadNetwork | null = null;
   private lastCal = { x: Infinity, z: Infinity, dist: Infinity, t: 0 };
   private calibrated = false;
+  /** last calibration ran against refined tiles */
+  private calRefined = false;
   private lastAttr = '';
   private lastAttrT = 0;
   private lastStatusT = 0;
@@ -110,8 +112,15 @@ export class PhotorealManager {
     // vertical calibration near the view
     const moved = Math.hypot(target.x - this.lastCal.x, target.z - this.lastCal.z);
     const closer = camDist < this.lastCal.dist * 0.35;
-    if (this.net && this.tiles.loaded && (moved > 900 || closer || !this.calibrated) && now - this.lastCal.t > 1200) {
+    // Coarse tile levels can sit tens of meters off the ground: the first calibration may
+    // run early (plausibility-checked), later ones and a refinement wait for refined tiles.
+    const progress = (this.tiles.tiles as unknown as { loadProgress?: number }).loadProgress ?? 1;
+    const refined = progress >= 0.9;
+    if (moved > 900 || closer) this.calRefined = false;
+    const refine = refined && this.calibrated && !this.calRefined;
+    if (this.net && this.tiles.loaded && (refined || !this.calibrated) && (moved > 900 || closer || !this.calibrated || refine) && now - this.lastCal.t > 1200) {
       this.calibrate(target, camDist, now);
+      if (refined && this.calibrated) this.calRefined = true;
     }
     // ease the offset to its target (no visible jumps)
     const off = this.tiles.offset;
@@ -142,7 +151,10 @@ export class PhotorealManager {
     });
     const cal = calibrateOffset(samples);
     this.lastCal = { x: target.x, z: target.z, dist: camDist, t: now };
-    if (!cal) return;
+    if (!cal || !plausibleOffset(cal)) {
+      if (cal) console.info(`[photoreal] rejected vertical offset ${cal.offset.toFixed(2)} m (MAD ${cal.mad.toFixed(2)} m)`);
+      return;
+    }
     this.offsetTarget = cal.offset;
     // first calibration: jump straight there
     if (!this.calibrated) this.tiles.offset = cal.offset;

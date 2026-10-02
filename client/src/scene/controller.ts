@@ -74,6 +74,7 @@ export class SceneController {
   private walkIntro = false;
   private googleAttr: Attribution | null = null;
   private lastPrewarm = 0;
+  private lastLayerT = 0;
   private prewarmVersion = -1;
   private worldVersion = 0;
 
@@ -344,9 +345,12 @@ export class SceneController {
     const walking = v.walking || this.walkIntro;
     const photo = this.photo;
     const googleOk = !!photo && photo.isActive && photo.tiles.loaded && !photo.tiles.lastError;
+    const elapsed = this.lastLayerT ? Math.min(2, (now - this.lastLayerT) / 1000) : dt;
+    this.lastLayerT = now;
     const mix = this.layer.update(
-      { altitude, walking, googleOk, aerialReady: !!photo?.viewReady && photo.isCalibrated, streetReady: this.world.pendingWithin(700) === 0 },
+      { altitude, walking, googleOk: googleOk && photo!.isCalibrated, aerialReady: !!photo?.viewReady, streetReady: this.world.pendingWithin(700) === 0 },
       dt,
+      elapsed,
     );
     if (this.layer.fading) {
       v.layerFade = { mix, setLayer: (l) => this.showLayer(l) };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { RUN_SPEED, WALK_SPEED, walkStep } from '../scene/walk';
 import { isSoftwareRenderer } from '../scene/quality';
-import { pickSpread } from './calibrate';
+import { DEFAULT_TILE_OFFSET_M, pickSpread, plausibleOffset } from './calibrate';
 import { ACCEPT_ABOVE_M, cleanResiduals } from './drape';
 import { GKEY_STORAGE, resolveGoogleKey } from './key';
 
@@ -80,5 +80,11 @@ describe('misc', () => {
     ];
     const p = pickSpread(items, 0, 0, 500, 10, 60);
     expect(p).toEqual([{ x: 0, z: 0 }, { x: 100, z: 0 }]);
+  });
+
+  it('rejects calibrations against coarse tiles or clutter', () => {
+    expect(plausibleOffset({ offset: 34.5, n: 24, mad: 0.2 })).toBe(true);
+    expect(plausibleOffset({ offset: -33.85, n: 24, mad: 0.4 })).toBe(false);
+    expect(plausibleOffset({ offset: DEFAULT_TILE_OFFSET_M + 2, n: 24, mad: 5 })).toBe(false);
   });
 });
