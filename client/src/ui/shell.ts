@@ -466,7 +466,8 @@ export class RdAttribution extends LitElement {
   override render() {
     const s = this.st.s;
     const a = s.attribution;
-    if (s.renderMode === 'photoreal' && a) {
+    // Google credits only while Google tiles are drawn (the controller sets them)
+    if (a?.google) {
       return html`<div class="a" role="contentinfo" aria-label="Map data attribution">
         ${a.google ? html`<span class="logo" aria-label="Google">Google</span>` : nothing}
         <span class="txt" title=${a.text}>${a.text ? `Map data ©${new Date().getFullYear()} ${a.text}` : ''}</span>

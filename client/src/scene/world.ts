@@ -110,8 +110,17 @@ export class World {
   private queue: Array<{ key: string; pri: number; run: () => Promise<void> }> = [];
   private queued = new Set<string>();
   private active = 0;
+  /** priorities (distances) of the jobs running now */
+  private activePri = new Map<string, number>();
+  /**
+   * Extra point that streams like the camera (LODs by distance to the nearer
+   * of the two): preloads street-level assets around the orbit target or a
+   * walk destination before the base map switches to our world.
+   */
+  focus: THREE.Vector3 | null = null;
   private lastStream = 0;
   private camPos = new THREE.Vector3();
+  private focusPos = new THREE.Vector3(Infinity, 0, 0);
   /** called when the set of drawn meshes changed (shadows / AO may want a refresh) */
   onChange: (() => void) | null = null;
 
@@ -593,11 +602,13 @@ export class World {
     while (this.active < MAX && this.queue.length) {
       const job = this.queue.shift()!;
       this.active++;
+      this.activePri.set(job.key, job.pri);
       job
         .run()
         .catch((e: unknown) => console.warn('world streaming:', (e as Error).message))
         .finally(() => {
           this.active--;
+          this.activePri.delete(job.key);
           this.queued.delete(job.key);
           this.lastStream = 0;
           this.pump();
@@ -608,6 +619,14 @@ export class World {
   /** Pending streaming jobs (tests / screenshot scripts wait for 0). */
   get pending(): number {
     return this.queue.length + this.active;
+  }
+
+  /** Pending jobs for tiles closer than `dist` (m) to the camera / focus. */
+  pendingWithin(dist: number): number {
+    let n = 0;
+    for (const q of this.queue) if (q.pri < dist) n++;
+    for (const p of this.activePri.values()) if (p < dist) n++;
+    return n;
   }
 
   /** Decide LODs from the camera position: load what is needed, evict what is far. */
@@ -625,6 +644,7 @@ export class World {
   private streamTile(t: Tile, cam: THREE.Vector3): void {
     {
       t.dist = t.box.distanceToPoint(cam);
+      if (this.focus) t.dist = Math.min(t.dist, t.box.distanceToPoint(this.focus));
       const want = this.wantTerrainLod(t);
       const wantL = t.lods.find((l) => l.lod === want) ?? null;
       if (wantL && !wantL.root && !wantL.failed) this.enqueue(`t:${t.id}:${want}`, t.dist, () => this.loadTerrainLod(t, wantL));
@@ -667,7 +687,8 @@ export class World {
   /** Per-tile LOD streaming + frustum culling (plus hiding far building tiles). */
   updateCulling(camera: THREE.PerspectiveCamera): void {
     const now = performance.now();
-    if (now - this.lastStream > 250 || camera.position.distanceTo(this.camPos) > 150) {
+    if (now - this.lastStream > 250 || camera.position.distanceTo(this.camPos) > 150 || (this.focus && this.focus.distanceTo(this.focusPos) > 150)) {
+      if (this.focus) this.focusPos.copy(this.focus);
       this.lastStream = now;
       this.camPos.copy(camera.position);
       this.stream(camera.position);

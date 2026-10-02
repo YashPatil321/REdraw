@@ -271,7 +271,9 @@ export class RoadOverlay {
     this.baseOpacity = pr ? 0.82 : 0.9;
     u['uOpacity']!.value = this.baseOpacity * (1 - 0.8 * this.street);
     u['uSoft']!.value = 1;
-    u['uPull']!.value = pr ? 2.5 : 0;
+    // pulled toward the camera on both base maps (Google's mesh can sit a little above our
+    // DEM), so ribbons look the same whichever base map is drawn
+    u['uPull']!.value = 2.5;
     u['uWidthScale']!.value = pr ? 0.62 : 0.7;
     u['uBright']!.value = pr ? 1.1 : 2.0;
     if (!this.material.transparent || this.material.toneMapped === pr) {
