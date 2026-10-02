@@ -7,15 +7,26 @@ inputs), cost (from ``assumptions.costs``) and apply (modify a WorldState copy).
 ``check_plan`` never raises for player mistakes; it returns a ``PlanCheck``
 with errors. ``apply_plan`` returns a modified clone of the world.
 
-Custom tool (``custom``, ``enabled_in_mvp: false``): a plain description is
-rejected with a clear "not enabled" error. If ``params.levers`` holds confirmed
-LLM levers (the output of the future /tools/custom/preview) it is validated
-and applied, and always flagged "LLM estimated". Lever schema::
+Custom tool (``custom``): the player's description goes to the custom tool
+preview (``POST /tools/custom/preview``), which returns an LLM estimate the
+player confirms. The confirmed ``params.estimate`` is re-validated here (the
+client could have edited it) and translated into levers the sim understands::
 
-    {"mode_utility_shifts": {"carpool": 0.4, "bike": 0.2},     # utils, |x| <= custom_max_utility_shift
-     "capacity_changes": [{"edge": 12, "factor": 1.1}],        # 0 < factor <= custom_max_capacity_factor
-     "cost_upfront_usd": 0, "cost_per_year_usd": 50000,
-     "adoption_range": [0.05, 0.15], "assumptions": ["..."]}
+    {"summary": "...",
+     "levers": [{"type": "mode_utility_shift", "mode": "bike", "applies_to": "students",
+                 "school": "del_norte_hs" | null, "utils": 0.4},
+                {"type": "capacity_change", "target": "edge", "edge_idx": 12, "factor": 1.1},
+                {"type": "capacity_change", "target": "entrance", "entrance": "del_norte_hs/main", "factor": 1.2}],
+     "adoption_range": [0.05, 0.15], "cost_upfront_usd": 0, "cost_per_year_usd": 50000,
+     "assumptions": ["..."]}
+
+Mode utility shifts apply to the targeted people; ``adoption_range[1]`` caps the
+share of them who switch into a boosted mode (like the carpool program cap).
+Edge factors scale road capacity; entrance factors scale the drop-off service
+rate. A plain description without an estimate is rejected with a clear error.
+Custom tools are always flagged "LLM estimated". The older internal lever
+format (``params.levers``: ``mode_utility_shifts`` / ``capacity_changes``) is
+still accepted.
 """
 
 from __future__ import annotations
@@ -24,7 +35,7 @@ import math
 import re
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -241,7 +252,7 @@ def _validate_params(world: WorldState, tdef: dict[str, Any], params: dict[str, 
     warnings: list[str] = []
     specs = {p["id"]: p for p in tdef.get("params", [])}
     for k in params:
-        if k not in specs and not (tdef["id"] == "custom" and k == "levers"):
+        if k not in specs and not (tdef["id"] == "custom" and k in ("levers", "estimate")):
             warnings.append(f"unknown parameter '{k}' ignored")
     for pid, spec in specs.items():
         v = params.get(pid)
@@ -254,8 +265,10 @@ def _validate_params(world: WorldState, tdef: dict[str, Any], params: dict[str, 
                 out[pid] = None
                 continue
         out[pid] = _coerce(world, pid, spec, v)
-    if tdef["id"] == "custom" and "levers" in params:
-        out["levers"] = params["levers"]
+    if tdef["id"] == "custom":
+        for k in ("levers", "estimate"):
+            if k in params:
+                out[k] = params[k]
     return out, warnings
 
 
@@ -438,7 +451,10 @@ def _resolve(world: WorldState, tool: str, p: dict[str, Any], warnings: list[str
             warnings.append(f"{world.schools[s_i].name} has no high school grades; the cap has no effect")
         r = {"school_idx": s_i}
     elif tool == "custom":
-        r = {"levers": _validate_levers(world, p.get("levers"))}
+        if p.get("estimate") is not None:
+            r = {"levers": _levers_from_estimate(world, p["estimate"])}
+        else:
+            r = {"levers": _validate_levers(world, p.get("levers"))}
     else:
         raise ToolError("no implementation for this tool")
     return r
@@ -452,16 +468,91 @@ class _Levers(BaseModel):
     cost_per_year_usd: float = 0.0
     adoption_range: list[float] | None = None
     assumptions: list[str] = Field(default_factory=list)
+    # translated from a confirmed preview estimate (see module docstring)
+    targeted_shifts: list[dict[str, Any]] = Field(default_factory=list)
+    entrance_factors: list[dict[str, float]] = Field(default_factory=list)
+    summary: str = ""
+
+
+class _EstShift(BaseModel):
+    type: Literal["mode_utility_shift"]
+    mode: str
+    applies_to: Literal["students", "workers", "all"] = "all"
+    school: str | None = None
+    utils: float
+
+
+class _EstCapacity(BaseModel):
+    type: Literal["capacity_change"]
+    target: Literal["edge", "entrance"]
+    edge_idx: int | None = None
+    entrance: str | None = None
+    factor: float
+
+
+class _Estimate(BaseModel):
+    summary: str = Field(default="", max_length=400)
+    levers: list[Annotated[_EstShift | _EstCapacity, Field(discriminator="type")]] = Field(min_length=1, max_length=8)
+    adoption_range: tuple[float, float]
+    cost_upfront_usd: float = Field(ge=0)
+    cost_per_year_usd: float = Field(ge=0)
+    assumptions: list[str] = Field(default_factory=list, max_length=10)
+
+
+def _levers_from_estimate(world: WorldState, est: Any) -> dict[str, Any]:
+    """Re-validate a confirmed custom tool estimate and translate it into sim levers."""
+    try:
+        e = _Estimate.model_validate(est)
+    except ValidationError as exc:
+        err = exc.errors()[0]
+        raise ToolError(f"invalid estimate: {'.'.join(str(x) for x in err['loc'])}: {err['msg']}") from exc
+    lo, hi = e.adoption_range
+    if not (0.0 <= lo <= hi <= 1.0):
+        raise ToolError("invalid estimate: adoption_range must be [low, high] with 0 <= low <= high <= 1")
+    mx = Af("sim_engine.custom_max_utility_shift")
+    cmin, cmax = Af("sim_engine.custom_min_capacity_factor"), Af("sim_engine.custom_max_capacity_factor")
+    shifts: list[dict[str, Any]] = []
+    caps: list[dict[str, float]] = []
+    ents: list[dict[str, float]] = []
+    for lv in e.levers:
+        if isinstance(lv, _EstShift):
+            ok_s = lv.mode in STUDENT_MODES and lv.applies_to in ("students", "all")
+            ok_w = lv.mode in WORKER_MODES and lv.applies_to in ("workers", "all")
+            if not (ok_s or ok_w):
+                raise ToolError(f"invalid estimate: mode '{lv.mode}' is not a choice for {lv.applies_to}")
+            if abs(lv.utils) > mx:
+                raise ToolError(f"invalid estimate: utility shift for {lv.mode} exceeds {mx}")
+            s_i = -1
+            if lv.school:
+                s_i = world.school_index(lv.school)
+                if s_i < 0:
+                    raise ToolError(f"invalid estimate: unknown school '{lv.school}'")
+            shifts.append({"mode": lv.mode, "applies_to": lv.applies_to, "school_idx": s_i, "utils": float(lv.utils)})
+        elif not (cmin <= lv.factor <= cmax):
+            raise ToolError(f"invalid estimate: capacity factor {lv.factor} outside [{cmin}, {cmax}]")
+        elif lv.target == "edge":
+            if lv.edge_idx is None or not (0 <= lv.edge_idx < world.net.n_edges):
+                raise ToolError(f"invalid estimate: edge {lv.edge_idx} does not exist")
+            caps.append({"edge": float(lv.edge_idx), "factor": float(lv.factor)})
+        else:
+            ei = world.entrance_index(lv.entrance or "")
+            if ei < 0:
+                raise ToolError(f"invalid estimate: unknown entrance '{lv.entrance}'")
+            ents.append({"entrance_idx": float(ei), "factor": float(lv.factor)})
+    return _Levers(targeted_shifts=shifts, capacity_changes=caps, entrance_factors=ents,
+                   cost_upfront_usd=e.cost_upfront_usd, cost_per_year_usd=e.cost_per_year_usd,
+                   adoption_range=[lo, hi], assumptions=e.assumptions, summary=e.summary).model_dump()
 
 
 def _validate_levers(world: WorldState, levers: Any) -> dict[str, Any]:
     if levers is None:
-        raise ToolError("custom tools are not enabled in the MVP (tools.yaml enabled_in_mvp: false); "
-                        "a custom idea needs confirmed levers from the custom tool preview before it can run")
+        raise ToolError("estimate this idea with the AI first (Preview), then confirm the estimate before running")
     try:
         lv = _Levers.model_validate(levers)
     except ValidationError as exc:
         raise ToolError(f"invalid levers: {exc.errors()[0]['msg']}") from exc
+    if lv.targeted_shifts or lv.entrance_factors:
+        raise ToolError("invalid levers: targeted levers come only from a confirmed estimate")
     mx = Af("sim_engine.custom_max_utility_shift")
     modes = set(STUDENT_MODES) | set(WORKER_MODES)
     for m, v in lv.mode_utility_shifts.items():
@@ -631,6 +722,22 @@ def _apply(world: WorldState, tool: str, p: dict[str, Any], r: dict[str, Any]) -
                 world.shift_worker[m] += v * pers.is_worker
         for c in lv["capacity_changes"]:
             world.cap_factor[int(c["edge"])] *= float(c["factor"])
+        adopt_hi = (lv.get("adoption_range") or [0.0, 1.0])[1]
+        is_stu = pers.school >= 0
+        for sh in lv.get("targeted_shifts", []):
+            m, v, s_i = sh["mode"], float(sh["utils"]), int(sh["school_idx"])
+            if sh["applies_to"] in ("students", "all") and m in world.shift_student:
+                mask = is_stu if s_i < 0 else pers.school == s_i
+                world.shift_student[m][mask] += v
+                if v > 0:
+                    world.adoption_caps.append((mask.copy(), m, float(adopt_hi)))
+            if sh["applies_to"] in ("workers", "all") and m in world.shift_worker:
+                mask = np.asarray(pers.is_worker, dtype=bool)
+                world.shift_worker[m][mask] += v
+                if v > 0:
+                    world.adoption_caps.append((mask.copy(), m, float(adopt_hi)))
+        for ef in lv.get("entrance_factors", []):
+            world.entrances[int(ef["entrance_idx"])].unload_s /= float(ef["factor"])
         world.llm_estimated.append("custom")
 
 

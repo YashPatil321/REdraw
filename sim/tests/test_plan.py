@@ -34,7 +34,25 @@ def tool_examples(world) -> dict[str, dict]:
         "bike_route": {"path": [_ll(world, n[0]), _ll(world, n[4])], "facility": "protected"},
         "safe_walk_route": {"path": [_ll(world, n[0]), _ll(world, n[2])], "school": "del_norte_hs", "crossing_guards": True},
         "teen_drive_policy": {"school": "del_norte_hs", "permits_cap": 0},
+        "custom": {"description": "Walking school bus with parent volunteers", "estimate": custom_estimate()},
     }
+
+
+def custom_estimate(**over) -> dict:
+    """A confirmed custom tool preview estimate (the format /tools/custom/preview returns)."""
+    est = {
+        "summary": "Parent-led walking groups to Del Norte, plus a faster drop-off line.",
+        "levers": [
+            {"type": "mode_utility_shift", "mode": "walk", "applies_to": "students", "school": "del_norte_hs", "utils": 0.6},
+            {"type": "capacity_change", "target": "entrance", "entrance": "del_norte_hs/main_dropoff", "factor": 1.2},
+        ],
+        "adoption_range": [0.05, 0.15],
+        "cost_upfront_usd": 0,
+        "cost_per_year_usd": 20000,
+        "assumptions": ["Enough parents volunteer to lead groups each morning."],
+    }
+    est.update(over)
+    return est
 
 
 def _changed(tool: str, before, after) -> bool:
@@ -55,6 +73,9 @@ def _changed(tool: str, before, after) -> bool:
         return after.cap_factor.max() > 1.0
     if tool == "bike_route":
         return after.shift_student["bike"].sum() + after.shift_worker["bike"].sum() > 0
+    if tool == "custom":
+        return (after.shift_student["walk"].sum() > 0 and after.entrances[0].unload_s < before.entrances[0].unload_s
+                and after.adoption_caps and after.llm_estimated == ["custom"])
     if tool == "safe_walk_route":
         return after.shift_student["walk"].sum() > 0
     if tool == "teen_drive_policy":
@@ -114,7 +135,7 @@ def test_validation_errors(world):
     assert "unknown entrance" in errs([{"tool": "dropoff_redesign", "params": {"entrance": "nope/x", "extra_curb_spots": 2}}])
     assert "from the nearest road" in errs([{"tool": "new_dropoff_entrance", "params": {"school": "del_norte_hs", "location": [34.5, -116.0]}}])
     assert "at least 2 points" in errs([{"tool": "bike_route", "params": {"path": [[33.0, -117.1]]}}])
-    assert "not enabled" in errs([{"tool": "custom", "params": {"description": "more trees"}}])
+    assert "estimate this idea with the AI first" in errs([{"tool": "custom", "params": {"description": "more trees"}}])
     bad = check_plan(world, {"tools": "not a list"})
     assert not bad.ok and bad.errors[0].startswith("plan:")
 
@@ -130,6 +151,43 @@ def test_custom_levers_and_constraints(world):
     assert new.llm_estimated == ["custom"] and new.cap_factor[e] == pytest.approx(1.5)
     c2 = check_plan(world, {"tools": [{"tool": "custom", "params": {"description": "x", "levers": {"mode_utility_shifts": {"walk": 9}}}}]})
     assert not c2.ok
+
+
+def test_custom_estimate_is_revalidated(world):
+    def errs(est):
+        return check_plan(world, {"tools": [{"tool": "custom", "params": {"description": "x", "estimate": est}}]}).errors
+
+    ok = check_plan(world, {"tools": [{"tool": "custom", "params": {"description": "x", "estimate": custom_estimate()}}]})
+    assert ok.ok and ok.cost_per_year_usd == 20000 and ok.llm_estimated_tools
+    shift = custom_estimate()["levers"][0]
+    assert "exceeds" in errs(custom_estimate(levers=[shift | {"utils": 5}]))[0]
+    assert "not a choice for workers" in errs(custom_estimate(levers=[shift | {"mode": "school_bus", "applies_to": "workers"}]))[0]
+    assert "unknown school" in errs(custom_estimate(levers=[shift | {"school": "nope"}]))[0]
+    cap = {"type": "capacity_change", "target": "entrance", "entrance": "nope/x", "factor": 1.1}
+    assert "unknown entrance" in errs(custom_estimate(levers=[cap]))[0]
+    assert "outside" in errs(custom_estimate(levers=[cap | {"factor": 9}]))[0]
+    assert "adoption_range" in errs(custom_estimate(adoption_range=[0.5, 0.2]))[0]
+    # targeted levers cannot be smuggled in through the raw lever format
+    raw = {"targeted_shifts": [{"mode": "walk", "applies_to": "all", "school_idx": -1, "utils": 2}]}
+    assert "only from a confirmed estimate" in check_plan(world, {"tools": [{"tool": "custom", "params": {"description": "x", "levers": raw}}]}).errors[0]
+
+
+def test_custom_adoption_cap_limits_switching(svc):
+    """A huge walk boost with a 2% adoption cap moves at most ~2% of targeted students to walking."""
+    est = custom_estimate(levers=[{"type": "mode_utility_shift", "mode": "walk", "applies_to": "students", "utils": 2.0}],
+                          adoption_range=[0.0, 0.02])
+    def run(e):
+        plan = {"mission": "morning_crunch", "tools": [{"tool": "custom", "params": {"description": "x", "estimate": e}}]}
+        return svc.run(plan, seeds=1, workers=1).report
+
+    capped = run(est)
+    free = run(est | {"adoption_range": [0.0, 1.0]})
+
+    def walk_pp(rep):
+        return next(m["delta_pp"] for m in rep["mode_share"] if m["mode"] == "walk")
+
+    assert walk_pp(capped) < walk_pp(free)
+    assert walk_pp(capped) <= 2.5
 
 
 def test_budget(world):

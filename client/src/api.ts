@@ -11,6 +11,7 @@ import { BUILDINGS_FILE, STATIC_DIR, STATIC_NOTICE, WORLD_ASSETS_DIR, staticTarg
 import type {
   BaselineResponse,
   ChatResponse,
+  CustomPreviewResponse,
   BuildingInfo,
   Job,
   Manifest,
@@ -172,6 +173,10 @@ export class RedrawApi {
   /** Town hall: first call generates the 8 speakers; `message` + `persona_id` asks one of them a follow-up. */
   townhall(id: string, body: { persona_id?: number; message?: string; regenerate?: boolean } = {}): Promise<TownhallResponse> {
     return this.json('POST', `/plans/${encodeURIComponent(id)}/townhall`, { body });
+  }
+  /** Spec 7.3: the LLM converts a custom idea into model levers for the player to confirm. */
+  previewCustom(description: string): Promise<CustomPreviewResponse> {
+    return this.json('POST', '/tools/custom/preview', { body: { description } });
   }
   getChat(personaId: number): Promise<ChatResponse> {
     return this.json('GET', `/residents/${encodeURIComponent(String(personaId))}/chat`);

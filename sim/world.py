@@ -400,6 +400,8 @@ class WorldState:
     shift_student: dict[str, np.ndarray] = field(default_factory=dict)
     shift_worker: dict[str, np.ndarray] = field(default_factory=dict)
     carpool_caps: list[tuple[np.ndarray, float]] = field(default_factory=list)
+    # custom tool adoption caps: (targeted person mask, mode, max share of targeted people who switch to it)
+    adoption_caps: list[tuple[np.ndarray, str, float]] = field(default_factory=list)
     shuttles: list[Shuttle] = field(default_factory=list)
     shuttle_of_person: np.ndarray = field(default_factory=lambda: np.zeros(0))
     shuttle_walk_km: np.ndarray = field(default_factory=lambda: np.zeros(0))
@@ -437,6 +439,7 @@ class WorldState:
         new.shift_student = {k: v.copy() for k, v in self.shift_student.items()}
         new.shift_worker = {k: v.copy() for k, v in self.shift_worker.items()}
         new.carpool_caps = list(self.carpool_caps)
+        new.adoption_caps = list(self.adoption_caps)
         new.shuttles = copy.deepcopy(self.shuttles)
         new.shuttle_of_person = self.shuttle_of_person.copy()
         new.shuttle_walk_km = self.shuttle_walk_km.copy()

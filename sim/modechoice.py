@@ -458,6 +458,7 @@ def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = Non
     if habit is not None:
         smode = _carpool_caps(world, si, smode, habit.student_mode, U, S_IDX["carpool"],
                               {S_IDX["drive_dropoff"], S_IDX["teen_drive"]}, student=True)
+        smode = _adoption_caps(world, si, smode, habit.student_mode, U, S_IDX)
     sfixed = np.where(np.isin(smode, [S_IDX["drive_dropoff"], S_IDX["carpool"], S_IDX["teen_drive"]]), np.nan,
                       tmin[np.arange(len(si)), smode])
 
@@ -472,10 +473,38 @@ def choose_modes(world: WorldState, draws: Draws, habit: ModeResult | None = Non
         VW[rows, habit_w[has]] += bh * aw[rows, habit_w[has]]
     wmode, UW = _choose(VW, aw, draws.gumbel_worker[wi])
     if habit_w is not None:
-        wmode = _carpool_caps(world, wi, wmode, np.where(habit_w >= 0, habit_w, wmode), UW, W_IDX["carpool"],
+        wbase = np.where(habit_w >= 0, habit_w, wmode)
+        wmode = _carpool_caps(world, wi, wmode, wbase, UW, W_IDX["carpool"],
                               {W_IDX["drive_alone"]}, student=False)
+        wmode = _adoption_caps(world, wi, wmode, wbase, UW, W_IDX)
     wfixed = np.where(np.isin(wmode, [W_IDX["drive_alone"], W_IDX["carpool"]]), np.nan, tw[np.arange(len(wi)), wmode])
     return ModeResult(si, smode, su.car_s, su.dist, sfixed, wi, wmode, wu.dist, wfixed, plans)
+
+
+def _adoption_caps(world: WorldState, idx: np.ndarray, choice: np.ndarray, base: np.ndarray, U: np.ndarray,
+                   mode_idx: dict[str, int]) -> np.ndarray:
+    """Custom tool adoption cap: switchers to ``mode`` <= share * targeted people not already on it.
+
+    Switchers above the cap (lowest utility margin first) return to their baseline mode, like the
+    carpool program cap.
+    """
+    choice = choice.copy()
+    for mask_all, mode, share in world.adoption_caps:
+        m = mode_idx.get(mode)
+        if m is None:
+            continue
+        target = mask_all[idx]
+        if not target.any():
+            continue
+        eligible = target & (base != m)
+        switch = np.nonzero(eligible & (choice == m))[0]
+        cap = int(np.floor(share * eligible.sum()))
+        if len(switch) <= cap:
+            continue
+        margin = U[switch, m] - U[switch, base[switch]]
+        revert = switch[np.argsort(-margin)[cap:]]
+        choice[revert] = base[revert]
+    return choice
 
 
 def _apply_hints(hints: np.ndarray, modes: tuple[str, ...], V: np.ndarray, av: np.ndarray) -> None:

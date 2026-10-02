@@ -257,6 +257,7 @@ sim_engine:
   max_school_stops_per_chain: {value: 3, unit: count, range: null, source: "a drop-off chain visits at most this many schools; extra schools get their own trip; model resolution", verified: true}
   home_edges_radius: {value: 1, unit: hops, range: null, source: "edges incident to the home node count as the resident's street for home_edges_vc_delta", verified: true}
   custom_max_capacity_factor: {value: 1.5, unit: ratio, range: null, source: "upper bound on LLM-proposed capacity multipliers for custom tools (sanity bound)", verified: true}
+  custom_min_capacity_factor: {value: 0.5, unit: ratio, range: null, source: "lower bound on LLM-proposed capacity multipliers for custom tools (sanity bound)", verified: true}
   custom_max_utility_shift: {value: 2.0, unit: utils, range: null, source: "upper bound on LLM-proposed mode utility shifts for custom tools (sanity bound)", verified: true}
   snap_max_distance_m: {value: 600, unit: m, range: null, source: "map inputs farther than this from the drive network are rejected as not near a road (validation threshold)", verified: true}
   dropoff_balk_wait_min: {value: 6.0, unit: min, range: [3.0, 12.0], source: "patience at the drop-off line, expressed as minutes of waiting at the curb service rate parents are used to (baseline); a parent who sees a longer line than that drops the kid off on a nearby street instead (balking); guess", verified: false}

@@ -4,10 +4,23 @@
  */
 
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit';
-import { OFFLINE_VIEWER, addTool, isDraftDirty, newDraft, removeTool, runPlan, savePlan, setDraftText, updateParam } from '../actions';
+import {
+  OFFLINE_VIEWER,
+  addTool,
+  confirmCustomTool,
+  discardCustomPreview,
+  isDraftDirty,
+  newDraft,
+  previewCustomTool,
+  removeTool,
+  runPlan,
+  savePlan,
+  setDraftText,
+  updateParam,
+} from '../actions';
 import { hashFor } from '../router';
 import { store } from '../state';
-import type { ToolDef, ToolInstance } from '../types';
+import type { CustomEstimate, CustomLever, School, ToolDef, ToolInstance } from '../types';
 import { StoreController, fmtUsd, humanize, theme } from './base';
 import { buildFields, coerceInput, mapSummary, type FieldSpec } from './formgen';
 
@@ -83,9 +96,20 @@ export class RdToolPalette extends LitElement {
         gap: 6px;
         align-items: center;
       }
+      .est {
+        background: var(--bg-2);
+        border: 1px solid rgba(255, 196, 77, 0.45);
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin: 6px 0;
+      }
+      .est ul {
+        margin: 2px 0 6px;
+        padding-left: 18px;
+      }
     `,
   ];
-  private st = new StoreController(this, ['tools', 'draft', 'selectedTool', 'schools', 'mapPick', 'check']);
+  private st = new StoreController(this, ['tools', 'draft', 'selectedTool', 'schools', 'mapPick', 'check', 'customPreview']);
 
   private renderList(): TemplateResult {
     const tools = this.st.s.tools;
@@ -177,9 +201,31 @@ export class RdToolPalette extends LitElement {
       <p class="muted small">${def.description}</p>
       <div class="scroll" style="overflow-y:auto">
         ${fields.map((f) => this.renderField(idx, f))}
+        ${def.id === 'custom' ? this.renderCustom(idx, inst) : nothing}
         ${errs.length ? html`<div class="small err">${errs.map((e) => html`<div>${e}</div>`)}</div>` : nothing}
         ${def.cost_note ? html`<p class="small muted">Cost: ${def.cost_note}</p>` : nothing}
       </div>`;
+  }
+
+  private renderCustom(idx: number, inst: ToolInstance): TemplateResult {
+    const confirmed = inst.params.estimate as CustomEstimate | undefined;
+    const pv = this.st.s.customPreview?.toolIndex === idx ? this.st.s.customPreview : null;
+    const schools = this.st.s.schools;
+    if (confirmed && !pv) {
+      return html`<h3>Confirmed estimate</h3>${estimateCard(confirmed, schools)}
+        <div class="row"><button @click=${() => previewCustomTool(idx)}>Re-estimate</button></div>`;
+    }
+    return html`<div class="small muted" style="margin:6px 0">
+        The AI turns your idea into model levers (mode preferences, road or drop-off capacity), a cost and an adoption range.
+        You review its assumptions and confirm before the plan can run. The result is always labeled "LLM estimated".
+      </div>
+      ${pv?.estimate
+        ? html`${estimateCard(pv.estimate, schools)}
+            <div class="row"><button class="primary" @click=${() => confirmCustomTool(idx)}>Use this estimate</button>
+              <button class="ghost" @click=${() => discardCustomPreview()}>Discard</button></div>`
+        : html`<button class="primary" ?disabled=${!!pv?.loading} @click=${() => previewCustomTool(idx)}>
+            ${pv?.loading ? 'Estimating…' : 'Estimate with AI'}</button>`}
+      ${pv?.error ? html`<p class="err small">${pv.error}</p>` : nothing}`;
   }
 
   override render() {
@@ -191,6 +237,36 @@ export class RdToolPalette extends LitElement {
   }
 }
 customElements.define('rd-tool-palette', RdToolPalette);
+
+function signed(v: number): string {
+  return `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(v).toFixed(2)}`;
+}
+
+/** One lever in plain words (the numbers are exactly what the sim will apply). */
+export function leverText(lv: CustomLever, schools: School[]): string {
+  if (lv.type === 'mode_utility_shift') {
+    const who = lv.applies_to === 'all' ? 'everyone' : lv.applies_to;
+    const where = lv.school ? ` at ${schools.find((s) => s.id === lv.school)?.name ?? lv.school}` : '';
+    return `${lv.utils >= 0 ? 'Makes' : 'Discourages'} ${humanize(lv.mode)} for ${who}${where} (utility ${signed(lv.utils)})`;
+  }
+  if (lv.target === 'entrance') return `Drop-off ${lv.entrance ?? '?'}: service rate ×${lv.factor.toFixed(2)}`;
+  return `Road segment #${lv.edge_idx ?? '?'}: capacity ×${lv.factor.toFixed(2)}`;
+}
+
+function estimateCard(est: CustomEstimate, schools: School[]): TemplateResult {
+  const [lo, hi] = est.adoption_range;
+  return html`<div class="est">
+    <div class="row"><span class="tag warn">LLM estimated</span></div>
+    <p style="margin:6px 0">${est.summary}</p>
+    <div class="small muted">Model levers</div>
+    <ul>${est.levers.map((lv) => html`<li>${leverText(lv, schools)}</li>`)}</ul>
+    <div class="small">Adoption: ${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}% of the people targeted
+      <span class="muted">(at most ${(hi * 100).toFixed(0)}% switch)</span></div>
+    <div class="small">Cost: ${fmtUsd(est.cost_upfront_usd)} upfront, ${fmtUsd(est.cost_per_year_usd)} per year</div>
+    <div class="small muted" style="margin-top:6px">Assumptions the AI made</div>
+    <ul>${est.assumptions.map((a) => html`<li>${a}</li>`)}</ul>
+  </div>`;
+}
 
 function budgetBar(label: string, cost: number, budget: number): TemplateResult {
   const frac = budget > 0 ? cost / budget : cost > 0 ? 2 : 0;
@@ -290,6 +366,7 @@ export class RdPlanSummary extends LitElement {
         if (p.type === 'school') return this.st.s.schools.find((sc) => sc.id === v)?.name ?? String(v);
         return `${p.label}: ${String(v)}`;
       })
+      .concat(inst.tool === 'custom' ? [inst.params.estimate ? 'LLM estimate confirmed' : 'needs an AI estimate'] : [])
       .filter(Boolean)
       .join(' · ');
   }

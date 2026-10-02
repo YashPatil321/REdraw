@@ -9,6 +9,7 @@ import type {
   Plan,
   PlanCheck,
   ChatMessage,
+  CustomEstimate,
   Reaction,
   ResidentsResponse,
   School,
@@ -72,6 +73,15 @@ export interface TownhallState {
   responding: boolean;
 }
 
+/** Custom tool preview waiting for the player's confirmation. */
+export interface CustomPreviewState {
+  toolIndex: number;
+  description: string;
+  loading: boolean;
+  error: string | null;
+  estimate: CustomEstimate | null;
+}
+
 export interface AppState {
   view: View;
   booting: boolean;
@@ -109,6 +119,7 @@ export interface AppState {
   reportTab: 'report' | 'residents' | 'townhall';
   chat: ChatState | null;
   townhall: TownhallState | null;
+  customPreview: CustomPreviewState | null;
 
   // explore
   building: BuildingInfo | null;
@@ -206,6 +217,7 @@ export function initialState(): AppState {
     reportTab: 'report',
     chat: null,
     townhall: null,
+    customPreview: null,
     building: null,
     buildingLoading: false,
     school: null,

@@ -51,7 +51,7 @@ def test_world_endpoints(client):
     tools = client.get("/tools").json()
     assert tools["mission"] == "morning_crunch"
     custom = [t for t in tools["tools"] if t["id"] == "custom"]
-    assert custom and custom[0]["enabled_in_mvp"] is False
+    assert custom and custom[0]["enabled_in_mvp"] is True
     wait_baseline(client)
     schools = client.get("/world/schools").json()
     dn = next(s for s in schools if s["id"] == "del_norte_hs")

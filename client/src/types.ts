@@ -216,7 +216,30 @@ export interface ToolsResponse {
   tools: ToolDef[];
 }
 
-export type ParamValue = string | number | boolean | null | number[] | number[][];
+export type ParamValue = string | number | boolean | null | number[] | number[][] | CustomEstimate;
+
+/** One model lever proposed by the custom tool preview (spec 7.3). */
+export type CustomLever =
+  | { type: 'mode_utility_shift'; mode: string; applies_to: 'students' | 'workers' | 'all'; school: string | null; utils: number }
+  | { type: 'capacity_change'; target: 'edge' | 'entrance'; edge_idx?: number | null; entrance?: string | null; factor: number };
+
+/** LLM estimate for a custom idea; the player confirms it, then it is stored in params.estimate. */
+export interface CustomEstimate {
+  summary: string;
+  levers: CustomLever[];
+  adoption_range: [number, number];
+  cost_upfront_usd: number;
+  cost_per_year_usd: number;
+  assumptions: string[];
+}
+
+export interface CustomPreviewResponse {
+  ok: boolean;
+  label: string;
+  description: string;
+  estimate: CustomEstimate;
+  tool: { tool: 'custom'; params: { description: string; estimate: CustomEstimate } };
+}
 
 export interface ToolInstance {
   tool: string;

@@ -71,13 +71,56 @@ export function addTool(def: ToolDef): void {
 export function removeTool(index: number): void {
   const s = store.get();
   const tools = s.draft.tools.filter((_, i) => i !== index);
-  store.set({ draft: { ...s.draft, tools }, selectedTool: null, mapPick: null });
+  store.set({ draft: { ...s.draft, tools }, selectedTool: null, mapPick: null, customPreview: null });
 }
 
 export function updateParam(index: number, paramId: string, value: ParamValue): void {
   const s = store.get();
-  const tools = s.draft.tools.map((t, i) => (i === index ? { ...t, params: setParam(t.params, paramId, value) } : t));
+  const tools = s.draft.tools.map((t, i) => {
+    if (i !== index) return t;
+    let params = setParam(t.params, paramId, value);
+    // a confirmed custom estimate belongs to the exact description it was made from
+    if (t.tool === 'custom' && paramId === 'description') params = setParam(params, 'estimate', null);
+    return { ...t, params };
+  });
   store.set({ draft: { ...s.draft, tools } });
+}
+
+/** Ask the LLM to convert the custom idea at `index` into levers (shown for confirmation, spec 7.3). */
+export async function previewCustomTool(index: number): Promise<void> {
+  const inst = store.get().draft.tools[index];
+  const description = String(inst?.params.description ?? '').trim();
+  if (!inst || inst.tool !== 'custom') return;
+  if (description.length < 3) {
+    store.set({ customPreview: { toolIndex: index, description, loading: false, error: 'Describe your idea first (at least a few words).', estimate: null } });
+    return;
+  }
+  if (offline('Estimating a custom idea')) return;
+  store.set({ customPreview: { toolIndex: index, description, loading: true, error: null, estimate: null } });
+  try {
+    const r = await api.previewCustom(description);
+    store.set((s) => (s.customPreview?.toolIndex === index ? { customPreview: { ...s.customPreview, loading: false, estimate: r.estimate } } : {}));
+  } catch (e) {
+    store.set((s) => (s.customPreview?.toolIndex === index ? { customPreview: { ...s.customPreview, loading: false, error: errText(e) } } : {}));
+  }
+}
+
+/** The player accepts the previewed estimate: it becomes part of the plan. */
+export function confirmCustomTool(index: number): void {
+  const s = store.get();
+  const p = s.customPreview;
+  const inst = s.draft.tools[index];
+  if (!p || p.toolIndex !== index || !p.estimate || !inst) return;
+  if (String(inst.params.description ?? '').trim() !== p.description) {
+    store.set({ customPreview: { ...p, error: 'The description changed after this estimate; estimate again.' } });
+    return;
+  }
+  const tools = s.draft.tools.map((t, i) => (i === index ? { ...t, params: setParam(t.params, 'estimate', p.estimate) } : t));
+  store.set({ draft: { ...s.draft, tools }, customPreview: null });
+}
+
+export function discardCustomPreview(): void {
+  store.set({ customPreview: null });
 }
 
 export function setDraftText(field: 'title' | 'pitch', value: string): void {

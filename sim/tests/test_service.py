@@ -17,7 +17,7 @@ def test_static_interface(svc):
     assert s["synthetic"] is True and s["calibration"]["status"] == "uncalibrated"
     assert s["time"]["n_bins"] == 48 and s["hero"]["school_id"] == "del_norte_hs"
     tools = svc.tools()
-    assert [t["id"] for t in tools][0] == "bell_time" and tools[-1]["id"] == "custom" and tools[-1]["enabled_in_mvp"] is False
+    assert [t["id"] for t in tools][0] == "bell_time" and tools[-1]["id"] == "custom" and tools[-1]["enabled_in_mvp"] is True
     assert svc.mission()["budget_usd_upfront"] == 2000000
     sch = svc.schools()
     assert sch[0]["entrances"][0]["key"] == "del_norte_hs/main_dropoff"

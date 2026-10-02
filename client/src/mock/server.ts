@@ -149,6 +149,7 @@ export async function createMockFetch(): Promise<FetchLike> {
         return;
       }
       if (def.enabled_in_mvp === false) errors.push(`${def.id}: not available in this version`);
+      if (def.id === 'custom' && !inst.params['estimate']) errors.push('custom: estimate this idea with the AI first (Preview), then confirm the estimate before running');
       for (const prm of def.params) {
         const v = inst.params[prm.id];
         const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0);
@@ -409,6 +410,19 @@ export async function createMockFetch(): Promise<FetchLike> {
     }
     if (method === 'GET' && path === '/baseline/playback') return new Response(playbackFor(null));
     if (method === 'GET' && path === '/tools') return json({ mission: 'morning_crunch', tools });
+    if (method === 'POST' && path === '/tools/custom/preview') {
+      const description = String((body as { description?: string })?.description ?? '').trim();
+      if (description.length < 3) return json({ detail: 'description is too short' }, 422);
+      const estimate = {
+        summary: `MOCK ESTIMATE for: ${description.slice(0, 80)}`,
+        levers: [{ type: 'mode_utility_shift', mode: 'walk', applies_to: 'students', school: world.schools[0]!.id, utils: 0.4 }],
+        adoption_range: [0.05, 0.15],
+        cost_upfront_usd: 0,
+        cost_per_year_usd: 25000,
+        assumptions: ['Mock fixture: no AI was called.'],
+      };
+      return json({ ok: true, label: 'LLM estimated', description, estimate, tool: { tool: 'custom', params: { description, estimate } } });
+    }
     if (method === 'POST' && path === '/plans/check') return json(check(body as PlanInput));
     if (method === 'POST' && path === '/plans') {
       const b = body as PlanInput;

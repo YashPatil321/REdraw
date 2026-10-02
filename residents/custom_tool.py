@@ -14,13 +14,15 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from pipeline.config import assumptions
+from pipeline.config import assumption, assumptions
 from residents.llm import ChatLLM, extract_json
 
 # Validation bounds that keep LLM levers inside what the model can represent
-# (safety rails on the LLM, not real-world estimates).
-MAX_UTILITY_SHIFT = 2.0
-CAPACITY_FACTOR_RANGE = (0.5, 2.0)
+# (safety rails on the LLM, not real-world estimates). The sim re-checks the same
+# bounds (sim.plan._levers_from_estimate) when the confirmed estimate runs.
+MAX_UTILITY_SHIFT = float(assumption("sim_engine.custom_max_utility_shift"))
+CAPACITY_FACTOR_RANGE = (float(assumption("sim_engine.custom_min_capacity_factor")),
+                         float(assumption("sim_engine.custom_max_capacity_factor")))
 MAX_COST_USD = 50_000_000
 
 

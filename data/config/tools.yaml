@@ -140,6 +140,6 @@ tools:
     category: custom
     description: Describe your own idea. An AI converts it into model levers you confirm before running. Always labeled "LLM estimated".
     cost_note: Estimated by the LLM and flagged.
-    enabled_in_mvp: false
+    enabled_in_mvp: true
     params:
       - {id: description, label: Describe your idea, type: text, required: true, max_length: 600}
