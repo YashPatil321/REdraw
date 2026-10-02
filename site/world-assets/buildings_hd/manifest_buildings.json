@@ -1,0 +1,2089 @@
+{
+ "format": "redraw-buildings-hd",
+ "version": 1,
+ "generated_at": "2026-10-02T01:29:47Z",
+ "generator": ".venv-blender/bin/python blender/buildings/build.py (specs: pipeline/build_buildings_blender.py)",
+ "synthetic": false,
+ "base_path": "assets/",
+ "draco": true,
+ "coordinates": "glTF meters, x east, y up, z south, relative to the scene origin (docs/coordinates.md); identity node transforms",
+ "origin": {
+  "easting": 488558.6873152079,
+  "northing": 3653122.8023525723
+ },
+ "bbox": {
+  "south": 32.993,
+  "north": 33.04,
+  "west": -117.165,
+  "east": -117.08
+ },
+ "grid": {
+  "rows": 8,
+  "cols": 8,
+  "extent": {
+   "min_x": -4500.0,
+   "max_x": 4500.0,
+   "min_z": -3150.0,
+   "max_z": 3150.0
+  }
+ },
+ "lods": {
+  "lod0": "full detail: real footprint, lidar/tag roof (hip / gable / shed / flat / complex, two roof levels), eaves with fascia + soffit, windows (trim, glass, sill), recessed garage door toward the street, entry door + porch roof, storefronts, parapets, rooftop HVAC, PV arrays",
+  "lod1": "coarse footprint, walls to the roof line + roof planes; no overhangs or openings"
+ },
+ "suggested_lod1_distance_m": 450,
+ "materials_manifest": "materials/materials_manifest.json",
+ "vertex_attributes": {
+  "_BUILDING_ID": "FLOAT scalar (integral) = buildings_hd.json id = buildings.geojson id (lidar-only buildings use ids above the pipeline max)",
+  "_MAT": "FLOAT scalar (integral): 0 stucco wall, 1 tile roof, 2 flat roof, 3 glass, 4 trim / door / soffit, 5 garage door (materials_manifest.json materials)",
+  "_VARIANT": "FLOAT scalar (integral): index into materials_manifest.json materials[_MAT].variants",
+  "COLOR_0": "linear RGB tint: wall color (walls, garage surround), trim / door color (trim), real fallback colors for roofs / glass",
+  "TEXCOORD_0": "materials_manifest uv_conventions: facade u = m along wall / 3, v = m above floor / 3; pitched roof u = m along eave / 4, v = m up slope / 4; flat roof u = x / 4, v = -z / 4; garage door uvs map onto the garage cell's door rect",
+  "NORMAL": "flat (per face)"
+ },
+ "tiles": [
+  {
+   "id": "r0_c0",
+   "row": 0,
+   "col": 0,
+   "buildings": 144,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": -3150.0,
+    "max_z": -2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r0_c0_lod0.glb",
+    "triangles": 28585,
+    "vertices": 54694,
+    "bytes": 325344
+   },
+   "lod1": {
+    "file": "buildings_hd/r0_c0_lod1.glb",
+    "triangles": 5219,
+    "vertices": 9659,
+    "bytes": 64180
+   },
+   "bounds": {
+    "min_x": -4507.321751841749,
+    "max_x": -3367.41704920915,
+    "min_z": -3145.3363615845665,
+    "max_z": -2361.450111833808,
+    "min_y": 56.321000000000005,
+    "max_y": 174.1800019550287
+   }
+  },
+  {
+   "id": "r0_c1",
+   "row": 0,
+   "col": 1,
+   "buildings": 48,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": -3150.0,
+    "max_z": -2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r0_c1_lod0.glb",
+    "triangles": 12080,
+    "vertices": 22638,
+    "bytes": 146200
+   },
+   "lod1": {
+    "file": "buildings_hd/r0_c1_lod1.glb",
+    "triangles": 2254,
+    "vertices": 3921,
+    "bytes": 31508
+   },
+   "bounds": {
+    "min_x": -3387.9247832710303,
+    "max_x": -2489.076046224369,
+    "min_z": -3151.702254868503,
+    "max_z": -2348.2105561623716,
+    "min_y": 34.005,
+    "max_y": 113.56538030258551
+   }
+  },
+  {
+   "id": "r0_c4",
+   "row": 0,
+   "col": 4,
+   "buildings": 102,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": -3150.0,
+    "max_z": -2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r0_c4_lod0.glb",
+    "triangles": 20139,
+    "vertices": 36976,
+    "bytes": 248056
+   },
+   "lod1": {
+    "file": "buildings_hd/r0_c4_lod1.glb",
+    "triangles": 2802,
+    "vertices": 4837,
+    "bytes": 41016
+   },
+   "bounds": {
+    "min_x": 588.4355735581266,
+    "max_x": 1121.6444849494937,
+    "min_z": -2620.8084211429737,
+    "max_z": -2350.805861084361,
+    "min_y": 177.69299999999998,
+    "max_y": 201.62751862811967
+   }
+  },
+  {
+   "id": "r0_c5",
+   "row": 0,
+   "col": 5,
+   "buildings": 15,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": -3150.0,
+    "max_z": -2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r0_c5_lod0.glb",
+    "triangles": 3411,
+    "vertices": 6419,
+    "bytes": 49408
+   },
+   "lod1": {
+    "file": "buildings_hd/r0_c5_lod1.glb",
+    "triangles": 542,
+    "vertices": 974,
+    "bytes": 10380
+   },
+   "bounds": {
+    "min_x": 1120.4015525811812,
+    "max_x": 1342.9367728326297,
+    "min_z": -2513.1354853301227,
+    "max_z": -2351.1109160504716,
+    "min_y": 180.261,
+    "max_y": 194.647
+   }
+  },
+  {
+   "id": "r0_c6",
+   "row": 0,
+   "col": 6,
+   "buildings": 230,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": -3150.0,
+    "max_z": -2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r0_c6_lod0.glb",
+    "triangles": 41622,
+    "vertices": 80099,
+    "bytes": 489660
+   },
+   "lod1": {
+    "file": "buildings_hd/r0_c6_lod1.glb",
+    "triangles": 7870,
+    "vertices": 14721,
+    "bytes": 97020
+   },
+   "bounds": {
+    "min_x": 2813.092633624424,
+    "max_x": 3385.036629359131,
+    "min_z": -3075.1848534306473,
+    "max_z": -2351.26106405003,
+    "min_y": 115.039,
+    "max_y": 161.78346961637388
+   }
+  },
+  {
+   "id": "r0_c7",
+   "row": 0,
+   "col": 7,
+   "buildings": 434,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": -3150.0,
+    "max_z": -2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r0_c7_lod0.glb",
+    "triangles": 83905,
+    "vertices": 162166,
+    "bytes": 950380
+   },
+   "lod1": {
+    "file": "buildings_hd/r0_c7_lod1.glb",
+    "triangles": 16632,
+    "vertices": 31102,
+    "bytes": 193308
+   },
+   "bounds": {
+    "min_x": 3363.6314036389012,
+    "max_x": 4509.345447648613,
+    "min_z": -3059.397209553185,
+    "max_z": -2352.1735318397773,
+    "min_y": 109.363,
+    "max_y": 182.74200000000002
+   }
+  },
+  {
+   "id": "r1_c0",
+   "row": 1,
+   "col": 0,
+   "buildings": 149,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c0_lod0.glb",
+    "triangles": 28890,
+    "vertices": 54546,
+    "bytes": 342212
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c0_lod1.glb",
+    "triangles": 6041,
+    "vertices": 10829,
+    "bytes": 77600
+   },
+   "bounds": {
+    "min_x": -4501.647040323761,
+    "max_x": -3360.9200656487646,
+    "min_z": -2380.6890069182614,
+    "max_z": -1561.6797083967758,
+    "min_y": 36.367000000000004,
+    "max_y": 139.99000246066882
+   }
+  },
+  {
+   "id": "r1_c1",
+   "row": 1,
+   "col": 1,
+   "buildings": 248,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c1_lod0.glb",
+    "triangles": 69317,
+    "vertices": 128781,
+    "bytes": 822172
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c1_lod1.glb",
+    "triangles": 13175,
+    "vertices": 22818,
+    "bytes": 163180
+   },
+   "bounds": {
+    "min_x": -3386.1582062009593,
+    "max_x": -2235.42181996275,
+    "min_z": -2375.4925864713778,
+    "max_z": -1561.7659775229552,
+    "min_y": 39.411,
+    "max_y": 128.75541273223135
+   }
+  },
+  {
+   "id": "r1_c2",
+   "row": 1,
+   "col": 2,
+   "buildings": 5,
+   "cell": {
+    "min_x": -2250.0,
+    "max_x": -1125.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c2_lod0.glb",
+    "triangles": 546,
+    "vertices": 1024,
+    "bytes": 9892
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c2_lod1.glb",
+    "triangles": 142,
+    "vertices": 257,
+    "bytes": 3992
+   },
+   "bounds": {
+    "min_x": -2265.126475907747,
+    "max_x": -1143.5968130950462,
+    "min_z": -1883.4694773498584,
+    "max_z": -1691.0810122924768,
+    "min_y": 85.805,
+    "max_y": 156.43696182239708
+   }
+  },
+  {
+   "id": "r1_c3",
+   "row": 1,
+   "col": 3,
+   "buildings": 18,
+   "cell": {
+    "min_x": -1125.0,
+    "max_x": 0.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c3_lod0.glb",
+    "triangles": 2068,
+    "vertices": 3902,
+    "bytes": 29140
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c3_lod1.glb",
+    "triangles": 428,
+    "vertices": 798,
+    "bytes": 7984
+   },
+   "bounds": {
+    "min_x": -1129.0582955282423,
+    "max_x": -115.64434657211818,
+    "min_z": -2271.2400018272347,
+    "max_z": -1603.1291162267996,
+    "min_y": 153.41299999999998,
+    "max_y": 340.59499999999997
+   }
+  },
+  {
+   "id": "r1_c4",
+   "row": 1,
+   "col": 4,
+   "buildings": 282,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c4_lod0.glb",
+    "triangles": 57182,
+    "vertices": 105318,
+    "bytes": 670508
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c4_lod1.glb",
+    "triangles": 9231,
+    "vertices": 15994,
+    "bytes": 116408
+   },
+   "bounds": {
+    "min_x": -8.542001618942088,
+    "max_x": 1133.2351096147984,
+    "min_z": -2373.314974357903,
+    "max_z": -1568.2726193356405,
+    "min_y": 166.184,
+    "max_y": 259.60700202738127
+   }
+  },
+  {
+   "id": "r1_c5",
+   "row": 1,
+   "col": 5,
+   "buildings": 112,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c5_lod0.glb",
+    "triangles": 19165,
+    "vertices": 35802,
+    "bytes": 234560
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c5_lod1.glb",
+    "triangles": 3296,
+    "vertices": 5914,
+    "bytes": 45336
+   },
+   "bounds": {
+    "min_x": 1113.3999632650812,
+    "max_x": 1804.303015096532,
+    "min_z": -2375.2131869691366,
+    "max_z": -1568.6031624812424,
+    "min_y": 166.38,
+    "max_y": 301.26400154626253
+   }
+  },
+  {
+   "id": "r1_c6",
+   "row": 1,
+   "col": 6,
+   "buildings": 378,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c6_lod0.glb",
+    "triangles": 96549,
+    "vertices": 178463,
+    "bytes": 1139672
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c6_lod1.glb",
+    "triangles": 16385,
+    "vertices": 28112,
+    "bytes": 201300
+   },
+   "bounds": {
+    "min_x": 2654.1635662539047,
+    "max_x": 3382.708768270512,
+    "min_z": -2371.3047588654845,
+    "max_z": -1564.9230912376236,
+    "min_y": 132.629,
+    "max_y": 219.589
+   }
+  },
+  {
+   "id": "r1_c7",
+   "row": 1,
+   "col": 7,
+   "buildings": 679,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": -2362.5,
+    "max_z": -1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r1_c7_lod0.glb",
+    "triangles": 124759,
+    "vertices": 232373,
+    "bytes": 1410616
+   },
+   "lod1": {
+    "file": "buildings_hd/r1_c7_lod1.glb",
+    "triangles": 24709,
+    "vertices": 43819,
+    "bytes": 292068
+   },
+   "bounds": {
+    "min_x": 3365.0479022433337,
+    "max_x": 4511.9413757112325,
+    "min_z": -2372.7797703908773,
+    "max_z": -1559.520938746923,
+    "min_y": 124.86500000000001,
+    "max_y": 185.81763757982085
+   }
+  },
+  {
+   "id": "r2_c0",
+   "row": 2,
+   "col": 0,
+   "buildings": 116,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c0_lod0.glb",
+    "triangles": 22771,
+    "vertices": 42687,
+    "bytes": 264140
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c0_lod1.glb",
+    "triangles": 4417,
+    "vertices": 7876,
+    "bytes": 56752
+   },
+   "bounds": {
+    "min_x": -4497.7109503691145,
+    "max_x": -3369.403428227605,
+    "min_z": -1581.1161822324786,
+    "max_z": -780.4265601051885,
+    "min_y": 32.245000000000005,
+    "max_y": 133.8708463272684
+   }
+  },
+  {
+   "id": "r2_c1",
+   "row": 2,
+   "col": 1,
+   "buildings": 231,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c1_lod0.glb",
+    "triangles": 65374,
+    "vertices": 122269,
+    "bytes": 783224
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c1_lod1.glb",
+    "triangles": 12506,
+    "vertices": 21721,
+    "bytes": 154688
+   },
+   "bounds": {
+    "min_x": -3382.080499576548,
+    "max_x": -2232.5366119536366,
+    "min_z": -1582.8704522820535,
+    "max_z": -770.0162124374298,
+    "min_y": 69.108,
+    "max_y": 164.67000000000002
+   }
+  },
+  {
+   "id": "r2_c2",
+   "row": 2,
+   "col": 2,
+   "buildings": 243,
+   "cell": {
+    "min_x": -2250.0,
+    "max_x": -1125.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c2_lod0.glb",
+    "triangles": 55369,
+    "vertices": 105589,
+    "bytes": 672740
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c2_lod1.glb",
+    "triangles": 8221,
+    "vertices": 15128,
+    "bytes": 104188
+   },
+   "bounds": {
+    "min_x": -2257.1625499440847,
+    "max_x": -1236.4824233008083,
+    "min_z": -1565.7152367898675,
+    "max_z": -774.2288509290507,
+    "min_y": 97.778,
+    "max_y": 160.14000152375374
+   }
+  },
+  {
+   "id": "r2_c3",
+   "row": 2,
+   "col": 3,
+   "buildings": 128,
+   "cell": {
+    "min_x": -1125.0,
+    "max_x": 0.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c3_lod0.glb",
+    "triangles": 39504,
+    "vertices": 74522,
+    "bytes": 484324
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c3_lod1.glb",
+    "triangles": 7038,
+    "vertices": 12756,
+    "bytes": 91532
+   },
+   "bounds": {
+    "min_x": -1036.948,
+    "max_x": -9.341163036748245,
+    "min_z": -1542.7906250855488,
+    "max_z": -772.0383539146042,
+    "min_y": 143.339,
+    "max_y": 220.9339355812793
+   }
+  },
+  {
+   "id": "r2_c4",
+   "row": 2,
+   "col": 4,
+   "buildings": 818,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c4_lod0.glb",
+    "triangles": 172421,
+    "vertices": 324140,
+    "bytes": 2037488
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c4_lod1.glb",
+    "triangles": 29626,
+    "vertices": 54103,
+    "bytes": 358152
+   },
+   "bounds": {
+    "min_x": 16.13939122182124,
+    "max_x": 1141.950377963713,
+    "min_z": -1586.0628035117502,
+    "max_z": -767.5131758532231,
+    "min_y": 152.607,
+    "max_y": 182.13956579155018
+   }
+  },
+  {
+   "id": "r2_c5",
+   "row": 2,
+   "col": 5,
+   "buildings": 351,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c5_lod0.glb",
+    "triangles": 72703,
+    "vertices": 135338,
+    "bytes": 880836
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c5_lod1.glb",
+    "triangles": 10500,
+    "vertices": 19111,
+    "bytes": 135876
+   },
+   "bounds": {
+    "min_x": 1103.1542396665695,
+    "max_x": 1787.0526611228615,
+    "min_z": -1579.7767672168577,
+    "max_z": -776.3366799817267,
+    "min_y": 161.48999999999998,
+    "max_y": 204.2880749372023
+   }
+  },
+  {
+   "id": "r2_c6",
+   "row": 2,
+   "col": 6,
+   "buildings": 436,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c6_lod0.glb",
+    "triangles": 71703,
+    "vertices": 131078,
+    "bytes": 827128
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c6_lod1.glb",
+    "triangles": 17270,
+    "vertices": 29531,
+    "bytes": 212828
+   },
+   "bounds": {
+    "min_x": 2557.4910442335226,
+    "max_x": 3436.225029009028,
+    "min_z": -1582.8047365742755,
+    "max_z": -773.2497154463132,
+    "min_y": 152.325,
+    "max_y": 235.33600096811955
+   }
+  },
+  {
+   "id": "r2_c7",
+   "row": 2,
+   "col": 7,
+   "buildings": 733,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": -1575.0,
+    "max_z": -787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r2_c7_lod0.glb",
+    "triangles": 110166,
+    "vertices": 204397,
+    "bytes": 1215588
+   },
+   "lod1": {
+    "file": "buildings_hd/r2_c7_lod1.glb",
+    "triangles": 20595,
+    "vertices": 36275,
+    "bytes": 242648
+   },
+   "bounds": {
+    "min_x": 3364.5427460702645,
+    "max_x": 4510.292031842968,
+    "min_z": -1593.2619247591872,
+    "max_z": -765.2789996189499,
+    "min_y": 148.475,
+    "max_y": 188.12585653750773
+   }
+  },
+  {
+   "id": "r3_c0",
+   "row": 3,
+   "col": 0,
+   "buildings": 111,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c0_lod0.glb",
+    "triangles": 28752,
+    "vertices": 53817,
+    "bytes": 330288
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c0_lod1.glb",
+    "triangles": 5421,
+    "vertices": 9610,
+    "bytes": 67980
+   },
+   "bounds": {
+    "min_x": -4466.79,
+    "max_x": -3357.8111578985304,
+    "min_z": -808.0888105060343,
+    "max_z": -13.633460786414588,
+    "min_y": 68.186,
+    "max_y": 143.29527485662064
+   }
+  },
+  {
+   "id": "r3_c1",
+   "row": 3,
+   "col": 1,
+   "buildings": 272,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c1_lod0.glb",
+    "triangles": 63411,
+    "vertices": 119435,
+    "bytes": 749440
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c1_lod1.glb",
+    "triangles": 11720,
+    "vertices": 21054,
+    "bytes": 144036
+   },
+   "bounds": {
+    "min_x": -3384.3320586039654,
+    "max_x": -2242.326987484551,
+    "min_z": -797.3598843599369,
+    "max_z": 3.1005195147417854,
+    "min_y": 119.99900000000001,
+    "max_y": 166.5780282725286
+   }
+  },
+  {
+   "id": "r3_c2",
+   "row": 3,
+   "col": 2,
+   "buildings": 594,
+   "cell": {
+    "min_x": -2250.0,
+    "max_x": -1125.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c2_lod0.glb",
+    "triangles": 135304,
+    "vertices": 254884,
+    "bytes": 1600960
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c2_lod1.glb",
+    "triangles": 22711,
+    "vertices": 40851,
+    "bytes": 278960
+   },
+   "bounds": {
+    "min_x": -2261.9493066032396,
+    "max_x": -1214.2518254914578,
+    "min_z": -794.7123464033724,
+    "max_z": 21.369120327510338,
+    "min_y": 121.706,
+    "max_y": 172.3936685948802
+   }
+  },
+  {
+   "id": "r3_c3",
+   "row": 3,
+   "col": 3,
+   "buildings": 378,
+   "cell": {
+    "min_x": -1125.0,
+    "max_x": 0.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c3_lod0.glb",
+    "triangles": 86988,
+    "vertices": 163886,
+    "bytes": 1024688
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c3_lod1.glb",
+    "triangles": 11681,
+    "vertices": 21440,
+    "bytes": 149992
+   },
+   "bounds": {
+    "min_x": -1113.5502771183844,
+    "max_x": 8.212801981414422,
+    "min_z": -798.516079603523,
+    "max_z": 16.833070154430946,
+    "min_y": 147.46499999999997,
+    "max_y": 180.481
+   }
+  },
+  {
+   "id": "r3_c4",
+   "row": 3,
+   "col": 4,
+   "buildings": 319,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c4_lod0.glb",
+    "triangles": 98812,
+    "vertices": 184556,
+    "bytes": 1150904
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c4_lod1.glb",
+    "triangles": 12035,
+    "vertices": 21224,
+    "bytes": 159640
+   },
+   "bounds": {
+    "min_x": -1.183924275022071,
+    "max_x": 1133.774519338629,
+    "min_z": -810.9058695233084,
+    "max_z": 10.749287967685675,
+    "min_y": 151.539,
+    "max_y": 188.18900000000002
+   }
+  },
+  {
+   "id": "r3_c5",
+   "row": 3,
+   "col": 5,
+   "buildings": 259,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c5_lod0.glb",
+    "triangles": 58398,
+    "vertices": 110218,
+    "bytes": 658712
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c5_lod1.glb",
+    "triangles": 6366,
+    "vertices": 11738,
+    "bytes": 82084
+   },
+   "bounds": {
+    "min_x": 1101.7086039283938,
+    "max_x": 2282.236278417481,
+    "min_z": -801.5132708292522,
+    "max_z": 92.21632465311671,
+    "min_y": 167.45999999999998,
+    "max_y": 210.85698980029568
+   }
+  },
+  {
+   "id": "r3_c6",
+   "row": 3,
+   "col": 6,
+   "buildings": 87,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c6_lod0.glb",
+    "triangles": 21070,
+    "vertices": 39748,
+    "bytes": 207676
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c6_lod1.glb",
+    "triangles": 2335,
+    "vertices": 4121,
+    "bytes": 28284
+   },
+   "bounds": {
+    "min_x": 2226.566383866422,
+    "max_x": 3390.3170047052713,
+    "min_z": -787.5907200573253,
+    "max_z": 50.586721590631925,
+    "min_y": 187.208,
+    "max_y": 246.96644603973775
+   }
+  },
+  {
+   "id": "r3_c7",
+   "row": 3,
+   "col": 7,
+   "buildings": 99,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": -787.5,
+    "max_z": 0.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r3_c7_lod0.glb",
+    "triangles": 24114,
+    "vertices": 46280,
+    "bytes": 237328
+   },
+   "lod1": {
+    "file": "buildings_hd/r3_c7_lod1.glb",
+    "triangles": 2243,
+    "vertices": 4035,
+    "bytes": 28232
+   },
+   "bounds": {
+    "min_x": 3296.2789887109984,
+    "max_x": 4516.595424189853,
+    "min_z": -802.2782561895908,
+    "max_z": 85.15435887788877,
+    "min_y": 146.017,
+    "max_y": 234.88743017861822
+   }
+  },
+  {
+   "id": "r4_c0",
+   "row": 4,
+   "col": 0,
+   "buildings": 23,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c0_lod0.glb",
+    "triangles": 4507,
+    "vertices": 8548,
+    "bytes": 56356
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c0_lod1.glb",
+    "triangles": 738,
+    "vertices": 1342,
+    "bytes": 11824
+   },
+   "bounds": {
+    "min_x": -4407.45877951236,
+    "max_x": -3381.753091278135,
+    "min_z": -0.9634881343762753,
+    "max_z": 538.5267958525415,
+    "min_y": 94.23,
+    "max_y": 132.274
+   }
+  },
+  {
+   "id": "r4_c1",
+   "row": 4,
+   "col": 1,
+   "buildings": 158,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c1_lod0.glb",
+    "triangles": 33659,
+    "vertices": 63582,
+    "bytes": 397372
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c1_lod1.glb",
+    "triangles": 6223,
+    "vertices": 11212,
+    "bytes": 79368
+   },
+   "bounds": {
+    "min_x": -3368.85406628939,
+    "max_x": -2242.49858746571,
+    "min_z": -5.540623400669848,
+    "max_z": 784.893800625023,
+    "min_y": 105.138,
+    "max_y": 164.7915334460555
+   }
+  },
+  {
+   "id": "r4_c2",
+   "row": 4,
+   "col": 2,
+   "buildings": 441,
+   "cell": {
+    "min_x": -2250.0,
+    "max_x": -1125.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c2_lod0.glb",
+    "triangles": 105167,
+    "vertices": 196811,
+    "bytes": 1253272
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c2_lod1.glb",
+    "triangles": 18623,
+    "vertices": 32887,
+    "bytes": 233412
+   },
+   "bounds": {
+    "min_x": -2250.7582936452345,
+    "max_x": -1209.6548859979614,
+    "min_z": -18.093519123119094,
+    "max_z": 799.977020811843,
+    "min_y": 119.665,
+    "max_y": 170.28900000000002
+   }
+  },
+  {
+   "id": "r4_c3",
+   "row": 4,
+   "col": 3,
+   "buildings": 424,
+   "cell": {
+    "min_x": -1125.0,
+    "max_x": 0.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c3_lod0.glb",
+    "triangles": 94760,
+    "vertices": 182633,
+    "bytes": 1153268
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c3_lod1.glb",
+    "triangles": 13241,
+    "vertices": 24724,
+    "bytes": 170040
+   },
+   "bounds": {
+    "min_x": -1134.5152964438248,
+    "max_x": -51.94575996428058,
+    "min_z": -19.05773771038072,
+    "max_z": 808.4689532581227,
+    "min_y": 140.469,
+    "max_y": 179.4653509399218
+   }
+  },
+  {
+   "id": "r4_c4",
+   "row": 4,
+   "col": 4,
+   "buildings": 751,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c4_lod0.glb",
+    "triangles": 150090,
+    "vertices": 283340,
+    "bytes": 1802404
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c4_lod1.glb",
+    "triangles": 21886,
+    "vertices": 40264,
+    "bytes": 277972
+   },
+   "bounds": {
+    "min_x": 47.09465904385346,
+    "max_x": 1132.0646370937839,
+    "min_z": -11.964830644482042,
+    "max_z": 799.4109764891307,
+    "min_y": 161.81199999999998,
+    "max_y": 201.046
+   }
+  },
+  {
+   "id": "r4_c5",
+   "row": 4,
+   "col": 5,
+   "buildings": 305,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c5_lod0.glb",
+    "triangles": 66058,
+    "vertices": 123602,
+    "bytes": 766040
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c5_lod1.glb",
+    "triangles": 8920,
+    "vertices": 15715,
+    "bytes": 113052
+   },
+   "bounds": {
+    "min_x": 1119.3023792809959,
+    "max_x": 2267.1950164281425,
+    "min_z": -57.63966493502453,
+    "max_z": 793.8912660758069,
+    "min_y": 183.196,
+    "max_y": 257.70458961122506
+   }
+  },
+  {
+   "id": "r4_c6",
+   "row": 4,
+   "col": 6,
+   "buildings": 108,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c6_lod0.glb",
+    "triangles": 24216,
+    "vertices": 45859,
+    "bytes": 244548
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c6_lod1.glb",
+    "triangles": 2237,
+    "vertices": 4049,
+    "bytes": 27856
+   },
+   "bounds": {
+    "min_x": 2207.678098017215,
+    "max_x": 3380.557325614752,
+    "min_z": -4.4752007556102065,
+    "max_z": 831.1662006201012,
+    "min_y": 192.742,
+    "max_y": 270.1452090159074
+   }
+  },
+  {
+   "id": "r4_c7",
+   "row": 4,
+   "col": 7,
+   "buildings": 235,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": 0.0,
+    "max_z": 787.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r4_c7_lod0.glb",
+    "triangles": 43539,
+    "vertices": 83799,
+    "bytes": 498612
+   },
+   "lod1": {
+    "file": "buildings_hd/r4_c7_lod1.glb",
+    "triangles": 7242,
+    "vertices": 13536,
+    "bytes": 89784
+   },
+   "bounds": {
+    "min_x": 3369.598380439447,
+    "max_x": 4515.99482521876,
+    "min_z": -5.267843958202061,
+    "max_z": 797.0675344210557,
+    "min_y": 165.696,
+    "max_y": 252.28053889348644
+   }
+  },
+  {
+   "id": "r5_c0",
+   "row": 5,
+   "col": 0,
+   "buildings": 37,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c0_lod0.glb",
+    "triangles": 11754,
+    "vertices": 21964,
+    "bytes": 126804
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c0_lod1.glb",
+    "triangles": 2050,
+    "vertices": 3625,
+    "bytes": 25712
+   },
+   "bounds": {
+    "min_x": -4515.576833047868,
+    "max_x": -3625.3037776505157,
+    "min_z": 965.0326506217984,
+    "max_z": 1590.1051663036747,
+    "min_y": 79.702,
+    "max_y": 136.56400028145396
+   }
+  },
+  {
+   "id": "r5_c1",
+   "row": 5,
+   "col": 1,
+   "buildings": 10,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c1_lod0.glb",
+    "triangles": 3982,
+    "vertices": 7727,
+    "bytes": 53584
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c1_lod1.glb",
+    "triangles": 660,
+    "vertices": 1180,
+    "bytes": 9848
+   },
+   "bounds": {
+    "min_x": -3172.2300020339926,
+    "max_x": -2243.4066867620045,
+    "min_z": 982.0923205756642,
+    "max_z": 1495.6876690630365,
+    "min_y": 113.654,
+    "max_y": 127.41700185917351
+   }
+  },
+  {
+   "id": "r5_c2",
+   "row": 5,
+   "col": 2,
+   "buildings": 224,
+   "cell": {
+    "min_x": -2250.0,
+    "max_x": -1125.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c2_lod0.glb",
+    "triangles": 47202,
+    "vertices": 92085,
+    "bytes": 569324
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c2_lod1.glb",
+    "triangles": 6466,
+    "vertices": 12520,
+    "bytes": 82828
+   },
+   "bounds": {
+    "min_x": -2252.1474478978403,
+    "max_x": -1215.7483649553565,
+    "min_z": 782.8569731785108,
+    "max_z": 1352.8542087290343,
+    "min_y": 77.081,
+    "max_y": 146.22000108674257
+   }
+  },
+  {
+   "id": "r5_c3",
+   "row": 5,
+   "col": 3,
+   "buildings": 111,
+   "cell": {
+    "min_x": -1125.0,
+    "max_x": 0.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c3_lod0.glb",
+    "triangles": 30006,
+    "vertices": 59173,
+    "bytes": 378696
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c3_lod1.glb",
+    "triangles": 3406,
+    "vertices": 6624,
+    "bytes": 47688
+   },
+   "bounds": {
+    "min_x": -975.3237570097964,
+    "max_x": 10.051049647268684,
+    "min_z": 779.0804864909641,
+    "max_z": 1237.1133888124211,
+    "min_y": 135.89399999999998,
+    "max_y": 176.07251673451083
+   }
+  },
+  {
+   "id": "r5_c4",
+   "row": 5,
+   "col": 4,
+   "buildings": 570,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c4_lod0.glb",
+    "triangles": 111610,
+    "vertices": 210644,
+    "bytes": 1318312
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c4_lod1.glb",
+    "triangles": 18523,
+    "vertices": 33901,
+    "bytes": 227632
+   },
+   "bounds": {
+    "min_x": -9.387047449390263,
+    "max_x": 1133.0604657169717,
+    "min_z": 774.1488951837398,
+    "max_z": 1485.699063450579,
+    "min_y": 129.041,
+    "max_y": 192.6547425382456
+   }
+  },
+  {
+   "id": "r5_c5",
+   "row": 5,
+   "col": 5,
+   "buildings": 361,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c5_lod0.glb",
+    "triangles": 76637,
+    "vertices": 143320,
+    "bytes": 919108
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c5_lod1.glb",
+    "triangles": 12967,
+    "vertices": 23400,
+    "bytes": 160668
+   },
+   "bounds": {
+    "min_x": 1114.423680096538,
+    "max_x": 1991.9289622641838,
+    "min_z": 778.2757919608857,
+    "max_z": 1558.3434403665906,
+    "min_y": 144.04399999999998,
+    "max_y": 211.6384629036175
+   }
+  },
+  {
+   "id": "r5_c6",
+   "row": 5,
+   "col": 6,
+   "buildings": 433,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c6_lod0.glb",
+    "triangles": 83097,
+    "vertices": 155529,
+    "bytes": 957204
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c6_lod1.glb",
+    "triangles": 12287,
+    "vertices": 21803,
+    "bytes": 154536
+   },
+   "bounds": {
+    "min_x": 2301.948448737052,
+    "max_x": 3386.8479961597113,
+    "min_z": 776.7098308717705,
+    "max_z": 1590.7829523361384,
+    "min_y": 190.643,
+    "max_y": 246.133
+   }
+  },
+  {
+   "id": "r5_c7",
+   "row": 5,
+   "col": 7,
+   "buildings": 510,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": 787.5,
+    "max_z": 1575.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r5_c7_lod0.glb",
+    "triangles": 87822,
+    "vertices": 165218,
+    "bytes": 1002160
+   },
+   "lod1": {
+    "file": "buildings_hd/r5_c7_lod1.glb",
+    "triangles": 17636,
+    "vertices": 31775,
+    "bytes": 210924
+   },
+   "bounds": {
+    "min_x": 3363.463532409373,
+    "max_x": 4511.653050416256,
+    "min_z": 778.1083899398769,
+    "max_z": 1585.6471668756592,
+    "min_y": 205.73899999999998,
+    "max_y": 261.16209565445257
+   }
+  },
+  {
+   "id": "r6_c0",
+   "row": 6,
+   "col": 0,
+   "buildings": 97,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c0_lod0.glb",
+    "triangles": 32230,
+    "vertices": 59839,
+    "bytes": 338800
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c0_lod1.glb",
+    "triangles": 5547,
+    "vertices": 9796,
+    "bytes": 64972
+   },
+   "bounds": {
+    "min_x": -4494.542407816505,
+    "max_x": -3366.1910520207375,
+    "min_z": 1555.9518946157325,
+    "max_z": 2383.939778010116,
+    "min_y": 63.255,
+    "max_y": 131.721
+   }
+  },
+  {
+   "id": "r6_c1",
+   "row": 6,
+   "col": 1,
+   "buildings": 158,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c1_lod0.glb",
+    "triangles": 42004,
+    "vertices": 78801,
+    "bytes": 475460
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c1_lod1.glb",
+    "triangles": 8565,
+    "vertices": 15268,
+    "bytes": 103868
+   },
+   "bounds": {
+    "min_x": -3371.896382425012,
+    "max_x": -2236.4997134628547,
+    "min_z": 1599.1001396217591,
+    "max_z": 2367.3722430549783,
+    "min_y": 112.052,
+    "max_y": 164.83913335551014
+   }
+  },
+  {
+   "id": "r6_c2",
+   "row": 6,
+   "col": 2,
+   "buildings": 36,
+   "cell": {
+    "min_x": -2250.0,
+    "max_x": -1125.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c2_lod0.glb",
+    "triangles": 11958,
+    "vertices": 21981,
+    "bytes": 140952
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c2_lod1.glb",
+    "triangles": 2510,
+    "vertices": 4334,
+    "bytes": 33728
+   },
+   "bounds": {
+    "min_x": -2261.7493355438855,
+    "max_x": -1704.4797353789631,
+    "min_z": 1777.8849456895493,
+    "max_z": 2365.9656800688654,
+    "min_y": 135.23,
+    "max_y": 199.458
+   }
+  },
+  {
+   "id": "r6_c3",
+   "row": 6,
+   "col": 3,
+   "buildings": 56,
+   "cell": {
+    "min_x": -1125.0,
+    "max_x": 0.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c3_lod0.glb",
+    "triangles": 13381,
+    "vertices": 25845,
+    "bytes": 172184
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c3_lod1.glb",
+    "triangles": 2241,
+    "vertices": 4251,
+    "bytes": 30712
+   },
+   "bounds": {
+    "min_x": -658.3429157566577,
+    "max_x": -53.6739059616898,
+    "min_z": 1715.7470611100955,
+    "max_z": 2383.960975736472,
+    "min_y": 118.84,
+    "max_y": 156.61470220377743
+   }
+  },
+  {
+   "id": "r6_c4",
+   "row": 6,
+   "col": 4,
+   "buildings": 160,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c4_lod0.glb",
+    "triangles": 36603,
+    "vertices": 69726,
+    "bytes": 443984
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c4_lod1.glb",
+    "triangles": 6212,
+    "vertices": 11505,
+    "bytes": 79420
+   },
+   "bounds": {
+    "min_x": 18.026250641555766,
+    "max_x": 1127.3887557723745,
+    "min_z": 1635.4511787564254,
+    "max_z": 2374.214904186462,
+    "min_y": 131.45999999999998,
+    "max_y": 194.5380019281821
+   }
+  },
+  {
+   "id": "r6_c5",
+   "row": 6,
+   "col": 5,
+   "buildings": 118,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c5_lod0.glb",
+    "triangles": 23387,
+    "vertices": 45050,
+    "bytes": 283688
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c5_lod1.glb",
+    "triangles": 3375,
+    "vertices": 6270,
+    "bytes": 45740
+   },
+   "bounds": {
+    "min_x": 1121.4050345838082,
+    "max_x": 2258.417962387148,
+    "min_z": 1606.6216596696306,
+    "max_z": 2369.952925764411,
+    "min_y": 151.23999999999998,
+    "max_y": 195.42890922389876
+   }
+  },
+  {
+   "id": "r6_c6",
+   "row": 6,
+   "col": 6,
+   "buildings": 494,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c6_lod0.glb",
+    "triangles": 75516,
+    "vertices": 139485,
+    "bytes": 873892
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c6_lod1.glb",
+    "triangles": 16115,
+    "vertices": 28447,
+    "bytes": 197216
+   },
+   "bounds": {
+    "min_x": 2240.153829076545,
+    "max_x": 3387.208803837622,
+    "min_z": 1560.4001276984304,
+    "max_z": 2368.831223591454,
+    "min_y": 174.617,
+    "max_y": 254.086
+   }
+  },
+  {
+   "id": "r6_c7",
+   "row": 6,
+   "col": 7,
+   "buildings": 580,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": 1575.0,
+    "max_z": 2362.5
+   },
+   "lod0": {
+    "file": "buildings_hd/r6_c7_lod0.glb",
+    "triangles": 90050,
+    "vertices": 169399,
+    "bytes": 1030036
+   },
+   "lod1": {
+    "file": "buildings_hd/r6_c7_lod1.glb",
+    "triangles": 15898,
+    "vertices": 29234,
+    "bytes": 192672
+   },
+   "bounds": {
+    "min_x": 3366.1824639638303,
+    "max_x": 4515.1956480461495,
+    "min_z": 1566.7465551860453,
+    "max_z": 2373.0770734340867,
+    "min_y": 207.773,
+    "max_y": 260.171
+   }
+  },
+  {
+   "id": "r7_c0",
+   "row": 7,
+   "col": 0,
+   "buildings": 476,
+   "cell": {
+    "min_x": -4500.0,
+    "max_x": -3375.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c0_lod0.glb",
+    "triangles": 98913,
+    "vertices": 191080,
+    "bytes": 1122872
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c0_lod1.glb",
+    "triangles": 18031,
+    "vertices": 33878,
+    "bytes": 207376
+   },
+   "bounds": {
+    "min_x": -4501.266439199967,
+    "max_x": -3378.73594643965,
+    "min_z": 2358.2571108864317,
+    "max_z": 3156.3716196282694,
+    "min_y": 86.988,
+    "max_y": 123.63500203120293
+   }
+  },
+  {
+   "id": "r7_c1",
+   "row": 7,
+   "col": 1,
+   "buildings": 158,
+   "cell": {
+    "min_x": -3375.0,
+    "max_x": -2250.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c1_lod0.glb",
+    "triangles": 45264,
+    "vertices": 85520,
+    "bytes": 493140
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c1_lod1.glb",
+    "triangles": 8749,
+    "vertices": 15784,
+    "bytes": 101844
+   },
+   "bounds": {
+    "min_x": -3379.886467391726,
+    "max_x": -2230.34740286659,
+    "min_z": 2349.9080931328917,
+    "max_z": 3164.614043856631,
+    "min_y": 112.783,
+    "max_y": 181.126
+   }
+  },
+  {
+   "id": "r7_c2",
+   "row": 7,
+   "col": 2,
+   "buildings": 121,
+   "cell": {
+    "min_x": -2250.0,
+    "max_x": -1125.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c2_lod0.glb",
+    "triangles": 38669,
+    "vertices": 73731,
+    "bytes": 425880
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c2_lod1.glb",
+    "triangles": 7084,
+    "vertices": 12998,
+    "bytes": 82896
+   },
+   "bounds": {
+    "min_x": -2249.4560337889848,
+    "max_x": -1117.1614208820272,
+    "min_z": 2437.058296495896,
+    "max_z": 3166.3205916573693,
+    "min_y": 167.172,
+    "max_y": 243.53000153668242
+   }
+  },
+  {
+   "id": "r7_c3",
+   "row": 7,
+   "col": 3,
+   "buildings": 13,
+   "cell": {
+    "min_x": -1125.0,
+    "max_x": 0.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c3_lod0.glb",
+    "triangles": 3162,
+    "vertices": 5922,
+    "bytes": 40216
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c3_lod1.glb",
+    "triangles": 499,
+    "vertices": 922,
+    "bytes": 7908
+   },
+   "bounds": {
+    "min_x": -1122.4256615915858,
+    "max_x": -335.22938334398685,
+    "min_z": 2360.284221456391,
+    "max_z": 2933.17142293729,
+    "min_y": 140.356,
+    "max_y": 234.257
+   }
+  },
+  {
+   "id": "r7_c4",
+   "row": 7,
+   "col": 4,
+   "buildings": 8,
+   "cell": {
+    "min_x": 0.0,
+    "max_x": 1125.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c4_lod0.glb",
+    "triangles": 1932,
+    "vertices": 3814,
+    "bytes": 28252
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c4_lod1.glb",
+    "triangles": 296,
+    "vertices": 568,
+    "bytes": 5828
+   },
+   "bounds": {
+    "min_x": 213.1157225255874,
+    "max_x": 1100.2093284932255,
+    "min_z": 2358.4050139887268,
+    "max_z": 2421.5364417882897,
+    "min_y": 175.325,
+    "max_y": 191.251
+   }
+  },
+  {
+   "id": "r7_c5",
+   "row": 7,
+   "col": 5,
+   "buildings": 204,
+   "cell": {
+    "min_x": 1125.0,
+    "max_x": 2250.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c5_lod0.glb",
+    "triangles": 36431,
+    "vertices": 71549,
+    "bytes": 440228
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c5_lod1.glb",
+    "triangles": 4932,
+    "vertices": 9889,
+    "bytes": 64384
+   },
+   "bounds": {
+    "min_x": 1293.7785493986594,
+    "max_x": 1985.7386063344338,
+    "min_z": 2351.39521275695,
+    "max_z": 3157.6224279281423,
+    "min_y": 175.17999999999998,
+    "max_y": 252.84099999999998
+   }
+  },
+  {
+   "id": "r7_c6",
+   "row": 7,
+   "col": 6,
+   "buildings": 560,
+   "cell": {
+    "min_x": 2250.0,
+    "max_x": 3375.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c6_lod0.glb",
+    "triangles": 75385,
+    "vertices": 143396,
+    "bytes": 863924
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c6_lod1.glb",
+    "triangles": 15315,
+    "vertices": 28878,
+    "bytes": 182376
+   },
+   "bounds": {
+    "min_x": 2422.653343627418,
+    "max_x": 3383.477421280792,
+    "min_z": 2352.3589574770367,
+    "max_z": 3160.9025474026544,
+    "min_y": 201.999,
+    "max_y": 254.33495675949746
+   }
+  },
+  {
+   "id": "r7_c7",
+   "row": 7,
+   "col": 7,
+   "buildings": 220,
+   "cell": {
+    "min_x": 3375.0,
+    "max_x": 4500.0,
+    "min_z": 2362.5,
+    "max_z": 3150.0
+   },
+   "lod0": {
+    "file": "buildings_hd/r7_c7_lod0.glb",
+    "triangles": 39872,
+    "vertices": 75953,
+    "bytes": 426568
+   },
+   "lod1": {
+    "file": "buildings_hd/r7_c7_lod1.glb",
+    "triangles": 6812,
+    "vertices": 12568,
+    "bytes": 81072
+   },
+   "bounds": {
+    "min_x": 3363.899913192252,
+    "max_x": 4507.21399407499,
+    "min_z": 2354.365774748167,
+    "max_z": 3161.3083215683723,
+    "min_y": 218.5,
+    "max_y": 265.11718128212357
+   }
+  }
+ ],
+ "triangles": {
+  "lod0": 3353941,
+  "lod1": 568697
+ },
+ "bytes": {
+  "lod0": 39090424,
+  "lod1": 7046308
+ },
+ "counts": {
+  "buildings": 16179,
+  "by_type": {
+   "house": 14057,
+   "other": 1303,
+   "commercial": 670,
+   "school": 90,
+   "apartments": 59
+  },
+  "by_roof_source": {
+   "lidar": 11283,
+   "tag": 3078,
+   "heuristic": 1818
+  },
+  "by_roof_type": {
+   "hip": 5855,
+   "complex": 5054,
+   "flat": 1903,
+   "shed": 237,
+   "gable": 3130
+  },
+  "box_fallbacks": 0
+ },
+ "build_seconds_cpu": 2062.5,
+ "notes": {
+  "ids": "processed buildings.geojson: 16183 ids, 16182 shared, 1 with moved centroids",
+  "lidar": "lidar: 11257 present roof models; joined 11190 by centroid, 3 spatially"
+ },
+ "heroes_skipped": [
+  {
+   "id": "del_norte_hs",
+   "x": 37.0761710027582,
+   "z": 324.4212831752375,
+   "radius": 244.5,
+   "building_id": 11228
+  },
+  {
+   "id": "design39",
+   "x": -0.9159270287491381,
+   "z": -175.82606933359057,
+   "radius": 121.8,
+   "building_id": 10154
+  },
+  {
+   "id": "4s_commons",
+   "x": 936.771825814154,
+   "z": -333.863326754421,
+   "radius": 191.0,
+   "building_id": 16165
+  }
+ ]
+}

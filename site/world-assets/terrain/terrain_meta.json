@@ -1,0 +1,59 @@
+{
+  "heightmap": "terrain/heightmap.png",
+  "width_px": 1009,
+  "height_px": 1009,
+  "min_x": -4500.0,
+  "max_x": 4500.0,
+  "min_z": -3150.0,
+  "max_z": 3150.0,
+  "min_elev_m": 19.06027036053794,
+  "max_elev_m": 362.7776626859392,
+  "elev_scale": 0.005244791215768693,
+  "elev_offset": 19.06027036053794,
+  "note": "elevation_m = elev_offset + pixel_value_uint16 * elev_scale; pixel (0,0) is at (min_x, min_z) i.e. north-west; +col is +x (east), +row is +z (south)",
+  "texture_px": 512,
+  "dem_spacing_m": 2.0,
+  "lod0_max_error_m": 0.30965716224609646,
+  "lod_triangles": {
+    "lod0": 1982445,
+    "lod1": 399207,
+    "lod2": 124789
+  },
+  "sources": [
+    {
+      "name": "USGS 3DEP 1 m lidar DEM, project CA_SanDiegoCo_D24",
+      "resolution_m": 1.0,
+      "read_at_m": 2.0,
+      "license": "Public domain (USGS 3D Elevation Program)",
+      "retrieved": "2026-10-01",
+      "kind": "dem",
+      "url": "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanDiegoCo_D24/TIFF/",
+      "files": [
+        "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanDiegoCo_D24/TIFF/USGS_1M_11_x48y365_CA_SanDiegoCo_D24.tif",
+        "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanDiegoCo_D24/TIFF/USGS_1M_11_x48y366_CA_SanDiegoCo_D24.tif",
+        "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanDiegoCo_D24/TIFF/USGS_1M_11_x49y365_CA_SanDiegoCo_D24.tif",
+        "https://prd-tnm.s3.amazonaws.com/StagedProducts/Elevation/1m/Projects/CA_SanDiegoCo_D24/TIFF/USGS_1M_11_x49y366_CA_SanDiegoCo_D24.tif"
+      ],
+      "raster": {
+        "resolution_m": 2.0,
+        "crs": "EPSG:32611",
+        "coverage": 1.0,
+        "file": "dem_3dep_10m.tif"
+      },
+      "attribution": "USGS 3D Elevation Program (3DEP)"
+    },
+    {
+      "name": "Copernicus Sentinel-2 L2A true colour, scene S2A_11SMS_20260926_1_L2A (2026-09-26), 10 m bands B04/B03/B02 upsampled to 2.5 m",
+      "license": "Copernicus Sentinel data 2026: free, full and open (Copernicus Sentinel Data Terms); attribution 'Contains modified Copernicus Sentinel data 2026'",
+      "scene": "S2A_11SMS_20260926_1_L2A",
+      "acquired": "2026-09-26",
+      "scene_cloud_cover_pct": 0.006473,
+      "local_cloud_or_shadow_fraction": 0.0,
+      "resolution_m": 10.0,
+      "retrieved": "2026-10-01",
+      "kind": "imagery",
+      "url": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/11/S/MS/2026/9/S2A_11SMS_20260926_1_L2A/",
+      "attribution": "Contains modified Copernicus Sentinel data 2026"
+    }
+  ]
+}

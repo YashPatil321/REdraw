@@ -1,0 +1,2850 @@
+{
+ "format": "redraw-materials",
+ "version": 1,
+ "generated_at": "2026-10-01T21:27:48+00:00",
+ "generator": ".venv-blender/bin/python blender/build_all_assets.py --only materials (blender/rdlib/matgen.py, texgen.py)",
+ "base_path": "assets/materials/",
+ "conventions": {
+  "uv_origin": "uv rects use v measured from the BOTTOM of the image (three.js TextureLoader flipY=true, OpenGL, Blender). px rects are [x, y, w, h] from the TOP-left.",
+  "albedo": "sRGB JPEG (texture.colorSpace = SRGBColorSpace)",
+  "normal": "tangent-space, OpenGL/glTF convention (+X right, +Y up = toward v=1); linear (NoColorSpace)",
+  "orm": "R ambient occlusion, G roughness, B metalness (glTF metallicRoughness packing; aoMap reads R); linear",
+  "mask": "facade_openings_mask.png R: 1 = wall (stucco: tint with the wall color), 0.5 = paintable near-white element (garage / service doors: optional accent tint), 0 = fixed colors; G: glass that can glow at night (emissive mask); B unused",
+  "tileable": "every cell's inner square tiles seamlessly; cells carry a 16 px gutter of wrapped content",
+  "atlas_lookup": "local = fract(mesh_uv); atlas_uv = mix(cell.uv_inner.xy, cell.uv_inner.zw, local) (use textureGrad with the derivatives of mesh_uv * inner_size to avoid the fract seam at mip edges)",
+  "spans": "garage_2car / garage_3car cover 2 / 3 consecutive cells in a row: span cell k holds local x in [k, k+1) of the span (meters x / 3)"
+ },
+ "vertex_attributes": {
+  "_MAT": {
+   "0": "stucco_wall",
+   "1": "tile_roof",
+   "2": "flat_roof",
+   "3": "glass",
+   "4": "trim",
+   "5": "garage_door"
+  },
+  "_VARIANT": "integer index into materials[_MAT].variants (float attribute, integral)",
+  "COLOR_0": "tint for tintable cells (walls, trim); roofs ignore it unless the client wants variety",
+  "TEXCOORD_0": "see uv_conventions"
+ },
+ "uv_conventions": {
+  "facade": "walls (_MAT 0, 3, 4, 5): u = meters along the wall from its start corner / 3.0, v = meters above the wall base / 3.0. One UV unit = one 3 m x 3 m floor-bay = one atlas cell. floor = floor(v), bay = floor(u).",
+  "roof_pitched": "_MAT 1: u = meters along the eave direction / 4.0, v = meters up the slope (in the roof plane, from the eave) / 4.0. One UV unit = one 4 m cell. S tiles run in columns along v.",
+  "roof_flat": "_MAT 2: planar u = scene x / 4.0, v = -scene z / 4.0",
+  "ground": "planar u = scene x / world_size_m[0], v = -scene z / world_size_m[1] unless the cell says otherwise (curb_gutter, concrete_driveway, asphalt_worn are oriented: u across / v along as described)",
+  "markings": "ground_markings.png columns: u across the line (world_width_m), v along (period_m)"
+ },
+ "materials": {
+  "0": {
+   "name": "stucco_wall",
+   "atlas": "facade_walls",
+   "variants": [
+    "stucco_smooth",
+    "stucco_sand",
+    "stucco_lace",
+    "stucco_catface",
+    "stucco_weathered",
+    "stucco_scored",
+    "stone_veneer"
+   ],
+   "tint": "COLOR_0 (building wall color, sRGB vertex color): base = COLOR_0_linear * texel_linear / cell.mean_albedo_linear",
+   "openings": "optional bay tiles from facade_openings chosen per (bay, floor) cell; see bay_grammar"
+  },
+  "1": {
+   "name": "tile_roof",
+   "atlas": "roofs",
+   "variants": [
+    "s_tile_terracotta",
+    "s_tile_blend",
+    "s_tile_brown",
+    "s_tile_aged",
+    "barrel_mission",
+    "flat_tile_brown",
+    "flat_tile_grey",
+    "flat_tile_charcoal",
+    "flat_tile_sandstone",
+    "solar_panel"
+   ],
+   "tint": "none (texel colors are real tile blends); optionally lerp 25% toward COLOR_0 for per-house variety"
+  },
+  "2": {
+   "name": "flat_roof",
+   "atlas": "roofs",
+   "variants": [
+    "flat_tpo",
+    "flat_tpo_grime",
+    "flat_gravel",
+    "flat_modbit",
+    "concrete_deck",
+    "standing_seam"
+   ],
+   "tint": "none"
+  },
+  "3": {
+   "name": "glass",
+   "atlas": "facade_walls",
+   "variants": [
+    "glass_curtain"
+   ],
+   "tint": "none",
+   "notes": "roughness 0.05: let the env map supply reflections; G of facade_openings_mask marks glass that can glow at night"
+  },
+  "4": {
+   "name": "trim",
+   "atlas": "facade_walls",
+   "variants": [
+    "stucco_smooth",
+    "stone_veneer"
+   ],
+   "tint": "COLOR_0 as for walls (pass a trim color: white / cream / dark bronze)"
+  },
+  "5": {
+   "name": "garage_door",
+   "atlas": "facade_openings",
+   "variants": [
+    "garage_2car",
+    "garage_3car"
+   ],
+   "notes": "either map whole garage bays with facade UVs (span cells), or a door quad onto the cell's opening_rects_m.door"
+  }
+ },
+ "bay_grammar": {
+  "description": "Suggested assignment of facade_openings cells to (bay, floor) cells of _MAT 0 walls; a deterministic hash of (building id, wall index, bay, floor) picks among the options. Bays at a wall's ends that are narrower than 1.2 m stay plain wall.",
+  "house": {
+   "street_wall_floor0": [
+    "garage_2car|garage_3car at one end (span)",
+    "door_front next to it",
+    "window_slider / window_picture / window_arched elsewhere"
+   ],
+   "other_walls_floor0": {
+    "window_slider": 0.3,
+    "door_slider": 0.15,
+    "window_pair": 0.15,
+    "plain": 0.4
+   },
+   "upper_floors": {
+    "window_slider": 0.3,
+    "window_pair": 0.2,
+    "window_arched": 0.08,
+    "window_small": 0.12,
+    "plain": 0.3
+   }
+  },
+  "commercial": {
+   "floor0_front": [
+    "storefront"
+   ],
+   "floor0_other": {
+    "plain": 0.8,
+    "school_door": 0.2
+   },
+   "floor1_front": [
+    "storefront_sign"
+   ],
+   "upper": {
+    "glass_curtain(_MAT 3)": 0.5,
+    "window_pair": 0.2,
+    "plain": 0.3
+   }
+  },
+  "school": {
+   "floor0": {
+    "school_window_band": 0.7,
+    "school_door": 0.15,
+    "plain": 0.15
+   },
+   "upper": {
+    "school_window_band": 0.8,
+    "plain": 0.2
+   },
+   "wall_variant": "stucco_scored"
+  },
+  "apartments": {
+   "floor0": {
+    "window_slider": 0.35,
+    "door_slider": 0.25,
+    "door_front": 0.1,
+    "plain": 0.3
+   },
+   "upper": {
+    "window_slider": 0.4,
+    "door_slider": 0.25,
+    "window_small": 0.1,
+    "plain": 0.25
+   }
+  }
+ },
+ "atlases": {
+  "facade_walls": {
+   "name": "facade_walls",
+   "description": "tileable wall finishes, 3 m x 3 m per cell (one floor-bay)",
+   "size_px": [
+    2048,
+    1024
+   ],
+   "cell_px": 512,
+   "gutter_px": 16,
+   "inner_px": 480,
+   "files": {
+    "albedo": "facade_walls_albedo.jpg",
+    "normal": "facade_walls_normal.jpg",
+    "orm": "facade_walls_orm.jpg"
+   },
+   "files_half_res": {
+    "albedo": "facade_walls_albedo_1k.jpg",
+    "normal": "facade_walls_normal_1k.jpg",
+    "orm": "facade_walls_orm_1k.jpg"
+   },
+   "cells": [
+    {
+     "name": "stucco_smooth",
+     "index": 0,
+     "description": "Santa Barbara smooth trowel stucco",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.515625,
+        0.242188,
+        0.984375
+       ]
+      }
+     ],
+     "tintable": true,
+     "mean_albedo_linear": [
+      0.5898,
+      0.5898,
+      0.5898
+     ],
+     "mean_roughness": 0.763
+    },
+    {
+     "name": "stucco_sand",
+     "index": 1,
+     "description": "20/30 sand finish stucco (most tract homes)",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.515625,
+        0.492188,
+        0.984375
+       ]
+      }
+     ],
+     "tintable": true,
+     "mean_albedo_linear": [
+      0.6044,
+      0.6044,
+      0.6044
+     ],
+     "mean_roughness": 0.9
+    },
+    {
+     "name": "stucco_lace",
+     "index": 2,
+     "description": "lace / skip-trowel stucco",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.515625,
+        0.742188,
+        0.984375
+       ]
+      }
+     ],
+     "tintable": true,
+     "mean_albedo_linear": [
+      0.6191,
+      0.6191,
+      0.6191
+     ],
+     "mean_roughness": 0.877
+    },
+    {
+     "name": "stucco_catface",
+     "index": 3,
+     "description": "smooth stucco with recessed cat faces",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.515625,
+        0.992188,
+        0.984375
+       ]
+      }
+     ],
+     "tintable": true,
+     "mean_albedo_linear": [
+      0.5934,
+      0.5934,
+      0.5934
+     ],
+     "mean_roughness": 0.801
+    },
+    {
+     "name": "stucco_weathered",
+     "index": 4,
+     "description": "sand finish, mottled, hairline cracks",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.015625,
+        0.242188,
+        0.484375
+       ]
+      }
+     ],
+     "tintable": true,
+     "mean_albedo_linear": [
+      0.5946,
+      0.5946,
+      0.5946
+     ],
+     "mean_roughness": 0.9
+    },
+    {
+     "name": "stucco_scored",
+     "index": 5,
+     "description": "sand finish with reveals at every floor line (v=0) and bay line (u=0): schools, commercial",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.015625,
+        0.492188,
+        0.484375
+       ]
+      }
+     ],
+     "tintable": true,
+     "mean_albedo_linear": [
+      0.6026,
+      0.6026,
+      0.6026
+     ],
+     "mean_roughness": 0.9
+    },
+    {
+     "name": "stone_veneer",
+     "index": 6,
+     "description": "stacked ledgestone veneer (wainscots, columns, monuments)",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.015625,
+        0.742188,
+        0.484375
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.21,
+      0.1611,
+      0.1071
+     ],
+     "mean_roughness": 0.881
+    },
+    {
+     "name": "glass_curtain",
+     "index": 7,
+     "description": "curtain / storefront glazing, mullions every 1.5 m, spandrel 0-0.75 m",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.015625,
+        0.992188,
+        0.484375
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0408,
+      0.0553,
+      0.0712
+     ],
+     "mean_roughness": 0.093
+    }
+   ]
+  },
+  "facade_openings": {
+   "name": "facade_openings",
+   "description": "floor-bay tiles with openings, 3 m x 3 m per cell; wall areas are stucco_sand with mask 1",
+   "size_px": [
+    2048,
+    2048
+   ],
+   "cell_px": 512,
+   "gutter_px": 16,
+   "inner_px": 480,
+   "files": {
+    "albedo": "facade_openings_albedo.jpg",
+    "normal": "facade_openings_normal.jpg",
+    "orm": "facade_openings_orm.jpg",
+    "mask": "facade_openings_mask.png"
+   },
+   "files_half_res": {
+    "albedo": "facade_openings_albedo_1k.jpg",
+    "normal": "facade_openings_normal_1k.jpg",
+    "orm": "facade_openings_orm_1k.jpg"
+   },
+   "cells": [
+    {
+     "name": "window_slider",
+     "index": 0,
+     "description": "white vinyl 6040 slider (1.8 x 1.2 m, sill 1.0 m), foam trim, mini-blinds",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.757812,
+        0.242188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5242,
+      0.5263,
+      0.5256
+     ],
+     "mean_roughness": 0.72,
+     "wall_fraction": 0.76,
+     "opening_rects_m": {
+      "glass": [
+       [
+        0.6,
+        1.0,
+        2.4,
+        2.2
+       ]
+      ]
+     }
+    },
+    {
+     "name": "window_pair",
+     "index": 1,
+     "description": "pair of single-hung windows with colonial grids, sill 0.85 m",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.757812,
+        0.492188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.499,
+      0.5011,
+      0.4987
+     ],
+     "mean_roughness": 0.641,
+     "wall_fraction": 0.638,
+     "opening_rects_m": {
+      "glass": [
+       [
+        0.45,
+        0.85,
+        1.43,
+        2.4
+       ],
+       [
+        1.57,
+        0.85,
+        2.55,
+        2.4
+       ]
+      ]
+     }
+    },
+    {
+     "name": "window_picture",
+     "index": 2,
+     "description": "2.4 m picture window with side lites and grids",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.757812,
+        0.742188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.4424,
+      0.4447,
+      0.4425
+     ],
+     "mean_roughness": 0.558,
+     "wall_fraction": 0.56,
+     "opening_rects_m": {
+      "glass": [
+       [
+        0.3,
+        0.75,
+        2.7,
+        2.4
+       ]
+      ]
+     }
+    },
+    {
+     "name": "window_small",
+     "index": 3,
+     "description": "small obscure-glass bath window, high sill 1.65 m",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.757812,
+        0.992188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5973,
+      0.5991,
+      0.599
+     ],
+     "mean_roughness": 0.862,
+     "wall_fraction": 0.935,
+     "opening_rects_m": {
+      "glass": [
+       [
+        1.05,
+        1.65,
+        1.95,
+        2.3
+       ]
+      ]
+     }
+    },
+    {
+     "name": "door_front",
+     "index": 4,
+     "description": "recessed 8 ft entry door (stained), sidelite, coach light, step",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.507812,
+        0.242188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.4178,
+      0.4088,
+      0.4011
+     ],
+     "mean_roughness": 0.691,
+     "wall_fraction": 0.547,
+     "opening_rects_m": {
+      "door": [
+       [
+        0.95,
+        0.0,
+        1.9,
+        2.44
+       ]
+      ],
+      "glass": [
+       [
+        1.98,
+        0.05,
+        2.36,
+        2.44
+       ]
+      ]
+     }
+    },
+    {
+     "name": "door_slider",
+     "index": 5,
+     "description": "8 ft white vinyl patio slider, screen, vertical blinds",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.507812,
+        0.492188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.4281,
+      0.4315,
+      0.4279
+     ],
+     "mean_roughness": 0.486,
+     "wall_fraction": 0.439,
+     "opening_rects_m": {
+      "door": [
+       [
+        0.3,
+        0.04,
+        2.7,
+        2.1
+       ]
+      ]
+     }
+    },
+    {
+     "name": "garage_2car",
+     "index": 6,
+     "description": "16 x 7 ft raised-panel steel garage door in a 6 m wide 2-cell span",
+     "span_cells": 2,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.507812,
+        0.742188,
+        0.742188
+       ]
+      },
+      {
+       "px": [
+        1536,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.507812,
+        0.992188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.6762,
+      0.6634,
+      0.6305
+     ],
+     "mean_roughness": 0.664,
+     "wall_fraction": 0.405,
+     "opening_rects_m": {
+      "door": [
+       [
+        0.56,
+        0.0,
+        5.44,
+        2.13
+       ]
+      ]
+     }
+    },
+    {
+     "name": "garage_3car",
+     "index": 7,
+     "description": "16 ft + 8 ft carriage doors with top lites in a 9 m wide 3-cell span",
+     "span_cells": 3,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.257812,
+        0.242188,
+        0.492188
+       ]
+      },
+      {
+       "px": [
+        512,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.257812,
+        0.492188,
+        0.492188
+       ]
+      },
+      {
+       "px": [
+        1024,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.257812,
+        0.742188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.626,
+      0.616,
+      0.5886
+     ],
+     "mean_roughness": 0.665,
+     "wall_fraction": 0.406,
+     "opening_rects_m": {
+      "door": [
+       [
+        0.45,
+        0.0,
+        5.33,
+        2.13
+       ],
+       [
+        6.13,
+        0.0,
+        8.57,
+        2.13
+       ]
+      ]
+     }
+    },
+    {
+     "name": "window_arched",
+     "index": 8,
+     "description": "Mediterranean arched-top window with grids and stucco surround",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.257812,
+        0.992188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5121,
+      0.5138,
+      0.5131
+     ],
+     "mean_roughness": 0.709,
+     "wall_fraction": 0.752,
+     "opening_rects_m": {
+      "glass": [
+       [
+        0.85,
+        0.8,
+        2.15,
+        2.65
+       ]
+      ]
+     }
+    },
+    {
+     "name": "storefront",
+     "index": 9,
+     "description": "dark bronze aluminum storefront bay with lit interior + transom",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.007812,
+        0.242188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.17,
+      0.1531,
+      0.149
+     ],
+     "mean_roughness": 0.115,
+     "wall_fraction": 0.0,
+     "opening_rects_m": {
+      "glass": [
+       [
+        0.0,
+        0.38,
+        3.0,
+        2.94
+       ]
+      ]
+     }
+    },
+    {
+     "name": "storefront_sign",
+     "index": 10,
+     "description": "upper commercial band: cornice, sign field, gooseneck lights (wall tint)",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.007812,
+        0.492188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5991,
+      0.5991,
+      0.5991
+     ],
+     "mean_roughness": 0.897,
+     "wall_fraction": 1.0,
+     "opening_rects_m": {}
+    },
+    {
+     "name": "school_window_band",
+     "index": 11,
+     "description": "classroom ribbon window, clear anodized, sunshade louver",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.007812,
+        0.742188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3519,
+      0.3582,
+      0.3619
+     ],
+     "mean_roughness": 0.483,
+     "wall_fraction": 0.44,
+     "opening_rects_m": {
+      "glass": [
+       [
+        0.0,
+        0.95,
+        3.0,
+        2.4
+       ]
+      ]
+     }
+    },
+    {
+     "name": "school_door",
+     "index": 12,
+     "description": "pair of hollow-metal doors with vision lites and transom",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.007812,
+        0.992188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5241,
+      0.5256,
+      0.5144
+     ],
+     "mean_roughness": 0.576,
+     "wall_fraction": 0.399,
+     "opening_rects_m": {
+      "door": [
+       [
+        0.58,
+        0.0,
+        2.42,
+        2.13
+       ]
+      ],
+      "glass": [
+       [
+        0.58,
+        2.19,
+        2.42,
+        2.69
+       ]
+      ]
+     }
+    }
+   ]
+  },
+  "roofs": {
+   "name": "roofs",
+   "description": "roof coverings, 4 m x 4 m per cell (u along the eave, v up the slope)",
+   "size_px": [
+    2048,
+    2048
+   ],
+   "cell_px": 512,
+   "gutter_px": 16,
+   "inner_px": 480,
+   "files": {
+    "albedo": "roofs_albedo.jpg",
+    "normal": "roofs_normal.jpg",
+    "orm": "roofs_orm.jpg"
+   },
+   "files_half_res": {
+    "albedo": "roofs_albedo_1k.jpg",
+    "normal": "roofs_normal_1k.jpg",
+    "orm": "roofs_orm_1k.jpg"
+   },
+   "cells": [
+    {
+     "name": "s_tile_terracotta",
+     "index": 0,
+     "description": "Spanish S tile, terracotta",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.757812,
+        0.242188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3878,
+      0.0744,
+      0.0248
+     ],
+     "mean_roughness": 0.73
+    },
+    {
+     "name": "s_tile_blend",
+     "index": 1,
+     "description": "Spanish S tile, mixed red/brown/orange flashed blend",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.757812,
+        0.492188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3015,
+      0.0759,
+      0.0273
+     ],
+     "mean_roughness": 0.73
+    },
+    {
+     "name": "s_tile_brown",
+     "index": 2,
+     "description": "Spanish S tile, brown blend",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.757812,
+        0.742188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.1321,
+      0.0621,
+      0.0312
+     ],
+     "mean_roughness": 0.73
+    },
+    {
+     "name": "s_tile_aged",
+     "index": 3,
+     "description": "Spanish S tile, sun-faded with lichen / efflorescence",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.757812,
+        0.992188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3464,
+      0.1307,
+      0.0687
+     ],
+     "mean_roughness": 0.815
+    },
+    {
+     "name": "flat_tile_brown",
+     "index": 4,
+     "description": "flat concrete tile, brown blend",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.507812,
+        0.242188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.1177,
+      0.0641,
+      0.0386
+     ],
+     "mean_roughness": 0.802
+    },
+    {
+     "name": "flat_tile_grey",
+     "index": 5,
+     "description": "flat concrete tile, grey blend",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.507812,
+        0.492188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.154,
+      0.1563,
+      0.149
+     ],
+     "mean_roughness": 0.802
+    },
+    {
+     "name": "flat_tile_charcoal",
+     "index": 6,
+     "description": "flat concrete tile, charcoal slate",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.507812,
+        0.742188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.055,
+      0.0557,
+      0.0577
+     ],
+     "mean_roughness": 0.802
+    },
+    {
+     "name": "flat_tile_sandstone",
+     "index": 7,
+     "description": "flat concrete tile, sandstone shake",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.507812,
+        0.992188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3726,
+      0.2699,
+      0.1691
+     ],
+     "mean_roughness": 0.802
+    },
+    {
+     "name": "flat_tpo",
+     "index": 8,
+     "description": "white TPO membrane, 2 m sheets",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.257812,
+        0.242188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.609,
+      0.6034,
+      0.5756
+     ],
+     "mean_roughness": 0.62
+    },
+    {
+     "name": "flat_tpo_grime",
+     "index": 9,
+     "description": "TPO with HVAC soot, rust spots, ponding stains, foot path",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.257812,
+        0.492188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5384,
+      0.5316,
+      0.5053
+     ],
+     "mean_roughness": 0.77
+    },
+    {
+     "name": "flat_gravel",
+     "index": 10,
+     "description": "ballasted gravel roof",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.257812,
+        0.742188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3212,
+      0.288,
+      0.2412
+     ],
+     "mean_roughness": 0.93
+    },
+    {
+     "name": "flat_modbit",
+     "index": 11,
+     "description": "grey granulated modified bitumen, 1 m laps",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.257812,
+        0.992188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.2183,
+      0.2146,
+      0.2
+     ],
+     "mean_roughness": 0.95
+    },
+    {
+     "name": "solar_panel",
+     "index": 12,
+     "description": "residential PV array, 1 x 2 m mono panels (portrait, v up the slope)",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.007812,
+        0.242188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0555,
+      0.0615,
+      0.0725
+     ],
+     "mean_roughness": 0.126
+    },
+    {
+     "name": "barrel_mission",
+     "index": 13,
+     "description": "two-piece mission barrel clay tile",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.007812,
+        0.492188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.355,
+      0.0785,
+      0.0271
+     ],
+     "mean_roughness": 0.8
+    },
+    {
+     "name": "standing_seam",
+     "index": 14,
+     "description": "standing-seam metal, ribs every 0.44 m along v",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.007812,
+        0.742188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.2113,
+      0.2414,
+      0.2615
+     ],
+     "mean_roughness": 0.38
+    },
+    {
+     "name": "concrete_deck",
+     "index": 15,
+     "description": "concrete roof / parking deck with 2 m joints",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.007812,
+        0.992188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3788,
+      0.3586,
+      0.3207
+     ],
+     "mean_roughness": 0.876
+    }
+   ]
+  },
+  "ground": {
+   "name": "ground",
+   "description": "ground / paving / landscape, world size per cell in world_size_m",
+   "size_px": [
+    2048,
+    2048
+   ],
+   "cell_px": 512,
+   "gutter_px": 16,
+   "inner_px": 480,
+   "files": {
+    "albedo": "ground_albedo.jpg",
+    "normal": "ground_normal.jpg",
+    "orm": "ground_orm.jpg"
+   },
+   "files_half_res": {
+    "albedo": "ground_albedo_1k.jpg",
+    "normal": "ground_normal_1k.jpg",
+    "orm": "ground_orm_1k.jpg"
+   },
+   "cells": [
+    {
+     "name": "asphalt_fresh",
+     "index": 0,
+     "description": "fresh dark asphalt",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.757812,
+        0.242188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0237,
+      0.0237,
+      0.0251
+     ],
+     "mean_roughness": 0.899
+    },
+    {
+     "name": "asphalt_worn",
+     "index": 1,
+     "description": "sun-faded asphalt, exposed aggregate, crack sealant, patches, oil (v along the lane, wheel paths at u 0.25/0.75)",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.757812,
+        0.492188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0669,
+      0.0669,
+      0.071
+     ],
+     "mean_roughness": 0.891
+    },
+    {
+     "name": "asphalt_parking",
+     "index": 2,
+     "description": "parking-lot asphalt, oil drips centered in u (stall center)",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.757812,
+        0.742188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0483,
+      0.0483,
+      0.0512
+     ],
+     "mean_roughness": 0.892
+    },
+    {
+     "name": "concrete_sidewalk",
+     "index": 3,
+     "description": "broom-finish sidewalk, tooled joints every 1.5 m",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        0,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        16,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.757812,
+        0.992188,
+        0.992188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.4473,
+      0.4249,
+      0.3827
+     ],
+     "mean_roughness": 0.874
+    },
+    {
+     "name": "concrete_driveway",
+     "index": 4,
+     "description": "driveway concrete, joints every 3 m, tire paths along v (u across the driveway)",
+     "span_cells": 1,
+     "world_size_m": [
+      6,
+      6
+     ],
+     "texels_per_m": 80.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.507812,
+        0.242188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.4691,
+      0.4298,
+      0.3723
+     ],
+     "mean_roughness": 0.877
+    },
+    {
+     "name": "curb_gutter",
+     "index": 5,
+     "description": "curb & gutter profile: u along the curb (3 m), v across: 0-0.6 gutter pan, 0.6-0.8 face, 0.8-1 top",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      0.75
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.507812,
+        0.492188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.46,
+      0.4373,
+      0.3895
+     ],
+     "mean_roughness": 0.876
+    },
+    {
+     "name": "pavers",
+     "index": 6,
+     "description": "interlocking concrete pavers, running bond, tan blend",
+     "span_cells": 1,
+     "world_size_m": [
+      3,
+      3
+     ],
+     "texels_per_m": 160.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.507812,
+        0.742188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3639,
+      0.2763,
+      0.1929
+     ],
+     "mean_roughness": 0.863
+    },
+    {
+     "name": "concrete_plaza",
+     "index": 7,
+     "description": "smooth plaza / school hardscape, 3 m joints",
+     "span_cells": 1,
+     "world_size_m": [
+      6,
+      6
+     ],
+     "texels_per_m": 80.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        512,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        528,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.507812,
+        0.992188,
+        0.742188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5345,
+      0.5036,
+      0.4455
+     ],
+     "mean_roughness": 0.877
+    },
+    {
+     "name": "grass_lawn",
+     "index": 8,
+     "description": "irrigated lawn",
+     "span_cells": 1,
+     "world_size_m": [
+      2,
+      2
+     ],
+     "texels_per_m": 240.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.257812,
+        0.242188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0623,
+      0.1122,
+      0.0225
+     ],
+     "mean_roughness": 0.894
+    },
+    {
+     "name": "grass_patchy",
+     "index": 9,
+     "description": "summer-stressed lawn with dormant patches",
+     "span_cells": 1,
+     "world_size_m": [
+      2,
+      2
+     ],
+     "texels_per_m": 240.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.257812,
+        0.492188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0864,
+      0.119,
+      0.0296
+     ],
+     "mean_roughness": 0.894
+    },
+    {
+     "name": "chaparral",
+     "index": 10,
+     "description": "dense chaparral (chamise / scrub oak) seen from above",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.257812,
+        0.742188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.1005,
+      0.0893,
+      0.0441
+     ],
+     "mean_roughness": 0.922
+    },
+    {
+     "name": "coastal_sage",
+     "index": 11,
+     "description": "coastal sage scrub: grey-green clumps over tan soil",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        1024,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        1040,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.257812,
+        0.992188,
+        0.492188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.2106,
+      0.1693,
+      0.1
+     ],
+     "mean_roughness": 0.936
+    },
+    {
+     "name": "decomposed_granite",
+     "index": 12,
+     "description": "decomposed granite paths / xeriscape",
+     "span_cells": 1,
+     "world_size_m": [
+      2,
+      2
+     ],
+     "texels_per_m": 240.0,
+     "cells": [
+      {
+       "px": [
+        0,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        16,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.007812,
+        0.007812,
+        0.242188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.5124,
+      0.3587,
+      0.2023
+     ],
+     "mean_roughness": 0.942
+    },
+    {
+     "name": "bare_dirt",
+     "index": 13,
+     "description": "bare graded soil / trail",
+     "span_cells": 1,
+     "world_size_m": [
+      4,
+      4
+     ],
+     "texels_per_m": 120.0,
+     "cells": [
+      {
+       "px": [
+        512,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        528,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.257812,
+        0.007812,
+        0.492188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.3295,
+      0.2025,
+      0.1059
+     ],
+     "mean_roughness": 0.946
+    },
+    {
+     "name": "mulch",
+     "index": 14,
+     "description": "shredded bark mulch (planting beds)",
+     "span_cells": 1,
+     "world_size_m": [
+      2,
+      2
+     ],
+     "texels_per_m": 240.0,
+     "cells": [
+      {
+       "px": [
+        1024,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        1040,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.507812,
+        0.007812,
+        0.742188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.1157,
+      0.0558,
+      0.0276
+     ],
+     "mean_roughness": 0.93
+    },
+    {
+     "name": "pool_water",
+     "index": 15,
+     "description": "pool water over light plaster (caustics in base color, glossy)",
+     "span_cells": 1,
+     "world_size_m": [
+      2,
+      2
+     ],
+     "texels_per_m": 240.0,
+     "cells": [
+      {
+       "px": [
+        1536,
+        1536,
+        512,
+        512
+       ],
+       "inner_px": [
+        1552,
+        1552,
+        480,
+        480
+       ],
+       "uv_inner": [
+        0.757812,
+        0.007812,
+        0.992188,
+        0.242188
+       ]
+      }
+     ],
+     "tintable": false,
+     "mean_albedo_linear": [
+      0.0635,
+      0.4332,
+      0.6161
+     ],
+     "mean_roughness": 0.03
+    }
+   ]
+  }
+ },
+ "markings": {
+  "file": "ground_markings.png",
+  "size_px": [
+   1024,
+   1024
+  ],
+  "format": "RGBA sRGB, alpha = paint coverage with wear",
+  "columns": [
+   {
+    "name": "white_solid_4in",
+    "column": 0,
+    "px": [
+     0,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.0,
+     0.0,
+     0.125,
+     1.0
+    ],
+    "world_width_m": 0.3,
+    "period_m": 8.0,
+    "line_edges_m": [
+     [
+      0.1,
+      0.2
+     ]
+    ],
+    "dash_m": null,
+    "color_srgb": "#ECECE6",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   },
+   {
+    "name": "white_dashed_4in",
+    "column": 1,
+    "px": [
+     128,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.125,
+     0.0,
+     0.25,
+     1.0
+    ],
+    "world_width_m": 0.3,
+    "period_m": 12.0,
+    "line_edges_m": [
+     [
+      0.1,
+      0.2
+     ]
+    ],
+    "dash_m": 3.0,
+    "color_srgb": "#ECECE6",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   },
+   {
+    "name": "yellow_solid_4in",
+    "column": 2,
+    "px": [
+     256,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.25,
+     0.0,
+     0.375,
+     1.0
+    ],
+    "world_width_m": 0.3,
+    "period_m": 8.0,
+    "line_edges_m": [
+     [
+      0.1,
+      0.2
+     ]
+    ],
+    "dash_m": null,
+    "color_srgb": "#E3B23C",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   },
+   {
+    "name": "yellow_double_4in",
+    "column": 3,
+    "px": [
+     384,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.375,
+     0.0,
+     0.5,
+     1.0
+    ],
+    "world_width_m": 0.5,
+    "period_m": 8.0,
+    "line_edges_m": [
+     [
+      0.12,
+      0.22
+     ],
+     [
+      0.3,
+      0.4
+     ]
+    ],
+    "dash_m": null,
+    "color_srgb": "#E3B23C",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   },
+   {
+    "name": "yellow_dashed_4in",
+    "column": 4,
+    "px": [
+     512,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.5,
+     0.0,
+     0.625,
+     1.0
+    ],
+    "world_width_m": 0.3,
+    "period_m": 12.0,
+    "line_edges_m": [
+     [
+      0.1,
+      0.2
+     ]
+    ],
+    "dash_m": 3.0,
+    "color_srgb": "#E3B23C",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   },
+   {
+    "name": "white_solid_8in",
+    "column": 5,
+    "px": [
+     640,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.625,
+     0.0,
+     0.75,
+     1.0
+    ],
+    "world_width_m": 0.4,
+    "period_m": 8.0,
+    "line_edges_m": [
+     [
+      0.1,
+      0.3
+     ]
+    ],
+    "dash_m": null,
+    "color_srgb": "#ECECE6",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   },
+   {
+    "name": "white_bar_12in",
+    "column": 6,
+    "px": [
+     768,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.75,
+     0.0,
+     0.875,
+     1.0
+    ],
+    "world_width_m": 0.5,
+    "period_m": 4.0,
+    "line_edges_m": [
+     [
+      0.1,
+      0.4
+     ]
+    ],
+    "dash_m": null,
+    "color_srgb": "#ECECE6",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   },
+   {
+    "name": "crosswalk_bar_24in",
+    "column": 7,
+    "px": [
+     896,
+     0,
+     128,
+     1024
+    ],
+    "uv": [
+     0.875,
+     0.0,
+     1.0,
+     1.0
+    ],
+    "world_width_m": 1.0,
+    "period_m": 3.0,
+    "line_edges_m": [
+     [
+      0.2,
+      0.8
+     ]
+    ],
+    "dash_m": null,
+    "color_srgb": "#ECECE6",
+    "mapping": "u = (meters across the line from the column's left edge) / world_width_m; v = meters along / period_m"
+   }
+  ],
+  "verified": false,
+  "notes": "dash 3 m / gap 9 m approximates the 10/30 ft local-street pattern (verified: false)"
+ },
+ "pipeline_notes": [
+  "Hero campus glbs (pipeline/hero_overrides) carry _MAT and _VARIANT vertex attributes and facade/roof UVs in this convention plus COLOR_0 tints; pipeline.glb.load_glb_meshes currently drops custom attributes, so copy accessors named _MAT / _VARIANT into MeshData.custom to keep them in the building tiles.",
+  "Vertex colors stay a valid fallback: a client without atlases renders COLOR_0 as before."
+ ]
+}

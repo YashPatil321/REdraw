@@ -1,0 +1,3616 @@
+{
+  "contract_version": 1,
+  "hd_version": 1,
+  "synthetic": false,
+  "draco": true,
+  "draco_layers": {
+    "terrain": true,
+    "roads": true,
+    "ground": true,
+    "buildings": true
+  },
+  "grid": {
+    "rows": 8,
+    "cols": 8,
+    "min_x": -4500.0,
+    "max_x": 4500.0,
+    "min_z": -3150.0,
+    "max_z": 3150.0,
+    "tile_width_m": 1125.0,
+    "tile_depth_m": 787.5
+  },
+  "tiles": [
+    {
+      "id": "r0_c0",
+      "row": 0,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 29.345266342163086,
+        "max_y": 173.07798767089844
+      },
+      "terrain": "terrain/terrain_r0_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c0.glb",
+          "triangles": 38930,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c0_lod1.glb",
+          "triangles": 8013,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c0_lod2.glb",
+          "triangles": 2258,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c0.jpg",
+      "splat": [
+        "terrain/splat_r0_c0_a.png",
+        "terrain/splat_r0_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c0.glb",
+      "roads": "roads/roads_r0_c0.glb",
+      "ground": "ground/ground_r0_c0.glb",
+      "triangles": {
+        "buildings": 7519,
+        "roads": 8156,
+        "ground": 15920
+      }
+    },
+    {
+      "id": "r0_c1",
+      "row": 0,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 29.60846108198166,
+        "max_y": 169.27422773838043
+      },
+      "terrain": "terrain/terrain_r0_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c1.glb",
+          "triangles": 41553,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c1_lod1.glb",
+          "triangles": 7877,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c1_lod2.glb",
+          "triangles": 2478,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c1.jpg",
+      "splat": [
+        "terrain/splat_r0_c1_a.png",
+        "terrain/splat_r0_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c1.glb",
+      "roads": "roads/roads_r0_c1.glb",
+      "ground": "ground/ground_r0_c1.glb",
+      "triangles": {
+        "buildings": 3067,
+        "roads": 6221,
+        "ground": 13239
+      }
+    },
+    {
+      "id": "r0_c2",
+      "row": 0,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 38.54557581699919,
+        "max_y": 255.27231922745705
+      },
+      "terrain": "terrain/terrain_r0_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c2.glb",
+          "triangles": 61365,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c2_lod1.glb",
+          "triangles": 10802,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c2_lod2.glb",
+          "triangles": 3553,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c2.jpg",
+      "splat": [
+        "terrain/splat_r0_c2_a.png",
+        "terrain/splat_r0_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c2.glb",
+      "roads": "roads/roads_r0_c2.glb",
+      "ground": "ground/ground_r0_c2.glb",
+      "triangles": {
+        "buildings": 0,
+        "roads": 3466,
+        "ground": 4867
+      }
+    },
+    {
+      "id": "r0_c3",
+      "row": 0,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 48.42331284657121,
+        "max_y": 340.6231291727163
+      },
+      "terrain": "terrain/terrain_r0_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c3.glb",
+          "triangles": 53213,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c3_lod1.glb",
+          "triangles": 9974,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c3_lod2.glb",
+          "triangles": 3269,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c3.jpg",
+      "splat": [
+        "terrain/splat_r0_c3_a.png",
+        "terrain/splat_r0_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c3.glb",
+      "roads": "roads/roads_r0_c3.glb",
+      "ground": "ground/ground_r0_c3.glb",
+      "triangles": {
+        "buildings": 0,
+        "roads": 1372,
+        "ground": 2756
+      }
+    },
+    {
+      "id": "r0_c4",
+      "row": 0,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 150.24336776137352,
+        "max_y": 335.20294696092606
+      },
+      "terrain": "terrain/terrain_r0_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c4.glb",
+          "triangles": 27827,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c4_lod1.glb",
+          "triangles": 5781,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c4_lod2.glb",
+          "triangles": 2059,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c4.jpg",
+      "splat": [
+        "terrain/splat_r0_c4_a.png",
+        "terrain/splat_r0_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c4.glb",
+      "roads": "roads/roads_r0_c4.glb",
+      "ground": "ground/ground_r0_c4.glb",
+      "triangles": {
+        "buildings": 3357,
+        "roads": 836,
+        "ground": 5592
+      }
+    },
+    {
+      "id": "r0_c5",
+      "row": 0,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 176.80832054829807,
+        "max_y": 287.2256026256946
+      },
+      "terrain": "terrain/terrain_r0_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c5.glb",
+          "triangles": 16734,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c5_lod1.glb",
+          "triangles": 3284,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c5_lod2.glb",
+          "triangles": 1238,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c5.jpg",
+      "splat": [
+        "terrain/splat_r0_c5_a.png",
+        "terrain/splat_r0_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c5.glb",
+      "roads": "roads/roads_r0_c5.glb",
+      "ground": "ground/ground_r0_c5.glb",
+      "triangles": {
+        "buildings": 633,
+        "roads": 464,
+        "ground": 1769
+      }
+    },
+    {
+      "id": "r0_c6",
+      "row": 0,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 95.89552211761475,
+        "max_y": 278.91614171350375
+      },
+      "terrain": "terrain/terrain_r0_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c6.glb",
+          "triangles": 35215,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c6_lod1.glb",
+          "triangles": 7309,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c6_lod2.glb",
+          "triangles": 2386,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c6.jpg",
+      "splat": [
+        "terrain/splat_r0_c6_a.png",
+        "terrain/splat_r0_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c6.glb",
+      "roads": "roads/roads_r0_c6.glb",
+      "ground": "ground/ground_r0_c6.glb",
+      "triangles": {
+        "buildings": 11317,
+        "roads": 2670,
+        "ground": 13547
+      }
+    },
+    {
+      "id": "r0_c7",
+      "row": 0,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": -3150.0,
+        "max_z": -2362.5,
+        "min_y": 95.53600600361824,
+        "max_y": 181.3579559326172
+      },
+      "terrain": "terrain/terrain_r0_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r0_c7.glb",
+          "triangles": 39888,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r0_c7_lod1.glb",
+          "triangles": 7710,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r0_c7_lod2.glb",
+          "triangles": 2195,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r0_c7.jpg",
+      "splat": [
+        "terrain/splat_r0_c7_a.png",
+        "terrain/splat_r0_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r0_c7.glb",
+      "roads": "roads/roads_r0_c7.glb",
+      "ground": "ground/ground_r0_c7.glb",
+      "triangles": {
+        "buildings": 21657,
+        "roads": 9710,
+        "ground": 22585
+      }
+    },
+    {
+      "id": "r1_c0",
+      "row": 1,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 25.158459953963757,
+        "max_y": 138.79672241210938
+      },
+      "terrain": "terrain/terrain_r1_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c0.glb",
+          "triangles": 34827,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c0_lod1.glb",
+          "triangles": 6124,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c0_lod2.glb",
+          "triangles": 1813,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c0.jpg",
+      "splat": [
+        "terrain/splat_r1_c0_a.png",
+        "terrain/splat_r1_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c0.glb",
+      "roads": "roads/roads_r1_c0.glb",
+      "ground": "ground/ground_r1_c0.glb",
+      "triangles": {
+        "buildings": 6695,
+        "roads": 7184,
+        "ground": 13625
+      }
+    },
+    {
+      "id": "r1_c1",
+      "row": 1,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 31.794300079345703,
+        "max_y": 164.27458572387695
+      },
+      "terrain": "terrain/terrain_r1_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c1.glb",
+          "triangles": 37396,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c1_lod1.glb",
+          "triangles": 7888,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c1_lod2.glb",
+          "triangles": 2302,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c1.jpg",
+      "splat": [
+        "terrain/splat_r1_c1_a.png",
+        "terrain/splat_r1_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c1.glb",
+      "roads": "roads/roads_r1_c1.glb",
+      "ground": "ground/ground_r1_c1.glb",
+      "triangles": {
+        "buildings": 13343,
+        "roads": 10245,
+        "ground": 23582
+      }
+    },
+    {
+      "id": "r1_c2",
+      "row": 1,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 55.69082297757268,
+        "max_y": 177.89137612847844
+      },
+      "terrain": "terrain/terrain_r1_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c2.glb",
+          "triangles": 32252,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c2_lod1.glb",
+          "triangles": 6310,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c2_lod2.glb",
+          "triangles": 2143,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c2.jpg",
+      "splat": [
+        "terrain/splat_r1_c2_a.png",
+        "terrain/splat_r1_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c2.glb",
+      "roads": "roads/roads_r1_c2.glb",
+      "ground": "ground/ground_r1_c2.glb",
+      "triangles": {
+        "buildings": 159,
+        "roads": 1193,
+        "ground": 5307
+      }
+    },
+    {
+      "id": "r1_c3",
+      "row": 1,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 117.82081770896912,
+        "max_y": 344.6578674316406
+      },
+      "terrain": "terrain/terrain_r1_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c3.glb",
+          "triangles": 33525,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c3_lod1.glb",
+          "triangles": 6233,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c3_lod2.glb",
+          "triangles": 2101,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c3.jpg",
+      "splat": [
+        "terrain/splat_r1_c3_a.png",
+        "terrain/splat_r1_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c3.glb",
+      "roads": "roads/roads_r1_c3.glb",
+      "ground": "ground/ground_r1_c3.glb",
+      "triangles": {
+        "buildings": 690,
+        "roads": 1546,
+        "ground": 1327
+      }
+    },
+    {
+      "id": "r1_c4",
+      "row": 1,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 165.76275634765625,
+        "max_y": 306.366815328598
+      },
+      "terrain": "terrain/terrain_r1_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c4.glb",
+          "triangles": 26971,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c4_lod1.glb",
+          "triangles": 5395,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c4_lod2.glb",
+          "triangles": 1645,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c4.jpg",
+      "splat": [
+        "terrain/splat_r1_c4_a.png",
+        "terrain/splat_r1_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c4.glb",
+      "roads": "roads/roads_r1_c4.glb",
+      "ground": "ground/ground_r1_c4.glb",
+      "triangles": {
+        "buildings": 11476,
+        "roads": 5231,
+        "ground": 17040
+      }
+    },
+    {
+      "id": "r1_c5",
+      "row": 1,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 165.92039489746094,
+        "max_y": 354.8235471621156
+      },
+      "terrain": "terrain/terrain_r1_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c5.glb",
+          "triangles": 33625,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c5_lod1.glb",
+          "triangles": 6587,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c5_lod2.glb",
+          "triangles": 2322,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c5.jpg",
+      "splat": [
+        "terrain/splat_r1_c5_a.png",
+        "terrain/splat_r1_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c5.glb",
+      "roads": "roads/roads_r1_c5.glb",
+      "ground": "ground/ground_r1_c5.glb",
+      "triangles": {
+        "buildings": 3960,
+        "roads": 1538,
+        "ground": 4868
+      }
+    },
+    {
+      "id": "r1_c6",
+      "row": 1,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 126.57589721679688,
+        "max_y": 317.93011474609375
+      },
+      "terrain": "terrain/terrain_r1_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c6.glb",
+          "triangles": 34615,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c6_lod1.glb",
+          "triangles": 7297,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c6_lod2.glb",
+          "triangles": 2357,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c6.jpg",
+      "splat": [
+        "terrain/splat_r1_c6_a.png",
+        "terrain/splat_r1_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c6.glb",
+      "roads": "roads/roads_r1_c6.glb",
+      "ground": "ground/ground_r1_c6.glb",
+      "triangles": {
+        "buildings": 19369,
+        "roads": 4707,
+        "ground": 16492
+      }
+    },
+    {
+      "id": "r1_c7",
+      "row": 1,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": -2362.5,
+        "max_z": -1575.0,
+        "min_y": 124.6407699584961,
+        "max_y": 184.48272705078125
+      },
+      "terrain": "terrain/terrain_r1_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r1_c7.glb",
+          "triangles": 41980,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r1_c7_lod1.glb",
+          "triangles": 8283,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r1_c7_lod2.glb",
+          "triangles": 2175,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r1_c7.jpg",
+      "splat": [
+        "terrain/splat_r1_c7_a.png",
+        "terrain/splat_r1_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r1_c7.glb",
+      "roads": "roads/roads_r1_c7.glb",
+      "ground": "ground/ground_r1_c7.glb",
+      "triangles": {
+        "buildings": 29105,
+        "roads": 21278,
+        "ground": 37621
+      }
+    },
+    {
+      "id": "r2_c0",
+      "row": 2,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 19.097492402564967,
+        "max_y": 132.28892517089844
+      },
+      "terrain": "terrain/terrain_r2_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c0.glb",
+          "triangles": 42547,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c0_lod1.glb",
+          "triangles": 8921,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c0_lod2.glb",
+          "triangles": 2628,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c0.jpg",
+      "splat": [
+        "terrain/splat_r2_c0_a.png",
+        "terrain/splat_r2_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c0.glb",
+      "roads": "roads/roads_r2_c0.glb",
+      "ground": "ground/ground_r2_c0.glb",
+      "triangles": {
+        "buildings": 6193,
+        "roads": 2613,
+        "ground": 9461
+      }
+    },
+    {
+      "id": "r2_c1",
+      "row": 2,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 60.77367412298918,
+        "max_y": 163.75669860839844
+      },
+      "terrain": "terrain/terrain_r2_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c1.glb",
+          "triangles": 38602,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c1_lod1.glb",
+          "triangles": 8396,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c1_lod2.glb",
+          "triangles": 2549,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c1.jpg",
+      "splat": [
+        "terrain/splat_r2_c1_a.png",
+        "terrain/splat_r2_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c1.glb",
+      "roads": "roads/roads_r2_c1.glb",
+      "ground": "ground/ground_r2_c1.glb",
+      "triangles": {
+        "buildings": 13299,
+        "roads": 6141,
+        "ground": 21799
+      }
+    },
+    {
+      "id": "r2_c2",
+      "row": 2,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 84.9328944683075,
+        "max_y": 169.5088133676909
+      },
+      "terrain": "terrain/terrain_r2_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c2.glb",
+          "triangles": 35179,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c2_lod1.glb",
+          "triangles": 7303,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c2_lod2.glb",
+          "triangles": 2171,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c2.jpg",
+      "splat": [
+        "terrain/splat_r2_c2_a.png",
+        "terrain/splat_r2_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c2.glb",
+      "roads": "roads/roads_r2_c2.glb",
+      "ground": "ground/ground_r2_c2.glb",
+      "triangles": {
+        "buildings": 9132,
+        "roads": 7939,
+        "ground": 23765
+      }
+    },
+    {
+      "id": "r2_c3",
+      "row": 2,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 120.73141244574799,
+        "max_y": 223.6633701324463
+      },
+      "terrain": "terrain/terrain_r2_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c3.glb",
+          "triangles": 29122,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c3_lod1.glb",
+          "triangles": 5718,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c3_lod2.glb",
+          "triangles": 1424,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c3.jpg",
+      "splat": [
+        "terrain/splat_r2_c3_a.png",
+        "terrain/splat_r2_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c3.glb",
+      "roads": "roads/roads_r2_c3.glb",
+      "ground": "ground/ground_r2_c3.glb",
+      "triangles": {
+        "buildings": 8750,
+        "roads": 2863,
+        "ground": 13447
+      }
+    },
+    {
+      "id": "r2_c4",
+      "row": 2,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 148.77781426906586,
+        "max_y": 219.541015625
+      },
+      "terrain": "terrain/terrain_r2_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c4.glb",
+          "triangles": 23868,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c4_lod1.glb",
+          "triangles": 3795,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c4_lod2.glb",
+          "triangles": 711,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c4.jpg",
+      "splat": [
+        "terrain/splat_r2_c4_a.png",
+        "terrain/splat_r2_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c4.glb",
+      "roads": "roads/roads_r2_c4.glb",
+      "ground": "ground/ground_r2_c4.glb",
+      "triangles": {
+        "buildings": 36344,
+        "roads": 12023,
+        "ground": 40631
+      }
+    },
+    {
+      "id": "r2_c5",
+      "row": 2,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 160.96892420656513,
+        "max_y": 363.0309125801432
+      },
+      "terrain": "terrain/terrain_r2_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c5.glb",
+          "triangles": 34405,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c5_lod1.glb",
+          "triangles": 6667,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c5_lod2.glb",
+          "triangles": 2151,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c5.jpg",
+      "splat": [
+        "terrain/splat_r2_c5_a.png",
+        "terrain/splat_r2_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c5.glb",
+      "roads": "roads/roads_r2_c5.glb",
+      "ground": "ground/ground_r2_c5.glb",
+      "triangles": {
+        "buildings": 18130,
+        "roads": 7486,
+        "ground": 22787
+      }
+    },
+    {
+      "id": "r2_c6",
+      "row": 2,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 152.3661154131405,
+        "max_y": 345.83914589881897
+      },
+      "terrain": "terrain/terrain_r2_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c6.glb",
+          "triangles": 42151,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c6_lod1.glb",
+          "triangles": 7849,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c6_lod2.glb",
+          "triangles": 2208,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c6.jpg",
+      "splat": [
+        "terrain/splat_r2_c6_a.png",
+        "terrain/splat_r2_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c6.glb",
+      "roads": "roads/roads_r2_c6.glb",
+      "ground": "ground/ground_r2_c6.glb",
+      "triangles": {
+        "buildings": 19682,
+        "roads": 9049,
+        "ground": 24113
+      }
+    },
+    {
+      "id": "r2_c7",
+      "row": 2,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": -1575.0,
+        "max_z": -787.5,
+        "min_y": 145.3563466668129,
+        "max_y": 187.9645538330078
+      },
+      "terrain": "terrain/terrain_r2_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r2_c7.glb",
+          "triangles": 27416,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r2_c7_lod1.glb",
+          "triangles": 5189,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r2_c7_lod2.glb",
+          "triangles": 1333,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r2_c7.jpg",
+      "splat": [
+        "terrain/splat_r2_c7_a.png",
+        "terrain/splat_r2_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r2_c7.glb",
+      "roads": "roads/roads_r2_c7.glb",
+      "ground": "ground/ground_r2_c7.glb",
+      "triangles": {
+        "buildings": 28256,
+        "roads": 25131,
+        "ground": 34642
+      }
+    },
+    {
+      "id": "r3_c0",
+      "row": 3,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 27.974580221809447,
+        "max_y": 142.8514404296875
+      },
+      "terrain": "terrain/terrain_r3_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c0.glb",
+          "triangles": 29695,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c0_lod1.glb",
+          "triangles": 5448,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c0_lod2.glb",
+          "triangles": 1492,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c0.jpg",
+      "splat": [
+        "terrain/splat_r3_c0_a.png",
+        "terrain/splat_r3_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c0.glb",
+      "roads": "roads/roads_r3_c0.glb",
+      "ground": "ground/ground_r3_c0.glb",
+      "triangles": {
+        "buildings": 8912,
+        "roads": 3902,
+        "ground": 14883
+      }
+    },
+    {
+      "id": "r3_c1",
+      "row": 3,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 110.93164075911045,
+        "max_y": 166.75820922851562
+      },
+      "terrain": "terrain/terrain_r3_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c1.glb",
+          "triangles": 28565,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c1_lod1.glb",
+          "triangles": 5813,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c1_lod2.glb",
+          "triangles": 1573,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c1.jpg",
+      "splat": [
+        "terrain/splat_r3_c1_a.png",
+        "terrain/splat_r3_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c1.glb",
+      "roads": "roads/roads_r3_c1.glb",
+      "ground": "ground/ground_r3_c1.glb",
+      "triangles": {
+        "buildings": 14823,
+        "roads": 8250,
+        "ground": 26005
+      }
+    },
+    {
+      "id": "r3_c2",
+      "row": 3,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 120.10469737648964,
+        "max_y": 172.50592041015625
+      },
+      "terrain": "terrain/terrain_r3_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c2.glb",
+          "triangles": 20613,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c2_lod1.glb",
+          "triangles": 3798,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c2_lod2.glb",
+          "triangles": 1184,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c2.jpg",
+      "splat": [
+        "terrain/splat_r3_c2_a.png",
+        "terrain/splat_r3_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c2.glb",
+      "roads": "roads/roads_r3_c2.glb",
+      "ground": "ground/ground_r3_c2.glb",
+      "triangles": {
+        "buildings": 26604,
+        "roads": 18824,
+        "ground": 47205
+      }
+    },
+    {
+      "id": "r3_c3",
+      "row": 3,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 133.0840643644333,
+        "max_y": 178.20248413085938
+      },
+      "terrain": "terrain/terrain_r3_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c3.glb",
+          "triangles": 21012,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c3_lod1.glb",
+          "triangles": 4026,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c3_lod2.glb",
+          "triangles": 1129,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c3.jpg",
+      "splat": [
+        "terrain/splat_r3_c3_a.png",
+        "terrain/splat_r3_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c3.glb",
+      "roads": "roads/roads_r3_c3.glb",
+      "ground": "ground/ground_r3_c3.glb",
+      "triangles": {
+        "buildings": 30043,
+        "roads": 22697,
+        "ground": 41966
+      }
+    },
+    {
+      "id": "r3_c4",
+      "row": 3,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 148.15896889008582,
+        "max_y": 189.75376892089844
+      },
+      "terrain": "terrain/terrain_r3_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c4.glb",
+          "triangles": 18624,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c4_lod1.glb",
+          "triangles": 3818,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c4_lod2.glb",
+          "triangles": 1197,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c4.jpg",
+      "splat": [
+        "terrain/splat_r3_c4_a.png",
+        "terrain/splat_r3_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c4.glb",
+      "roads": "roads/roads_r3_c4.glb",
+      "ground": "ground/ground_r3_c4.glb",
+      "triangles": {
+        "buildings": 41907,
+        "roads": 24189,
+        "ground": 47270
+      }
+    },
+    {
+      "id": "r3_c5",
+      "row": 3,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 163.79785884154262,
+        "max_y": 256.5897768884897
+      },
+      "terrain": "terrain/terrain_r3_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c5.glb",
+          "triangles": 27121,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c5_lod1.glb",
+          "triangles": 5555,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c5_lod2.glb",
+          "triangles": 1691,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c5.jpg",
+      "splat": [
+        "terrain/splat_r3_c5_a.png",
+        "terrain/splat_r3_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c5.glb",
+      "roads": "roads/roads_r3_c5.glb",
+      "ground": "ground/ground_r3_c5.glb",
+      "triangles": {
+        "buildings": 13316,
+        "roads": 19847,
+        "ground": 32561
+      }
+    },
+    {
+      "id": "r3_c6",
+      "row": 3,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 170.34578679525293,
+        "max_y": 249.01528549194336
+      },
+      "terrain": "terrain/terrain_r3_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c6.glb",
+          "triangles": 25949,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c6_lod1.glb",
+          "triangles": 5397,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c6_lod2.glb",
+          "triangles": 1726,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c6.jpg",
+      "splat": [
+        "terrain/splat_r3_c6_a.png",
+        "terrain/splat_r3_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c6.glb",
+      "roads": "roads/roads_r3_c6.glb",
+      "ground": "ground/ground_r3_c6.glb",
+      "triangles": {
+        "buildings": 5067,
+        "roads": 12295,
+        "ground": 10327
+      }
+    },
+    {
+      "id": "r3_c7",
+      "row": 3,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": -787.5,
+        "max_z": 0.0,
+        "min_y": 144.53983217744877,
+        "max_y": 234.2742156982422
+      },
+      "terrain": "terrain/terrain_r3_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r3_c7.glb",
+          "triangles": 33506,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r3_c7_lod1.glb",
+          "triangles": 6516,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r3_c7_lod2.glb",
+          "triangles": 2013,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r3_c7.jpg",
+      "splat": [
+        "terrain/splat_r3_c7_a.png",
+        "terrain/splat_r3_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r3_c7.glb",
+      "roads": "roads/roads_r3_c7.glb",
+      "ground": "ground/ground_r3_c7.glb",
+      "triangles": {
+        "buildings": 6390,
+        "roads": 33088,
+        "ground": 17894
+      }
+    },
+    {
+      "id": "r4_c0",
+      "row": 4,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 19.032304759635736,
+        "max_y": 131.277938246727
+      },
+      "terrain": "terrain/terrain_r4_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c0.glb",
+          "triangles": 25795,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c0_lod1.glb",
+          "triangles": 5116,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c0_lod2.glb",
+          "triangles": 1722,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c0.jpg",
+      "splat": [
+        "terrain/splat_r4_c0_a.png",
+        "terrain/splat_r4_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c0.glb",
+      "roads": "roads/roads_r4_c0.glb",
+      "ground": "ground/ground_r4_c0.glb",
+      "triangles": {
+        "buildings": 1296,
+        "roads": 1608,
+        "ground": 2530
+      }
+    },
+    {
+      "id": "r4_c1",
+      "row": 4,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 53.04074880294502,
+        "max_y": 169.9383544921875
+      },
+      "terrain": "terrain/terrain_r4_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c1.glb",
+          "triangles": 32828,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c1_lod1.glb",
+          "triangles": 6581,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c1_lod2.glb",
+          "triangles": 2086,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c1.jpg",
+      "splat": [
+        "terrain/splat_r4_c1_a.png",
+        "terrain/splat_r4_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c1.glb",
+      "roads": "roads/roads_r4_c1.glb",
+      "ground": "ground/ground_r4_c1.glb",
+      "triangles": {
+        "buildings": 8074,
+        "roads": 7101,
+        "ground": 17086
+      }
+    },
+    {
+      "id": "r4_c2",
+      "row": 4,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 101.32692463696003,
+        "max_y": 166.83714294433594
+      },
+      "terrain": "terrain/terrain_r4_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c2.glb",
+          "triangles": 27967,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c2_lod1.glb",
+          "triangles": 6365,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c2_lod2.glb",
+          "triangles": 2262,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c2.jpg",
+      "splat": [
+        "terrain/splat_r4_c2_a.png",
+        "terrain/splat_r4_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c2.glb",
+      "roads": "roads/roads_r4_c2.glb",
+      "ground": "ground/ground_r4_c2.glb",
+      "triangles": {
+        "buildings": 20660,
+        "roads": 9154,
+        "ground": 33491
+      }
+    },
+    {
+      "id": "r4_c3",
+      "row": 4,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 110.20553793013096,
+        "max_y": 181.8489227294922
+      },
+      "terrain": "terrain/terrain_r4_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c3.glb",
+          "triangles": 24409,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c3_lod1.glb",
+          "triangles": 5281,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c3_lod2.glb",
+          "triangles": 1859,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c3.jpg",
+      "splat": [
+        "terrain/splat_r4_c3_a.png",
+        "terrain/splat_r4_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c3.glb",
+      "roads": "roads/roads_r4_c3.glb",
+      "ground": "ground/ground_r4_c3.glb",
+      "triangles": {
+        "buildings": 17465,
+        "roads": 7908,
+        "ground": 25951
+      }
+    },
+    {
+      "id": "r4_c4",
+      "row": 4,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 144.0692901611328,
+        "max_y": 198.57229614257812
+      },
+      "terrain": "terrain/terrain_r4_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c4.glb",
+          "triangles": 21639,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c4_lod1.glb",
+          "triangles": 4542,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c4_lod2.glb",
+          "triangles": 1253,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c4.jpg",
+      "splat": [
+        "terrain/splat_r4_c4_a.png",
+        "terrain/splat_r4_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c4.glb",
+      "roads": "roads/roads_r4_c4.glb",
+      "ground": "ground/ground_r4_c4.glb",
+      "triangles": {
+        "buildings": 62435,
+        "roads": 20952,
+        "ground": 50898
+      }
+    },
+    {
+      "id": "r4_c5",
+      "row": 4,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 175.8587690591812,
+        "max_y": 253.71951588301454
+      },
+      "terrain": "terrain/terrain_r4_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c5.glb",
+          "triangles": 31480,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c5_lod1.glb",
+          "triangles": 6740,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c5_lod2.glb",
+          "triangles": 2072,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c5.jpg",
+      "splat": [
+        "terrain/splat_r4_c5_a.png",
+        "terrain/splat_r4_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c5.glb",
+      "roads": "roads/roads_r4_c5.glb",
+      "ground": "ground/ground_r4_c5.glb",
+      "triangles": {
+        "buildings": 13769,
+        "roads": 16932,
+        "ground": 30949
+      }
+    },
+    {
+      "id": "r4_c6",
+      "row": 4,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 190.88450125954114,
+        "max_y": 245.00302124023438
+      },
+      "terrain": "terrain/terrain_r4_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c6.glb",
+          "triangles": 20192,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c6_lod1.glb",
+          "triangles": 3958,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c6_lod2.glb",
+          "triangles": 1209,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c6.jpg",
+      "splat": [
+        "terrain/splat_r4_c6_a.png",
+        "terrain/splat_r4_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c6.glb",
+      "roads": "roads/roads_r4_c6.glb",
+      "ground": "ground/ground_r4_c6.glb",
+      "triangles": {
+        "buildings": 5039,
+        "roads": 16021,
+        "ground": 12097
+      }
+    },
+    {
+      "id": "r4_c7",
+      "row": 4,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": 0.0,
+        "max_z": 787.5,
+        "min_y": 164.94404604092406,
+        "max_y": 243.78271484375
+      },
+      "terrain": "terrain/terrain_r4_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r4_c7.glb",
+          "triangles": 37318,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r4_c7_lod1.glb",
+          "triangles": 7365,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r4_c7_lod2.glb",
+          "triangles": 1868,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r4_c7.jpg",
+      "splat": [
+        "terrain/splat_r4_c7_a.png",
+        "terrain/splat_r4_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r4_c7.glb",
+      "roads": "roads/roads_r4_c7.glb",
+      "ground": "ground/ground_r4_c7.glb",
+      "triangles": {
+        "buildings": 9719,
+        "roads": 30344,
+        "ground": 28090
+      }
+    },
+    {
+      "id": "r5_c0",
+      "row": 5,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 26.00263193034334,
+        "max_y": 134.2815399169922
+      },
+      "terrain": "terrain/terrain_r5_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c0.glb",
+          "triangles": 31915,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c0_lod1.glb",
+          "triangles": 6771,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c0_lod2.glb",
+          "triangles": 2251,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c0.jpg",
+      "splat": [
+        "terrain/splat_r5_c0_a.png",
+        "terrain/splat_r5_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c0.glb",
+      "roads": "roads/roads_r5_c0.glb",
+      "ground": "ground/ground_r5_c0.glb",
+      "triangles": {
+        "buildings": 4950,
+        "roads": 3917,
+        "ground": 10403
+      }
+    },
+    {
+      "id": "r5_c1",
+      "row": 5,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 39.26648099720478,
+        "max_y": 169.89494806528091
+      },
+      "terrain": "terrain/terrain_r5_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c1.glb",
+          "triangles": 34084,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c1_lod1.glb",
+          "triangles": 7358,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c1_lod2.glb",
+          "triangles": 2490,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c1.jpg",
+      "splat": [
+        "terrain/splat_r5_c1_a.png",
+        "terrain/splat_r5_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c1.glb",
+      "roads": "roads/roads_r5_c1.glb",
+      "ground": "ground/ground_r5_c1.glb",
+      "triangles": {
+        "buildings": 682,
+        "roads": 1308,
+        "ground": 6915
+      }
+    },
+    {
+      "id": "r5_c2",
+      "row": 5,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 74.56619961559772,
+        "max_y": 144.37840270996094
+      },
+      "terrain": "terrain/terrain_r5_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c2.glb",
+          "triangles": 27108,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c2_lod1.glb",
+          "triangles": 5328,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c2_lod2.glb",
+          "triangles": 1755,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c2.jpg",
+      "splat": [
+        "terrain/splat_r5_c2_a.png",
+        "terrain/splat_r5_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c2.glb",
+      "roads": "roads/roads_r5_c2.glb",
+      "ground": "ground/ground_r5_c2.glb",
+      "triangles": {
+        "buildings": 10674,
+        "roads": 6337,
+        "ground": 18409
+      }
+    },
+    {
+      "id": "r5_c3",
+      "row": 5,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 89.11248751729727,
+        "max_y": 175.7937774658203
+      },
+      "terrain": "terrain/terrain_r5_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c3.glb",
+          "triangles": 24979,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c3_lod1.glb",
+          "triangles": 5276,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c3_lod2.glb",
+          "triangles": 1828,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c3.jpg",
+      "splat": [
+        "terrain/splat_r5_c3_a.png",
+        "terrain/splat_r5_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c3.glb",
+      "roads": "roads/roads_r5_c3.glb",
+      "ground": "ground/ground_r5_c3.glb",
+      "triangles": {
+        "buildings": 4691,
+        "roads": 1955,
+        "ground": 7459
+      }
+    },
+    {
+      "id": "r5_c4",
+      "row": 5,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 110.14612782001495,
+        "max_y": 191.45750427246094
+      },
+      "terrain": "terrain/terrain_r5_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c4.glb",
+          "triangles": 25236,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c4_lod1.glb",
+          "triangles": 5016,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c4_lod2.glb",
+          "triangles": 1519,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c4.jpg",
+      "splat": [
+        "terrain/splat_r5_c4_a.png",
+        "terrain/splat_r5_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c4.glb",
+      "roads": "roads/roads_r5_c4.glb",
+      "ground": "ground/ground_r5_c4.glb",
+      "triangles": {
+        "buildings": 24454,
+        "roads": 7402,
+        "ground": 33530
+      }
+    },
+    {
+      "id": "r5_c5",
+      "row": 5,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 139.490366011858,
+        "max_y": 283.4061240712181
+      },
+      "terrain": "terrain/terrain_r5_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c5.glb",
+          "triangles": 30610,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c5_lod1.glb",
+          "triangles": 6560,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c5_lod2.glb",
+          "triangles": 2189,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c5.jpg",
+      "splat": [
+        "terrain/splat_r5_c5_a.png",
+        "terrain/splat_r5_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c5.glb",
+      "roads": "roads/roads_r5_c5.glb",
+      "ground": "ground/ground_r5_c5.glb",
+      "triangles": {
+        "buildings": 15380,
+        "roads": 7522,
+        "ground": 29776
+      }
+    },
+    {
+      "id": "r5_c6",
+      "row": 5,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 180.12276148796082,
+        "max_y": 267.82302474975586
+      },
+      "terrain": "terrain/terrain_r5_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c6.glb",
+          "triangles": 27264,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c6_lod1.glb",
+          "triangles": 5684,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c6_lod2.glb",
+          "triangles": 1864,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c6.jpg",
+      "splat": [
+        "terrain/splat_r5_c6_a.png",
+        "terrain/splat_r5_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c6.glb",
+      "roads": "roads/roads_r5_c6.glb",
+      "ground": "ground/ground_r5_c6.glb",
+      "triangles": {
+        "buildings": 17525,
+        "roads": 20607,
+        "ground": 37525
+      }
+    },
+    {
+      "id": "r5_c7",
+      "row": 5,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": 787.5,
+        "max_z": 1575.0,
+        "min_y": 199.11678424477577,
+        "max_y": 271.3809128035791
+      },
+      "terrain": "terrain/terrain_r5_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r5_c7.glb",
+          "triangles": 37188,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r5_c7_lod1.glb",
+          "triangles": 7545,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r5_c7_lod2.glb",
+          "triangles": 2433,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r5_c7.jpg",
+      "splat": [
+        "terrain/splat_r5_c7_a.png",
+        "terrain/splat_r5_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r5_c7.glb",
+      "roads": "roads/roads_r5_c7.glb",
+      "ground": "ground/ground_r5_c7.glb",
+      "triangles": {
+        "buildings": 22060,
+        "roads": 19619,
+        "ground": 33539
+      }
+    },
+    {
+      "id": "r6_c0",
+      "row": 6,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 56.34000025840942,
+        "max_y": 130.684814453125
+      },
+      "terrain": "terrain/terrain_r6_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c0.glb",
+          "triangles": 30678,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c0_lod1.glb",
+          "triangles": 6677,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c0_lod2.glb",
+          "triangles": 1966,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c0.jpg",
+      "splat": [
+        "terrain/splat_r6_c0_a.png",
+        "terrain/splat_r6_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c0.glb",
+      "roads": "roads/roads_r6_c0.glb",
+      "ground": "ground/ground_r6_c0.glb",
+      "triangles": {
+        "buildings": 13362,
+        "roads": 4511,
+        "ground": 13571
+      }
+    },
+    {
+      "id": "r6_c1",
+      "row": 6,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 78.8091481924057,
+        "max_y": 165.0255126953125
+      },
+      "terrain": "terrain/terrain_r6_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c1.glb",
+          "triangles": 26026,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c1_lod1.glb",
+          "triangles": 5370,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c1_lod2.glb",
+          "triangles": 1603,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c1.jpg",
+      "splat": [
+        "terrain/splat_r6_c1_a.png",
+        "terrain/splat_r6_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c1.glb",
+      "roads": "roads/roads_r6_c1.glb",
+      "ground": "ground/ground_r6_c1.glb",
+      "triangles": {
+        "buildings": 13369,
+        "roads": 11167,
+        "ground": 29660
+      }
+    },
+    {
+      "id": "r6_c2",
+      "row": 6,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 90.73692816123366,
+        "max_y": 197.78536190185696
+      },
+      "terrain": "terrain/terrain_r6_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c2.glb",
+          "triangles": 24888,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c2_lod1.glb",
+          "triangles": 5127,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c2_lod2.glb",
+          "triangles": 1769,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c2.jpg",
+      "splat": [
+        "terrain/splat_r6_c2_a.png",
+        "terrain/splat_r6_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c2.glb",
+      "roads": "roads/roads_r6_c2.glb",
+      "ground": "ground/ground_r6_c2.glb",
+      "triangles": {
+        "buildings": 5881,
+        "roads": 1630,
+        "ground": 6799
+      }
+    },
+    {
+      "id": "r6_c3",
+      "row": 6,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 95.52973866462708,
+        "max_y": 198.05038952827454
+      },
+      "terrain": "terrain/terrain_r6_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c3.glb",
+          "triangles": 27146,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c3_lod1.glb",
+          "triangles": 6110,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c3_lod2.glb",
+          "triangles": 1951,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c3.jpg",
+      "splat": [
+        "terrain/splat_r6_c3_a.png",
+        "terrain/splat_r6_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c3.glb",
+      "roads": "roads/roads_r6_c3.glb",
+      "ground": "ground/ground_r6_c3.glb",
+      "triangles": {
+        "buildings": 2890,
+        "roads": 921,
+        "ground": 6882
+      }
+    },
+    {
+      "id": "r6_c4",
+      "row": 6,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 114.3283920288086,
+        "max_y": 201.65328705310822
+      },
+      "terrain": "terrain/terrain_r6_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c4.glb",
+          "triangles": 25446,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c4_lod1.glb",
+          "triangles": 5664,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c4_lod2.glb",
+          "triangles": 1820,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c4.jpg",
+      "splat": [
+        "terrain/splat_r6_c4_a.png",
+        "terrain/splat_r6_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c4.glb",
+      "roads": "roads/roads_r6_c4.glb",
+      "ground": "ground/ground_r6_c4.glb",
+      "triangles": {
+        "buildings": 7139,
+        "roads": 4661,
+        "ground": 19167
+      }
+    },
+    {
+      "id": "r6_c5",
+      "row": 6,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 140.3227996826172,
+        "max_y": 223.9177360534668
+      },
+      "terrain": "terrain/terrain_r6_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c5.glb",
+          "triangles": 22566,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c5_lod1.glb",
+          "triangles": 5244,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c5_lod2.glb",
+          "triangles": 1690,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c5.jpg",
+      "splat": [
+        "terrain/splat_r6_c5_a.png",
+        "terrain/splat_r6_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c5.glb",
+      "roads": "roads/roads_r6_c5.glb",
+      "ground": "ground/ground_r6_c5.glb",
+      "triangles": {
+        "buildings": 5046,
+        "roads": 6803,
+        "ground": 15508
+      }
+    },
+    {
+      "id": "r6_c6",
+      "row": 6,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 166.5434135198593,
+        "max_y": 278.7407299503684
+      },
+      "terrain": "terrain/terrain_r6_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c6.glb",
+          "triangles": 33359,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c6_lod1.glb",
+          "triangles": 7176,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c6_lod2.glb",
+          "triangles": 2594,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c6.jpg",
+      "splat": [
+        "terrain/splat_r6_c6_a.png",
+        "terrain/splat_r6_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c6.glb",
+      "roads": "roads/roads_r6_c6.glb",
+      "ground": "ground/ground_r6_c6.glb",
+      "triangles": {
+        "buildings": 18405,
+        "roads": 8091,
+        "ground": 23899
+      }
+    },
+    {
+      "id": "r6_c7",
+      "row": 6,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": 1575.0,
+        "max_z": 2362.5,
+        "min_y": 207.2042236328125,
+        "max_y": 258.05804443359375
+      },
+      "terrain": "terrain/terrain_r6_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r6_c7.glb",
+          "triangles": 33462,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r6_c7_lod1.glb",
+          "triangles": 6544,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r6_c7_lod2.glb",
+          "triangles": 2002,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r6_c7.jpg",
+      "splat": [
+        "terrain/splat_r6_c7_a.png",
+        "terrain/splat_r6_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r6_c7.glb",
+      "roads": "roads/roads_r6_c7.glb",
+      "ground": "ground/ground_r6_c7.glb",
+      "triangles": {
+        "buildings": 21871,
+        "roads": 20591,
+        "ground": 31260
+      }
+    },
+    {
+      "id": "r7_c0",
+      "row": 7,
+      "col": 0,
+      "bounds": {
+        "min_x": -4500.0,
+        "max_x": -3375.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 72.7724838256836,
+        "max_y": 126.25636442132236
+      },
+      "terrain": "terrain/terrain_r7_c0.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c0.glb",
+          "triangles": 24253,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c0_lod1.glb",
+          "triangles": 4520,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c0_lod2.glb",
+          "triangles": 1231,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c0.jpg",
+      "splat": [
+        "terrain/splat_r7_c0_a.png",
+        "terrain/splat_r7_c0_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c0.glb",
+      "roads": "roads/roads_r7_c0.glb",
+      "ground": "ground/ground_r7_c0.glb",
+      "triangles": {
+        "buildings": 23236,
+        "roads": 12437,
+        "ground": 34134
+      }
+    },
+    {
+      "id": "r7_c1",
+      "row": 7,
+      "col": 1,
+      "bounds": {
+        "min_x": -3375.0,
+        "max_x": -2250.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 100.05649471282959,
+        "max_y": 182.2532134950161
+      },
+      "terrain": "terrain/terrain_r7_c1.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c1.glb",
+          "triangles": 27124,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c1_lod1.glb",
+          "triangles": 5449,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c1_lod2.glb",
+          "triangles": 1589,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c1.jpg",
+      "splat": [
+        "terrain/splat_r7_c1_a.png",
+        "terrain/splat_r7_c1_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c1.glb",
+      "roads": "roads/roads_r7_c1.glb",
+      "ground": "ground/ground_r7_c1.glb",
+      "triangles": {
+        "buildings": 14201,
+        "roads": 8297,
+        "ground": 23338
+      }
+    },
+    {
+      "id": "r7_c2",
+      "row": 7,
+      "col": 2,
+      "bounds": {
+        "min_x": -2250.0,
+        "max_x": -1125.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 131.1128073632717,
+        "max_y": 250.64019775390625
+      },
+      "terrain": "terrain/terrain_r7_c2.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c2.glb",
+          "triangles": 27973,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c2_lod1.glb",
+          "triangles": 5393,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c2_lod2.glb",
+          "triangles": 1502,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c2.jpg",
+      "splat": [
+        "terrain/splat_r7_c2_a.png",
+        "terrain/splat_r7_c2_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c2.glb",
+      "roads": "roads/roads_r7_c2.glb",
+      "ground": "ground/ground_r7_c2.glb",
+      "triangles": {
+        "buildings": 11390,
+        "roads": 2591,
+        "ground": 11973
+      }
+    },
+    {
+      "id": "r7_c3",
+      "row": 7,
+      "col": 3,
+      "bounds": {
+        "min_x": -1125.0,
+        "max_x": 0.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 134.72840381413698,
+        "max_y": 340.47824062826544
+      },
+      "terrain": "terrain/terrain_r7_c3.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c3.glb",
+          "triangles": 21876,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c3_lod1.glb",
+          "triangles": 5078,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c3_lod2.glb",
+          "triangles": 1878,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c3.jpg",
+      "splat": [
+        "terrain/splat_r7_c3_a.png",
+        "terrain/splat_r7_c3_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c3.glb",
+      "roads": "roads/roads_r7_c3.glb",
+      "ground": "ground/ground_r7_c3.glb",
+      "triangles": {
+        "buildings": 1051,
+        "roads": 3144,
+        "ground": 11018
+      }
+    },
+    {
+      "id": "r7_c4",
+      "row": 7,
+      "col": 4,
+      "bounds": {
+        "min_x": 0.0,
+        "max_x": 1125.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 153.04069110751152,
+        "max_y": 361.6892277556191
+      },
+      "terrain": "terrain/terrain_r7_c4.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c4.glb",
+          "triangles": 30712,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c4_lod1.glb",
+          "triangles": 6482,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c4_lod2.glb",
+          "triangles": 2407,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c4.jpg",
+      "splat": [
+        "terrain/splat_r7_c4_a.png",
+        "terrain/splat_r7_c4_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c4.glb",
+      "roads": "roads/roads_r7_c4.glb",
+      "ground": "ground/ground_r7_c4.glb",
+      "triangles": {
+        "buildings": 440,
+        "roads": 2488,
+        "ground": 8664
+      }
+    },
+    {
+      "id": "r7_c5",
+      "row": 7,
+      "col": 5,
+      "bounds": {
+        "min_x": 1125.0,
+        "max_x": 2250.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 163.5444438578561,
+        "max_y": 333.2971044202519
+      },
+      "terrain": "terrain/terrain_r7_c5.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c5.glb",
+          "triangles": 30603,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c5_lod1.glb",
+          "triangles": 6331,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c5_lod2.glb",
+          "triangles": 2439,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c5.jpg",
+      "splat": [
+        "terrain/splat_r7_c5_a.png",
+        "terrain/splat_r7_c5_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c5.glb",
+      "roads": "roads/roads_r7_c5.glb",
+      "ground": "ground/ground_r7_c5.glb",
+      "triangles": {
+        "buildings": 7865,
+        "roads": 2145,
+        "ground": 11882
+      }
+    },
+    {
+      "id": "r7_c6",
+      "row": 7,
+      "col": 6,
+      "bounds": {
+        "min_x": 2250.0,
+        "max_x": 3375.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 184.37224461138248,
+        "max_y": 329.94160990044475
+      },
+      "terrain": "terrain/terrain_r7_c6.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c6.glb",
+          "triangles": 33686,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c6_lod1.glb",
+          "triangles": 6764,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c6_lod2.glb",
+          "triangles": 2276,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c6.jpg",
+      "splat": [
+        "terrain/splat_r7_c6_a.png",
+        "terrain/splat_r7_c6_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c6.glb",
+      "roads": "roads/roads_r7_c6.glb",
+      "ground": "ground/ground_r7_c6.glb",
+      "triangles": {
+        "buildings": 20558,
+        "roads": 6842,
+        "ground": 25835
+      }
+    },
+    {
+      "id": "r7_c7",
+      "row": 7,
+      "col": 7,
+      "bounds": {
+        "min_x": 3375.0,
+        "max_x": 4500.0,
+        "min_z": 2362.5,
+        "max_z": 3150.0,
+        "min_y": 206.21103655330595,
+        "max_y": 264.8631591796875
+      },
+      "terrain": "terrain/terrain_r7_c7.glb",
+      "terrain_lods": [
+        {
+          "lod": 0,
+          "path": "terrain/terrain_r7_c7.glb",
+          "triangles": 34344,
+          "spacing_m": 1.538,
+          "max_error_m": 0.3097,
+          "texture_px": 512
+        },
+        {
+          "lod": 1,
+          "path": "terrain/terrain_r7_c7_lod1.glb",
+          "triangles": 6716,
+          "spacing_m": 6.152,
+          "max_error_m": 1.0455,
+          "texture_px": 256
+        },
+        {
+          "lod": 2,
+          "path": "terrain/terrain_r7_c7_lod2.glb",
+          "triangles": 1938,
+          "spacing_m": 12.305,
+          "max_error_m": 2.2374,
+          "texture_px": 128
+        }
+      ],
+      "albedo": "terrain/albedo_r7_c7.jpg",
+      "splat": [
+        "terrain/splat_r7_c7_a.png",
+        "terrain/splat_r7_c7_b.png"
+      ],
+      "buildings": "buildings/buildings_r7_c7.glb",
+      "roads": "roads/roads_r7_c7.glb",
+      "ground": "ground/ground_r7_c7.glb",
+      "triangles": {
+        "buildings": 9852,
+        "roads": 23684,
+        "ground": 25662
+      }
+    }
+  ],
+  "roads": [
+    "roads/roads_r0_c0.glb",
+    "roads/roads_r0_c1.glb",
+    "roads/roads_r0_c2.glb",
+    "roads/roads_r0_c3.glb",
+    "roads/roads_r0_c4.glb",
+    "roads/roads_r0_c5.glb",
+    "roads/roads_r0_c6.glb",
+    "roads/roads_r0_c7.glb",
+    "roads/roads_r1_c0.glb",
+    "roads/roads_r1_c1.glb",
+    "roads/roads_r1_c2.glb",
+    "roads/roads_r1_c3.glb",
+    "roads/roads_r1_c4.glb",
+    "roads/roads_r1_c5.glb",
+    "roads/roads_r1_c6.glb",
+    "roads/roads_r1_c7.glb",
+    "roads/roads_r2_c0.glb",
+    "roads/roads_r2_c1.glb",
+    "roads/roads_r2_c2.glb",
+    "roads/roads_r2_c3.glb",
+    "roads/roads_r2_c4.glb",
+    "roads/roads_r2_c5.glb",
+    "roads/roads_r2_c6.glb",
+    "roads/roads_r2_c7.glb",
+    "roads/roads_r3_c0.glb",
+    "roads/roads_r3_c1.glb",
+    "roads/roads_r3_c2.glb",
+    "roads/roads_r3_c3.glb",
+    "roads/roads_r3_c4.glb",
+    "roads/roads_r3_c5.glb",
+    "roads/roads_r3_c6.glb",
+    "roads/roads_r3_c7.glb",
+    "roads/roads_r4_c0.glb",
+    "roads/roads_r4_c1.glb",
+    "roads/roads_r4_c2.glb",
+    "roads/roads_r4_c3.glb",
+    "roads/roads_r4_c4.glb",
+    "roads/roads_r4_c5.glb",
+    "roads/roads_r4_c6.glb",
+    "roads/roads_r4_c7.glb",
+    "roads/roads_r5_c0.glb",
+    "roads/roads_r5_c1.glb",
+    "roads/roads_r5_c2.glb",
+    "roads/roads_r5_c3.glb",
+    "roads/roads_r5_c4.glb",
+    "roads/roads_r5_c5.glb",
+    "roads/roads_r5_c6.glb",
+    "roads/roads_r5_c7.glb",
+    "roads/roads_r6_c0.glb",
+    "roads/roads_r6_c1.glb",
+    "roads/roads_r6_c2.glb",
+    "roads/roads_r6_c3.glb",
+    "roads/roads_r6_c4.glb",
+    "roads/roads_r6_c5.glb",
+    "roads/roads_r6_c6.glb",
+    "roads/roads_r6_c7.glb",
+    "roads/roads_r7_c0.glb",
+    "roads/roads_r7_c1.glb",
+    "roads/roads_r7_c2.glb",
+    "roads/roads_r7_c3.glb",
+    "roads/roads_r7_c4.glb",
+    "roads/roads_r7_c5.glb",
+    "roads/roads_r7_c6.glb",
+    "roads/roads_r7_c7.glb"
+  ],
+  "terrain_meta": "terrain/terrain_meta.json",
+  "terrain_lod": {
+    "levels": [
+      {
+        "lod": 0,
+        "kind": "rtin",
+        "finest_spacing_m": 1.538,
+        "max_error_m": 0.3097,
+        "triangles": 1982445,
+        "texture_px": 512
+      },
+      {
+        "lod": 1,
+        "kind": "rtin",
+        "finest_spacing_m": 6.152,
+        "max_error_m": 1.0455,
+        "triangles": 399207,
+        "texture_px": 256
+      },
+      {
+        "lod": 2,
+        "kind": "rtin",
+        "finest_spacing_m": 12.305,
+        "max_error_m": 2.2374,
+        "triangles": 124789,
+        "texture_px": 128
+      }
+    ],
+    "skirts_m": {
+      "0": 3.0,
+      "1": 6.0,
+      "2": 12.0
+    },
+    "suggested_switch_distance_m": {
+      "0": 900.0,
+      "1": 2600.0
+    }
+  },
+  "splat": {
+    "channels": {
+      "a": [
+        "lawn",
+        "chaparral",
+        "dirt"
+      ],
+      "b": [
+        "paved",
+        "water",
+        "canopy"
+      ]
+    },
+    "px": 1024,
+    "encoding": "RGB PNG, 8-bit weights summing to 255 over the 6 channels; north up like the albedo",
+    "inputs": [
+      "imagery",
+      "vector overrides (roads, sidewalks, driveways, roofs, water, pools)",
+      "overture land_use",
+      "overture land_cover",
+      "lidar chm",
+      "lidar ndsm",
+      "lidar change"
+    ],
+    "suggested_ground_cells": {
+      "lawn": "grass_lawn",
+      "chaparral": "chaparral",
+      "dirt": "bare_dirt",
+      "paved": "asphalt_worn",
+      "water": "pool_water",
+      "canopy": "mulch"
+    }
+  },
+  "materials": "materials/materials_manifest.json",
+  "heroes": [
+    {
+      "id": "del_norte_hs",
+      "name": "Del Norte High School",
+      "building_id": 11228,
+      "tile": "r4_c4",
+      "school_id": "del_norte_hs",
+      "triangles": 32135
+    },
+    {
+      "id": "design39",
+      "name": "Design39Campus",
+      "building_id": 10154,
+      "tile": "r3_c3",
+      "school_id": "design39",
+      "triangles": 9861
+    },
+    {
+      "id": "4s_commons",
+      "name": "4S Commons Town Center",
+      "building_id": 16263,
+      "tile": "r3_c4",
+      "school_id": null,
+      "triangles": 13969
+    }
+  ],
+  "triangles": {
+    "terrain": 1982445,
+    "terrain_lods": {
+      "lod0": 1982445,
+      "lod1": 399207,
+      "lod2": 124789
+    },
+    "buildings": 834624,
+    "roads": 600844,
+    "ground": 1306793
+  },
+  "street_stats": {
+    "render_roads": 2848,
+    "paths": 585,
+    "path_area_m2": 291148.3,
+    "service_roads": 2249,
+    "junction_patches": 1431,
+    "crosswalks": 677,
+    "stop_bars": 496,
+    "medians": 137,
+    "sidewalk_area_m2": 787223.3,
+    "driveways": 7911,
+    "garage_doors": 8690,
+    "pools": 105
+  },
+  "sizes_mb": {
+    "terrain": 127.94,
+    "buildings": 6.49,
+    "roads": 1.99,
+    "ground": 5.98,
+    "props": 13.37,
+    "materials": 22.79,
+    "buildings_hd": 2.07,
+    "total": 180.63
+  },
+  "generated_at": "2026-10-01T22:33:03Z"
+}
